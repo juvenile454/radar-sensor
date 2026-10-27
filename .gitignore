@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+# Builds
+.pio/
+build/
+*.bin
+*.elf
+*.uf2
+# Android
+.gradle/
+local.properties
+*.apk
+*.aab
+# Daten gehören nach ~/Data/radar-sensor
+*.h5
+*.npz
+# Hersteller-Downloads
+vendor/
