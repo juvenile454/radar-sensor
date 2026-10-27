@@ -2,6 +2,7 @@
 
 Alles zum Radarprojekt liegt in diesem Ordner (inkl. Android-App unter `android/`).
 Stand und Phasen: `docs/KONZEPT.md`. Pins/Verdrahtung: `docs/HARDWARE.md`.
+Messplan/Ergebnisse: `docs/EXPERIMENTE.md`. Pico und SAR-Scanner sind zurückgestellt.
 
 ## Regeln
 

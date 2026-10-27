@@ -7,7 +7,7 @@ Stand 2026-10-27. Pins vor dem ersten Einschalten am echten Board prüfen.
 | Teil | Details | Zustand |
 |---|---|---|
 | ESP32-S3-DevKitC-1 (ggf. Klon), Modul WROOM-1 **N16R8** | 16 MB Flash, 8 MB Octal-PSRAM, 2× USB-C (nativ + USB-UART), RGB-LED, BOOT/RST | Stiftleisten gelötet |
-| Raspberry Pi Pico (RP2040, Version 2020) | Micro-USB, kein Funk | **Stiftleisten fehlen** → erste Lötaufgabe |
+| Raspberry Pi Pico (RP2040, Version 2020) | Micro-USB, kein Funk | Stiftleisten fehlen; **zurückgestellt** |
 | Galaxy S26 Ultra | USB-C, USB-Host (OTG) | — |
 | Werkzeug | Lötkolben (kein Heißluft/Reflow) | — |
 
@@ -67,10 +67,10 @@ USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO4
 - Handy → nativer USB-C-Port des ESP32-S3 → 5V-Pin → A121-Board.
 - Bedarf grob: A121 ≤ 80 mA + ESP32-S3 ~100–250 mA (ohne Funk weniger) — für Handy-OTG unkritisch.
 - Bei Klon-Boards prüfen, ob der 5V-Pin auch bei Versorgung über den nativen Port Spannung führt (Multimeter).
-- Motoren (Phase 4) immer separat versorgen; nur GND gemeinsam.
+- Motoren (späterer Scanner) immer separat versorgen; nur GND gemeinsam.
 
-## Pico
+## Pico (zurückgestellt)
 
-- Erst Stiftleisten löten.
-- Rolle A (optional): SWD-Debug-Probe (Raspberry-Pi-„debugprobe“-Firmware) für den STM32 → Drähte an SWDIO/SWCLK/GND-Pads.
-- Rolle B (Phase 4): Schrittmotor-Takt über PIO, Endschalter, Befehle vom ESP32 oder PC.
+Nicht Teil des aktuellen A121-Fokus. Mögliche spätere Rollen: SWD-Debug-Probe für den STM32
+(„debugprobe“-Firmware an SWDIO/SWCLK/GND-Pads) oder Schrittmotorsteuerung für den SAR-Scanner.
+Flashen des STM32 geht ohne Pico über USB (BOOT-Taste, Kanal A).

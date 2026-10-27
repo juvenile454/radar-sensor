@@ -1,13 +1,15 @@
-# Radar_sensor
+# radar-sensor
 
 60-GHz-Radar (Acconeer A121 auf Waveshare-Board) + ESP32-S3 + Android-App am Galaxy S26 Ultra.
-Lernprojekt: löten, Mikrocontroller programmieren, Signalverarbeitung (Atmung, Puls, SAR-Bildgebung).
+Lernprojekt: löten, Mikrocontroller programmieren, Signalverarbeitung (Atmung, Puls, Materialtests).
+Aktueller Fokus: den A121 vollständig ausreizen; Pico und SAR-Scanner zurückgestellt.
 
 **Status 2026-10-27:** Konzeptphase. Nichts bestellt, keine Firmware, keine App.
 
 ## Dokumente
 
 - `docs/KONZEPT.md` — Ziele, Realitätscheck, Architektur, Phasen, Einkauf
+- `docs/EXPERIMENTE.md` — Fähigkeiten-Matrix (Phase 1), Ergebnisse nur nach Messung
 - `docs/HARDWARE.md` — Boards, Pinouts, Verdrahtung, Strom
 
 ## Geplante Struktur (Ordner erst anlegen, wenn die Phase beginnt)
@@ -17,7 +19,6 @@ Lernprojekt: löten, Mikrocontroller programmieren, Signalverarbeitung (Atmung, 
 | `host/` | Python: Exploration Tool, Aufnahme-/Analyse-Skripte |
 | `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
-| `firmware/pico/` | Pico: Debug-Probe-Notizen, Schrittmotorsteuerung |
 | `android/` | Android-App (Kotlin/Compose) |
 | `hardware/` | Verdrahtung, Lochraster-Layout, später KiCad |
 
