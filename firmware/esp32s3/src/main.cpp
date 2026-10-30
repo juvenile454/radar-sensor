@@ -105,6 +105,70 @@ static bool readReg(uint16_t reg, uint32_t &val) {
   return true;
 }
 
+static bool waitReady(uint32_t ms);
+
+static bool writeReg(uint16_t reg, uint32_t val) {
+  Wire.beginTransmission(A121_ADDR);
+  Wire.write(reg >> 8);
+  Wire.write(reg & 0xFF);
+  for (int sh = 24; sh >= 0; sh -= 8) Wire.write((val >> sh) & 0xFF);
+  return Wire.endTransmission(true) == 0;
+}
+
+// Register/Kommandos des i2c_distance_detector (Acconeer, wie Waveshare-Demo)
+static const uint16_t REG_DETECTOR_STATUS = 0x0003, REG_DISTANCE_RESULT = 0x0010, REG_PEAK0_DISTANCE = 0x0011,
+                      REG_PEAK0_STRENGTH = 0x001B, REG_START = 0x0040, REG_END = 0x0041, REG_COMMAND = 0x0100;
+static const uint32_t CMD_APPLY_CONFIG_AND_CALIBRATE = 1, CMD_MEASURE_DISTANCE = 2;
+static const uint32_t ST_BUSY = 1UL << 31, ST_ERRORS = 0x13FF0000UL;  // Fehlerbits 16–25 und 28
+
+// wartet, bis DETECTOR_BUSY weg ist; liefert Status oder 0xFFFFFFFF bei Timeout/I2C-Fehler
+static uint32_t waitNotBusy(uint32_t ms) {
+  uint32_t t0 = millis(), st = 0;
+  delay(10);  // Kommando wird nicht sofort übernommen; ohne Pause liest man den alten Status
+  do {
+    if (!readReg(REG_DETECTOR_STATUS, st)) return 0xFFFFFFFF;
+    if (!(st & ST_BUSY)) return st;
+    delay(5);
+  } while (millis() - t0 < ms);
+  return 0xFFFFFFFF;
+}
+
+static void cmdCfg(uint32_t startMm, uint32_t endMm) {
+  pinMode(PIN_WAKE, OUTPUT);
+  digitalWrite(PIN_WAKE, HIGH);
+  if (!waitReady(1000)) { Serial.println("MCU_INT nicht bereit"); return; }
+  bool ok = writeReg(REG_START, startMm) && writeReg(REG_END, endMm) &&
+            writeReg(REG_COMMAND, CMD_APPLY_CONFIG_AND_CALIBRATE);
+  uint32_t t0 = millis();
+  uint32_t st = waitNotBusy(5000);
+  Serial.printf("cfg %lu–%lu mm: I2C %s, Status 0x%08lX nach %lu ms%s\n", (unsigned long)startMm,
+                (unsigned long)endMm, ok ? "ok" : "FEHLER", (unsigned long)st, (unsigned long)(millis() - t0),
+                (st == 0xFFFFFFFF) ? " (Timeout)" : (st & ST_ERRORS) ? " (FEHLERBIT gesetzt)" : " (ok)");
+}
+
+static void cmdDist(int n) {
+  for (int k = 0; k < n; k++) {
+    uint32_t t0 = millis();
+    if (!writeReg(REG_COMMAND, CMD_MEASURE_DISTANCE)) { Serial.println("I2C-Fehler"); return; }
+    uint32_t st = waitNotBusy(2000);
+    if (st == 0xFFFFFFFF || (st & ST_ERRORS)) { Serial.printf("Status 0x%08lX\n", (unsigned long)st); return; }
+    uint32_t res = 0;
+    readReg(REG_DISTANCE_RESULT, res);
+    int num = res & 0x0F;
+    int16_t temp = (int16_t)(res >> 16);
+    Serial.printf("#%d %lu ms, T %d °C, %d Ziel(e)%s%s%s", k, (unsigned long)(millis() - t0), temp, num,
+                  (res & (1u << 8)) ? ", NEAR_START_EDGE" : "", (res & (1u << 9)) ? ", CALIBRATION_NEEDED" : "",
+                  (res & (1u << 10)) ? ", MEASURE_ERROR" : "");
+    for (int i = 0; i < num; i++) {
+      uint32_t d = 0, sraw = 0;
+      readReg(REG_PEAK0_DISTANCE + i, d);
+      readReg(REG_PEAK0_STRENGTH + i, sraw);
+      Serial.printf(" | %lu mm %.1f dB", (unsigned long)d, (int32_t)sraw / 1000.0);
+    }
+    Serial.println();
+  }
+}
+
 static bool waitReady(uint32_t ms) {
   uint32_t t0 = millis();
   while (digitalRead(PIN_INT) == 0) {
@@ -141,6 +205,9 @@ static void help() {
       "  probe       SDA/SCL/WAKE/MCU_INT/UART-TX/RX mit internem Pull-up/-down prüfen (offen/low/high)\n"
       "  scan        I2C-Bus scannen (SDA 15, SCL 16)\n"
       "  ver         A121-Register VERSION/STATUS/APPLICATION_ID lesen (nur mit i2c_*-Firmware)\n"
+      "  cfg [a b]   Distanz-Detektor: Bereich a–b mm setzen, Konfig anwenden + kalibrieren (Standard 150 2000)\n"
+      "  r <reg>     Register lesen (z. B. r 0x46);  w <reg> <wert> schreiben\n"
+      "  dist [n]    n Distanzmessungen (Ziele mm/dB, Temperatur)\n"
       "  wake 0|1    WAKE_UP setzen\n"
       "  uart        A121-Debug-UART (921600) an USB durchreichen an/aus\n"
       "  led <pin>   RGB-LED-Pin wählen (48 oder 38) und testen");
@@ -154,6 +221,23 @@ static void handle(String cmd) {
   else if (cmd == "probe") cmdProbe();
   else if (cmd == "scan") cmdScan();
   else if (cmd == "ver") cmdVer();
+  else if (cmd.startsWith("r ")) {
+    uint32_t reg = strtoul(cmd.c_str() + 2, nullptr, 0), v = 0;
+    if (readReg(reg, v)) Serial.printf("0x%04lX = %lu (0x%08lX)\n", (unsigned long)reg, (unsigned long)v, (unsigned long)v);
+    else Serial.println("keine Antwort");
+  } else if (cmd.startsWith("w ")) {
+    char *e;
+    uint32_t reg = strtoul(cmd.c_str() + 2, &e, 0), v = strtoul(e, nullptr, 0);
+    Serial.printf("0x%04lX <- %lu: %s\n", (unsigned long)reg, (unsigned long)v, writeReg(reg, v) ? "ok" : "FEHLER");
+  } else if (cmd.startsWith("cfg")) {
+    int a = 150, b = 2000;
+    sscanf(cmd.c_str(), "cfg %d %d", &a, &b);
+    cmdCfg(a, b);
+  } else if (cmd.startsWith("dist")) {
+    int n = 1;
+    sscanf(cmd.c_str(), "dist %d", &n);
+    cmdDist(constrain(n, 1, 200));
+  }
   else if (cmd.startsWith("wake ")) {
     digitalWrite(PIN_WAKE, cmd.endsWith("1") ? HIGH : LOW);
     Serial.printf("WAKE_UP = %d\n", digitalRead(PIN_WAKE));
