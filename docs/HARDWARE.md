@@ -116,6 +116,9 @@ Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
    Kanal A, `python -m acconeer.exptool.flash flash XM125 -p <if00-Port> -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
    (BOOT-Taste laut Wiki). Zurück: gleiche Zeile mit `acc_exploration_server_a121.bin`.
    Solange I2C-Firmware drauf ist, gehen PC-Messungen mit dem Exploration Tool nicht.
+   **Erledigt 2026-10-30:** `i2c_distance_detector.bin` (sha256 `e659242d…44e4f`) mit Freigabe des Projektinhabers geflasht,
+   100 % ohne Fehler. DFU-Modus nur von Hand: BOOT halten, RESET tippen, BOOT loslassen
+   (Tool erwartet Port als `/dev/ttyACMx`, nicht den by-id-Pfad). Danach RESET für Start.
 8. **I2C prüfen:** `scan` → 0x52, `ver` → VERSION/APPLICATION_ID lesbar.
 9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
    `uart` im ESP32 reicht ihn an USB durch.
