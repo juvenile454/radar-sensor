@@ -66,7 +66,7 @@ static void cmdProbe() {
   Serial1.end();
   pinMode(PIN_WAKE, INPUT);
   for (int pin : {PIN_SDA, PIN_SCL, PIN_WAKE, PIN_INT, PIN_UART_TX, PIN_UART_RX}) probePin(pin);
-  Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
+  if (uartBridge) Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
   Serial.println("WAKE_UP bleibt Eingang, bis 'wake 0|1' gesendet wird.");
   pinMode(PIN_INT, INPUT_PULLDOWN);
   Wire.begin(PIN_SDA, PIN_SCL, 100000);
@@ -159,6 +159,8 @@ static void handle(String cmd) {
     Serial.printf("WAKE_UP = %d\n", digitalRead(PIN_WAKE));
   } else if (cmd == "uart") {
     uartBridge = !uartBridge;
+    if (uartBridge) Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
+    else { Serial1.end(); pinMode(PIN_UART_TX, INPUT); }
     Serial.printf("UART-Durchreichung %s (Eingabe 'uart' + Enter beendet)\n", uartBridge ? "AN" : "AUS");
   } else if (cmd.startsWith("led ")) {
     int p = cmd.substring(4).toInt();
@@ -177,7 +179,8 @@ void setup() {
   pinMode(PIN_INT, INPUT_PULLDOWN);
   Wire.begin(PIN_SDA, PIN_SCL, 100000);  // Pull-ups 4,7 kΩ sitzen auf dem A121-Board (Schaltplan R13/R14)
   Wire.setTimeOut(20);
-  Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
+  // UART1 erst mit 'uart' starten: TX-Ruhepegel (3,3 V) würde einen unversorgten A121 über RXD speisen
+  pinMode(PIN_UART_TX, INPUT);
   led(0, 20, 0);
   uint32_t t0 = millis();
   while (!Serial && millis() - t0 < 3000) delay(10);
@@ -194,8 +197,6 @@ void loop() {
   }
   if (uartBridge) {
     while (Serial1.available()) Serial.write(Serial1.read());
-  } else {
-    while (Serial1.available()) Serial1.read();  // verwerfen, solange Durchreichung aus
   }
   static uint32_t tBlink = 0;
   if (millis() - tBlink > 1000) {  // Lebenszeichen: grün blinkend
