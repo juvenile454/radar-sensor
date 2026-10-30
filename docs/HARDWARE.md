@@ -120,6 +120,10 @@ Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
    100 % ohne Fehler. DFU-Modus nur von Hand: BOOT halten, RESET tippen, BOOT loslassen
    (Tool erwartet Port als `/dev/ttyACMx`, nicht den by-id-Pfad). Danach RESET für Start.
 8. **I2C prüfen:** `scan` → 0x52, `ver` → VERSION/APPLICATION_ID lesbar.
+   **Erledigt 2026-10-30:** A121 nur über ESP32-5Vin versorgt, alle Leitungen High (`probe`),
+   `scan` → genau ein Gerät 0x52; `ver`: VERSION 0x00010C00 (= 1.12.0), APPLICATION_ID 1,
+   DETECTOR_STATUS 0x00000007, PROTOCOL_STATUS 0. Vor dem Flashen war SCL low und MCU_INT low (Werksfirmware,
+   vermutlich Phantomspeisung über GPIO4) – mit I2C-Firmware und TX hochohmig behoben.
 9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
    `uart` im ESP32 reicht ihn an USB durch.
 
