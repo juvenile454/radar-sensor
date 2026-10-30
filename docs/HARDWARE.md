@@ -131,7 +131,10 @@ USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO4
 - Bei Klon-Boards prüfen, ob der 5V-Pin auch bei Versorgung über den nativen Port Spannung führt (Multimeter).
 - **Geprüft 2026-10-30 (Board des Projektinhabers):** Pin beschriftet „5Vin“; an beiden USB-Ports nur 1,2–1,3 V
   (Leckspannung) statt 5 V → reiner Eingang, vermutlich über Diode. A121 bleibt so ohne Strom (PWR-LED aus).
-  Optionen: Lötbrücke (z. B. „IN-OUT“, falls vorhanden – Board noch identifizieren) oder A121 separat versorgen.
+  Board ist ein DevKitC-1-Nachbau (kein Espressif-Logo, Modul „S3-N16R8“, Foto 2026-10-30) mit **offener
+  Lötbrücke „IN-OUT“** unten links neben der RGB-LED. Geschlossen überbrückt sie laut Community-Quellen
+  (YD-ESP32-S3-Doku) eine Diode, dann liegt USB-VBUS auf 5Vin – danach nie gleichzeitig externe 5 V und USB.
+  Alternative: Original Espressif ESP32-S3-DevKitC-1-N16R8 (5V0 = USB-VBUS über Diode, ~4,7 V).
   Übergangsweise am PC: A121 per eigenem USB-C versorgen, rote Ader ab, Signale + GND bleiben.
 - Motoren (späterer Scanner) immer separat versorgen; nur GND gemeinsam.
 
