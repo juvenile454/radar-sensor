@@ -4,8 +4,10 @@
 Lernprojekt: löten, Mikrocontroller programmieren, Signalverarbeitung (Atmung, Puls, Materialtests).
 Aktueller Fokus: den A121 vollständig ausreizen; Pico und SAR-Scanner zurückgestellt.
 
-**Status 2026-10-30:** A121 läuft am Linux-PC (Exploration Server ab Werk), erste Referenzmessungen
-in `docs/EXPERIMENTE.md`. Noch keine eigene Firmware, keine App.
+**Status 2026-10-30:** Referenz- und Kappenmessungen am PC, erste Puls-Aufnahmen ohne Referenz
+(`docs/EXPERIMENTE.md`). ESP32-S3 per 10-Pin-Kabel am A121, I2C läuft; A121 hat derzeit die
+I2C-Firmware `i2c_distance_detector` (PC-Tools erst nach Zurückflashen). Offene Punkte: `docs/HARDWARE.md`,
+Abschnitt „I2C-Distanzdetektor am ESP32“. Keine App.
 
 ## Dokumente
 
@@ -17,8 +19,8 @@ in `docs/EXPERIMENTE.md`. Noch keine eigene Firmware, keine App.
 
 | Ordner | Inhalt |
 |---|---|
-| `host/` | Python: Exploration Tool, Aufnahme-/Analyse-Skripte (angelegt; Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
-| `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 (angelegt: Bring-up-Konsole; `pio` via `uv tool install platformio`) |
+| `host/` | Python: `a121_zielmessung.py`, `a121_vitalaufnahme.py`, `a121_livemonitor.py`, `a121_anhalteanalyse.py` (angelegt; Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
+| `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 (angelegt: Bring-up-Konsole mit I2C-Distanzbefehlen; `uv tool install platformio esptool`) |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
 | `android/` | Android-App (Kotlin/Compose) |
 | `hardware/` | Verdrahtung, Lochraster-Layout, später KiCad |

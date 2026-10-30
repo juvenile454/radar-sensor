@@ -60,14 +60,14 @@ Aus der Schaltplan-Netzliste (H6, gelesen 2026-10-30, ungeprüft am Board): 1 GP
 Weitere Schaltplan-Fakten: I2C-Pull-ups 4,7 kΩ nach 3,3 V auf dem A121-Board (R13/R14);
 USB-VBUS speist das 5V-Netz über Schottky-Diode D3 (MBR230) → 5 V vom Stecker fließt nicht zurück in den PC-USB.
 
-## Verdrahtung ESP32-S3 ↔ A121 (Vorschlag)
+## Verdrahtung ESP32-S3 ↔ A121 (gesteckt und geprüft 2026-10-30)
 
 I2C/INT/WAKE wie in den Waveshare-ESP32-S3-Demos (geprüft im Demo-Code 2026-10-30: SDA 15, SCL 16,
 WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
 
 | A121 | ESP32-S3 | Zweck |
 |---|---|---|
-| 5V | 5V | Versorgung aus USB |
+| 5V | 5Vin | Versorgung aus USB (Nachbau-Board: nur mit geschlossener IN-OUT-Brücke, siehe unten) |
 | GND | GND | — |
 | RXD | GPIO4 (UART1 TX) | Befehle → STM32 |
 | TXD | GPIO5 (UART1 RX) | Daten ← STM32 |
@@ -77,12 +77,12 @@ WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
 | MCU_INT | GPIO18 | Busy |
 | GPIO0/1 | — | nicht verbunden |
 
-Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (aus Foto 2026-10-30, TXD/SDA am Board korrigiert;
-Multimeter-Bestätigung 5V/GND offen; SCL grün auf dem Foto nicht ganz eindeutig):
+Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (am Board geprüft 2026-10-30; Funktion bestätigt:
+PWR-LED an, alle Leitungen High, I2C antwortet):
 
 | A121 | Ader | ESP32-S3 (DevKitC-1, linke Leiste J1) |
 |---|---|---|
-| 5V | rot | 5V |
+| 5V | rot | 5Vin |
 | GND | schwarz | GND |
 | RXD | blau | GPIO4 |
 | TXD | gelb | GPIO5 |
@@ -113,8 +113,8 @@ Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
 6. **Einschalten nur über den ESP32-USB.** Rote LED am A121 muss leuchten. `scan`: mit Werksfirmware
    (Exploration Server) wird **nichts** unter 0x52 erwartet.
 7. **STM32 auf I2C-Firmware flashen** (nur mit Freigabe des Projektinhabers; umkehrbar): A121 per USB an den PC,
-   Kanal A, `python -m acconeer.exptool.flash flash XM125 -p <if00-Port> -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
-   (BOOT-Taste laut Wiki). Zurück: gleiche Zeile mit `acc_exploration_server_a121.bin`.
+   Kanal A, `python -m acconeer.exptool.flash flash XM125 -p /dev/ttyACMx -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
+   (`ttyACMx` = Ziel von `…-if00`, by-id-Pfad wird nicht akzeptiert). Zurück: gleiche Zeile mit `acc_exploration_server_a121.bin`.
    Solange I2C-Firmware drauf ist, gehen PC-Messungen mit dem Exploration Tool nicht.
    **Erledigt 2026-10-30:** `i2c_distance_detector.bin` (sha256 `e659242d…44e4f`) mit Freigabe des Projektinhabers geflasht,
    100 % ohne Fehler. DFU-Modus nur von Hand: BOOT halten, RESET tippen, BOOT loslassen
@@ -125,7 +125,41 @@ Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
    DETECTOR_STATUS 0x00000007, PROTOCOL_STATUS 0. Vor dem Flashen war SCL low und MCU_INT low (Werksfirmware,
    vermutlich Phantomspeisung über GPIO4) – mit I2C-Firmware und TX hochohmig behoben.
 9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
-   `uart` im ESP32 reicht ihn an USB durch.
+   `uart` im ESP32 reicht ihn an USB durch. Auch mit `i2c_distance_detector` nutzbar: Kommando 32
+   (`w 0x100 32`) schaltet Logs ein, 34 gibt die Konfiguration aus.
+10. **Distanzmessung über I2C** – siehe nächster Abschnitt. **Offen.**
+
+### I2C-Distanzdetektor am ESP32 (Stand 2026-10-30, Ende Tag 1)
+
+Konsole (`help`): `info`, `bus`, `probe`, `scan`, `ver`, `cfg [start end]` (mm), `dist [n]`,
+`r <reg>`, `w <reg> <wert>`, `wake 0|1`, `uart`, `led 48|38`.
+Register/Kommandos wie Waveshare-Demo (`…/ESP32S3/Arduino/A121_Distance_Detector`): START 0x40, END 0x41,
+THRESHOLD_METHOD 0x46 (1 fest/Amplitude, 2 aufgezeichnet, 3 CFAR), PEAK_SORTING 0x47 (1 nächstes, 2 stärkstes),
+FIXED_AMPLITUDE_THRESHOLD 0x49 (×1000), THRESHOLD_SENSITIVITY 0x4A (×1000), COMMAND 0x100
+(1 Konfig+Kalibrierung, 2 Messen, 32/33 UART-Logs an/aus, 34 Konfig loggen, 1381192737 Modul-Reset).
+
+Geprüft:
+- `cfg` → DETECTOR_STATUS 0x3FF (alle OK-Bits), Kalibrierung 0,5–0,7 s; Messung ~25 ms; Temperatur 12–14 °C.
+- **Konfiguration greift nur einmal nach Reset.** Spätere APPLY-Kommandos werden ohne Fehlermeldung ignoriert
+  (Status sofort 0x3FF, Messung unverändert). Ablauf daher immer: `w 0x100 1381192737` → Register setzen → `cfg`.
+- Nach einem Kommando ≥ 10 ms warten, bevor DETECTOR_STATUS gelesen wird (sonst alter Status, BUSY noch nicht gesetzt).
+- ESP32-Reset setzt den A121 nicht zurück (Register bleiben).
+- Standardwerte nach Modul-Reset: Profil max. 5, CFAR, Sensitivität 0,5, Signalqualität 15, Leckage-Kompensation an,
+  Sortierung „stärkstes“.
+
+**Offenes Problem:** Sensor auf die Testperson gerichtet (Abstand nicht gemessen), Bereich 100–1500 mm:
+- CFAR (Standard, auch Sensitivität 0,2): über ~30 Messungen **0 Ziele**.
+- Feste Amplitudenschwelle 1,0 / 3,0 / 10,0: 5–10 „Ziele“ pro Messung an wechselnden Abständen; Stärke steigt
+  stetig mit der Entfernung (−49 dB bei ~0,13 m … −20 dB bei ~1,1 m), Schwelle 3 vs. 10 ohne Unterschied →
+  sieht nach Rauschen aus, kein stabiles Echo.
+- Am PC (Exploration Server) fand derselbe Sensor die Wand sofort. Ursache offen: Ausrichtung/Abstand,
+  Versorgung über ESP32 (4,74 V, Störungen?) oder fehlende Einstellung.
+- **Nächster Test:** Backsteinwand 570 mm, hyperbolische Linse (PC-Referenz 0,5585 m), `cfg 300 1000` mit CFAR.
+  Wenn das klappt → Ausrichtung; wenn nicht → Versorgung (z. B. A121 testweise per eigenem USB-C, rote Ader ab)
+  und Konfiguration prüfen.
+
+**Achtung:** Der A121 hat zurzeit `i2c_distance_detector` drauf → Exploration Tool, `host/a121_*.py` und
+Live-Monitor funktionieren erst nach Zurückflashen (`acc_exploration_server_a121.bin`, Schritt 7).
 
 Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`

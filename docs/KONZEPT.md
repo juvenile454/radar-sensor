@@ -1,6 +1,7 @@
 # Konzept — 60-GHz-Radar am Android-Handy
 
-Stand 2026-10-30. Status: **A121 Box geliefert; Phase 0 (PC-Bring-up) erledigt, Phase 1 begonnen.**
+Stand 2026-10-30. Status: **Phase 0 erledigt; Phase 1 und 2 begonnen (Puls ohne Referenz); Phase 3 begonnen:
+ESP32-S3 ↔ A121 verdrahtet, I2C läuft, Distanzmessung über ESP32 liefert noch keine echten Ziele.**
 Fokus: **den A121 vollständig ausreizen** — mit ESP32-S3, ohne Pico.
 
 ## Ziel
@@ -50,7 +51,7 @@ A121-Board ──MX1.25: UART + I2C──► ESP32-S3 ──USB-C (native, CDC)�
 | Teil | Aufgabe |
 |---|---|
 | STM32 auf A121-Board | Zuerst Waveshare-/Acconeer-Firmware; später eigene „IQ-Streamer“-Firmware (C, Acconeer-SDK, kostenloses Konto nötig), binär über den Stecker-UART |
-| ESP32-S3-DevKitC-1 N16R8 | Einziger Hauptcontroller: Sensor steuern, Frames puffern/prüfen, an Handy weiterreichen; später Vorverarbeitung, BLE |
+| ESP32-S3-DevKitC-1 N16R8 (Nachbau, IN-OUT-Brücke geschlossen) | Einziger Hauptcontroller: Sensor steuern, Frames puffern/prüfen, an Handy weiterreichen; später Vorverarbeitung, BLE |
 | Android-App | Kotlin/Compose, `usb-serial-for-android`, Live-Plots: Entfernung, Amplitude/Phase, Atmung, Puls |
 | Linux-PC (Python) | Exploration Tool (`acconeer-exptool`), Aufnahmen, Algorithmus-Entwicklung, bevor etwas aufs Handy portiert wird |
 
@@ -80,8 +81,8 @@ Datenrate grob: 40 Messpunkte × 4 Byte × 100 Hz ≈ 16 kB/s — passt in 921 6
 | Waveshare A121 Range Sensor Box | geliefert, in Betrieb seit 2026-10-30 | 48,99 € |
 | USB-C↔USB-C-Datenkabel (Handy↔ESP32) | jetzt, falls nicht vorhanden | — |
 | Testmaterial: Sperrholz, Gipskartonrest, Pappe, Glasplatte, Metallblech, Maßband | Phase 1 | meist vorhanden |
-| Lochrasterplatine, Buchsenleisten 2,54 mm, Dupont-Kabel | Phase 3 | wenige € |
-| Multimeter | Phase 3, falls nicht vorhanden | — |
+| Lochrasterplatine, Buchsenleisten 2,54 mm | Phase 3, für die feste Verdrahtung | wenige € |
+| Multimeter | vorhanden (Benning MM 3, ohne Autorange) | — |
 
 ## Grenzen und Regeln
 
