@@ -129,6 +129,10 @@ USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO4
 - Handy → nativer USB-C-Port des ESP32-S3 → 5V-Pin → A121-Board.
 - Bedarf grob: A121 ≤ 80 mA + ESP32-S3 ~100–250 mA (ohne Funk weniger) — für Handy-OTG unkritisch.
 - Bei Klon-Boards prüfen, ob der 5V-Pin auch bei Versorgung über den nativen Port Spannung führt (Multimeter).
+- **Geprüft 2026-10-30 (Board des Projektinhabers):** Pin beschriftet „5Vin“; an beiden USB-Ports nur 1,2–1,3 V
+  (Leckspannung) statt 5 V → reiner Eingang, vermutlich über Diode. A121 bleibt so ohne Strom (PWR-LED aus).
+  Optionen: Lötbrücke (z. B. „IN-OUT“, falls vorhanden – Board noch identifizieren) oder A121 separat versorgen.
+  Übergangsweise am PC: A121 per eigenem USB-C versorgen, rote Ader ab, Signale + GND bleiben.
 - Motoren (späterer Scanner) immer separat versorgen; nur GND gemeinsam.
 
 ## Pico (zurückgestellt)
