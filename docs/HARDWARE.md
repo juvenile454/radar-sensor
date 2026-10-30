@@ -77,16 +77,16 @@ WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
 | MCU_INT | GPIO18 | Busy |
 | GPIO0/1 | — | nicht verbunden |
 
-Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (aus Foto 2026-10-30, Multimeter-Bestätigung 5V/GND offen;
-SCL grün auf dem Foto nicht ganz eindeutig):
+Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (aus Foto 2026-10-30, TXD/SDA am Board korrigiert;
+Multimeter-Bestätigung 5V/GND offen; SCL grün auf dem Foto nicht ganz eindeutig):
 
 | A121 | Ader | ESP32-S3 (DevKitC-1, linke Leiste J1) |
 |---|---|---|
 | 5V | rot | 5V |
 | GND | schwarz | GND |
 | RXD | blau | GPIO4 |
-| TXD | orange | GPIO5 |
-| SDA | gelb | GPIO15 |
+| TXD | gelb | GPIO5 |
+| SDA | orange | GPIO15 |
 | SCL | grün | GPIO16 |
 | MCU_INT | weiß | GPIO18 |
 | WAKE_UP | lila | GPIO17 |
