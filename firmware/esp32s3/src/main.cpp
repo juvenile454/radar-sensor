@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/gpio.h>
 
 static const int PIN_SDA = 15;
 static const int PIN_SCL = 16;
@@ -36,7 +37,51 @@ static void cmdInfo() {
                 digitalRead(PIN_WAKE));
 }
 
+// Pegel der Leitungen lesen (funktioniert auch, während die Pins am I2C-Peripheral hängen)
+static void cmdBus() {
+  Serial.printf("SDA (GPIO%d) = %d, SCL (GPIO%d) = %d, MCU_INT = %d, WAKE_UP = %d, UART-RX (GPIO%d) = %d\n",
+                PIN_SDA, gpio_get_level((gpio_num_t)PIN_SDA), PIN_SCL, gpio_get_level((gpio_num_t)PIN_SCL),
+                digitalRead(PIN_INT), digitalRead(PIN_WAKE), PIN_UART_RX, gpio_get_level((gpio_num_t)PIN_UART_RX));
+  Serial.println("Erwartet mit versorgtem A121: SDA = SCL = 1 (Pull-ups auf dem A121-Board).");
+}
+
+// Leitung kurz vom Peripheral lösen und mit internem Pull-up/-down lesen:
+// folgt sie beiden → offen; bleibt 0 → aktiv low getrieben; bleibt 1 → extern hochgezogen/getrieben
+static void probePin(int pin) {
+  pinMode(pin, INPUT_PULLUP);
+  delay(5);
+  int up = digitalRead(pin);
+  pinMode(pin, INPUT_PULLDOWN);
+  delay(5);
+  int down = digitalRead(pin);
+  pinMode(pin, INPUT);
+  const char *v = (up && !down) ? "offen (nichts angeschlossen/hochohmig)"
+                  : (!up && !down) ? "aktiv LOW (getrieben oder starker Pull-down)"
+                  : (up && down) ? "HIGH (externer Pull-up/getrieben)" : "unklar";
+  Serial.printf("GPIO%d: mit Pull-up %d, mit Pull-down %d → %s\n", pin, up, down, v);
+}
+
+static void cmdProbe() {
+  Wire.end();
+  Serial1.end();
+  pinMode(PIN_WAKE, INPUT);
+  for (int pin : {PIN_SDA, PIN_SCL, PIN_WAKE, PIN_INT, PIN_UART_TX, PIN_UART_RX}) probePin(pin);
+  Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
+  Serial.println("WAKE_UP bleibt Eingang, bis 'wake 0|1' gesendet wird.");
+  pinMode(PIN_INT, INPUT_PULLDOWN);
+  Wire.begin(PIN_SDA, PIN_SCL, 100000);
+  Wire.setTimeOut(20);
+}
+
+static bool busIdle() {
+  return gpio_get_level((gpio_num_t)PIN_SDA) == 1 && gpio_get_level((gpio_num_t)PIN_SCL) == 1;
+}
+
 static void cmdScan() {
+  if (!busIdle()) {
+    Serial.println("Abbruch: SDA/SCL nicht beide high (A121 ohne Strom, Pull-ups fehlen oder Leitung hängt) — 'bus'");
+    return;
+  }
   int found = 0;
   for (uint8_t a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
@@ -70,6 +115,11 @@ static bool waitReady(uint32_t ms) {
 }
 
 static void cmdVer() {
+  if (!busIdle()) {
+    Serial.println("Abbruch: SDA/SCL nicht beide high — 'bus'");
+    return;
+  }
+  pinMode(PIN_WAKE, OUTPUT);
   digitalWrite(PIN_WAKE, HIGH);
   if (!waitReady(500)) Serial.println("MCU_INT bleibt low (nicht bereit / keine I2C-Firmware?)");
   const struct { uint16_t reg; const char *name; } regs[] = {
@@ -87,6 +137,8 @@ static void help() {
   Serial.println(
       "Befehle:\n"
       "  info        Chip/Flash/PSRAM, Pegel MCU_INT/WAKE_UP\n"
+      "  bus         Pegel SDA/SCL/MCU_INT/WAKE_UP/UART-RX\n"
+      "  probe       SDA/SCL/WAKE/MCU_INT/UART-TX/RX mit internem Pull-up/-down prüfen (offen/low/high)\n"
       "  scan        I2C-Bus scannen (SDA 15, SCL 16)\n"
       "  ver         A121-Register VERSION/STATUS/APPLICATION_ID lesen (nur mit i2c_*-Firmware)\n"
       "  wake 0|1    WAKE_UP setzen\n"
@@ -98,6 +150,8 @@ static void handle(String cmd) {
   cmd.trim();
   if (cmd == "help" || cmd.isEmpty()) help();
   else if (cmd == "info") cmdInfo();
+  else if (cmd == "bus") cmdBus();
+  else if (cmd == "probe") cmdProbe();
   else if (cmd == "scan") cmdScan();
   else if (cmd == "ver") cmdVer();
   else if (cmd.startsWith("wake ")) {
@@ -119,10 +173,10 @@ static void handle(String cmd) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(PIN_WAKE, OUTPUT);
-  digitalWrite(PIN_WAKE, LOW);
+  pinMode(PIN_WAKE, INPUT);  // erst bei 'wake'/'ver' treiben — schützt bei Verdrahtungsfehlern
   pinMode(PIN_INT, INPUT_PULLDOWN);
   Wire.begin(PIN_SDA, PIN_SCL, 100000);  // Pull-ups 4,7 kΩ sitzen auf dem A121-Board (Schaltplan R13/R14)
+  Wire.setTimeOut(20);
   Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
   led(0, 20, 0);
   uint32_t t0 = millis();

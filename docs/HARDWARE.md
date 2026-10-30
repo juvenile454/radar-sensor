@@ -96,6 +96,11 @@ Multimeter-Bestätigung 5V/GND offen; SCL grün auf dem Foto nicht ganz eindeuti
 ### Bring-up-Ablauf (Reihenfolge einhalten)
 
 Firmware: `firmware/esp32s3` (PlatformIO, `pio run`), Konsole über nativen USB-Port, Befehle `help`.
+Flashen: `pio run -t upload --upload-port <by-id-Port>`. Danach bleibt der S3 im Download-Modus
+(PIO-esptool 4.5 kann am USB-JTAG nicht sauber neu starten) → `esptool --chip esp32s3 -p <Port>
+--after watchdog-reset read-mac` (esptool ≥ 4.8, `uv tool install esptool`) oder RST drücken.
+Erstes Flashen über der Händler-Demo ging nur per BOOT+RST von Hand (Demo nutzt keinen USB-JTAG-Modus).
+Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
 
 1. **Kabel prüfen:** Liegt der Box ein MX1.25→Dupont-Kabel bei? Dann zuerst ohne Löten auf die
    ESP32-Stiftleisten stecken. Adernfarben notieren.
