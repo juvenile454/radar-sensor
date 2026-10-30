@@ -25,7 +25,7 @@ Ergebnis-Spalte erst nach echter Messung füllen. Aufnahmen nach `~/Data/radar-s
 |---|---|---|---|---|
 | M1 | Präsenz im Raum, Zonen, ruhig sitzend vs. bewegt | presence, smart_presence | Trefferquote, Reichweite | — |
 | M2 | Atmung sitzend/liegend, 0,3–1,5 m | breathing | Atemzüge/min vs. Zählen | — |
-| M3 | Puls sitzend, 40/60/80 cm, mit/ohne Linse | phase_tracking, sparse_iq (eigene Auswertung) | BPM vs. Smartwatch | Aufnahme A (2026-10-30, ~250 mm, hyperbolisch, 60 s, `host/a121_vitalaufnahme.py`): Atmung 20,5/min, Kandidaten 83/62/min = 4.×/3. Atmungs-Oberwelle → nicht belastbar; **keine Referenz** vorhanden. Offen: Referenzmessung, Atem-anhalten-Aufnahme. Live-Ansicht: `host/a121_livemonitor.py`. |
+| M3 | Puls sitzend, 40/60/80 cm, mit/ohne Linse | phase_tracking, sparse_iq (eigene Auswertung) | BPM vs. Smartwatch | Aufnahme A (2026-10-30, ~250 mm, hyperbolisch, 60 s, `host/a121_vitalaufnahme.py`): Atmung 20,5/min, Kandidaten 83/62/min = 4.×/3. Atmungs-Oberwelle → nicht belastbar; **keine Referenz** vorhanden. Aufnahme B (Live-Mitschnitt `2026-10-30_201219_live.npz`, ~20 s atmen / ~20 s anhalten / ~20 s atmen, Ziel 0,35 m): im Anhalte-Abschnitt (26,5–45,7 s) ein dominanter Peak bei 76/min (übrige ≤ 2 %), Autokorrelation 75/min r = 0,85, Spitzenzählung 74/min ± 20 % Intervallstreuung; beim Atmen mehrdeutig (82/64/69). Regelmäßiger Rhythmus ~75/min nachweisbar, **ob es der Puls ist: ohne Referenz offen**. Offen: Referenzmessung. Live-Ansicht: `host/a121_livemonitor.py`. |
 | M4 | Gesten / Wischen / berührungsloser Knopf | hand_motion, touchless_button | Erkennungsrate | — |
 
 ## Materialien und Umgebung

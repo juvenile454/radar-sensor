@@ -18,7 +18,7 @@ in `docs/EXPERIMENTE.md`. Noch keine eigene Firmware, keine App.
 | Ordner | Inhalt |
 |---|---|
 | `host/` | Python: Exploration Tool, Aufnahme-/Analyse-Skripte (angelegt; Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
-| `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 |
+| `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 (angelegt: Bring-up-Konsole; `pio` via `uv tool install platformio`) |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
 | `android/` | Android-App (Kotlin/Compose) |
 | `hardware/` | Verdrahtung, Lochraster-Layout, später KiCad |

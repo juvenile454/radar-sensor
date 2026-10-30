@@ -55,9 +55,15 @@ Quelle: Waveshare-Wiki „A121 Range Sensor“, Produktseite, Schaltplan-PDF (ge
 Pin-Nummern sind auf der Grafik nicht aufgedruckt; Schaltplan nummeriert umgekehrt (5V = 10).
 Vor dem Löten mit Multimeter 5V/GND am Kabel bestätigen.
 
+Aus der Schaltplan-Netzliste (H6, gelesen 2026-10-30, ungeprüft am Board): 1 GPIO1, 2 GPIO0, 3 WAKE_UP,
+4 MCU_INT, 5 SCL, 6 SDA, 7 DEBUG_TX, 8 DEBUG_RX, 9 GND, 10 5V — passt zur Tabelle oben (umgekehrt).
+Weitere Schaltplan-Fakten: I2C-Pull-ups 4,7 kΩ nach 3,3 V auf dem A121-Board (R13/R14);
+USB-VBUS speist das 5V-Netz über Schottky-Diode D3 (MBR230) → 5 V vom Stecker fließt nicht zurück in den PC-USB.
+
 ## Verdrahtung ESP32-S3 ↔ A121 (Vorschlag)
 
-I2C/INT/WAKE wie in den Waveshare-ESP32-S3-Demos, damit diese unverändert laufen.
+I2C/INT/WAKE wie in den Waveshare-ESP32-S3-Demos (geprüft im Demo-Code 2026-10-30: SDA 15, SCL 16,
+WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
 
 | A121 | ESP32-S3 | Zweck |
 |---|---|---|
@@ -70,6 +76,50 @@ I2C/INT/WAKE wie in den Waveshare-ESP32-S3-Demos, damit diese unverändert laufe
 | WAKE_UP | GPIO17 | Wake-up |
 | MCU_INT | GPIO18 | Busy |
 | GPIO0/1 | — | nicht verbunden |
+
+Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (aus Foto 2026-10-30, Multimeter-Bestätigung 5V/GND offen;
+SCL grün auf dem Foto nicht ganz eindeutig):
+
+| A121 | Ader | ESP32-S3 (DevKitC-1, linke Leiste J1) |
+|---|---|---|
+| 5V | rot | 5V |
+| GND | schwarz | GND |
+| RXD | blau | GPIO4 |
+| TXD | orange | GPIO5 |
+| SDA | gelb | GPIO15 |
+| SCL | grün | GPIO16 |
+| MCU_INT | weiß | GPIO18 |
+| WAKE_UP | lila | GPIO17 |
+| GPIO0 | braun | frei, Ende isolieren |
+| GPIO1 | grau | frei, Ende isolieren |
+
+### Bring-up-Ablauf (Reihenfolge einhalten)
+
+Firmware: `firmware/esp32s3` (PlatformIO, `pio run`), Konsole über nativen USB-Port, Befehle `help`.
+
+1. **Kabel prüfen:** Liegt der Box ein MX1.25→Dupont-Kabel bei? Dann zuerst ohne Löten auf die
+   ESP32-Stiftleisten stecken. Adernfarben notieren.
+2. **5V/GND messen:** A121 per USB am PC, Multimeter am Kabelende: 5V-Ader gegen GND ≈ 4,5–5 V
+   (nach Diode D3). Danach USB wieder ab. Erst dann Farben → Signale festschreiben.
+3. **ESP32 allein:** nativer USB-Port an den PC, Port identifizieren (`ls -l /dev/serial/by-id`),
+   Bring-up-Firmware flashen, `info` (16 MB Flash, 8 MB PSRAM erwartet), `led 48`/`led 38`.
+4. **5V-Pin des ESP32 messen**, während er nur über den nativen Port versorgt wird (Klon-Boards).
+5. **Verdrahten – alles stromlos:** Tabelle oben. RXD/TXD kreuzen (A121-RXD ← GPIO4, A121-TXD → GPIO5).
+6. **Einschalten nur über den ESP32-USB.** Rote LED am A121 muss leuchten. `scan`: mit Werksfirmware
+   (Exploration Server) wird **nichts** unter 0x52 erwartet.
+7. **STM32 auf I2C-Firmware flashen** (nur mit Freigabe des Projektinhabers; umkehrbar): A121 per USB an den PC,
+   Kanal A, `python -m acconeer.exptool.flash flash XM125 -p <if00-Port> -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
+   (BOOT-Taste laut Wiki). Zurück: gleiche Zeile mit `acc_exploration_server_a121.bin`.
+   Solange I2C-Firmware drauf ist, gehen PC-Messungen mit dem Exploration Tool nicht.
+8. **I2C prüfen:** `scan` → 0x52, `ver` → VERSION/APPLICATION_ID lesbar.
+9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
+   `uart` im ESP32 reicht ihn an USB durch.
+
+Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
+- `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`
+  (https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Firmware.zip)
+- `A121_Range_Sensor_Demo.zip` sha256 `481b587bf8e388d36846ab44a4603a2a2cd60a3a35245d674eaaaf5b1f66e144`
+  (https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Range_Sensor_Demo.zip)
 
 ESP32-S3-Pins meiden: GPIO19/20 (nativer USB), GPIO35–37 (Octal-PSRAM), GPIO43/44 (UART0 zur
 USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO48 oder 38.
