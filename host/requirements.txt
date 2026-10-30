@@ -1,0 +1,1 @@
+acconeer-exptool[app]==7.18.2

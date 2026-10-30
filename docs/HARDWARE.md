@@ -25,6 +25,18 @@ Quelle: Waveshare-Wiki „A121 Range Sensor“, Produktseite, Schaltplan-PDF (ge
 - UART-Firmware: 921 600 Baud. I2C-Firmware: Adresse 0x52 (per Lötbrücke 0x51/0x53), 100/400 kHz.
 - SWDIO/SWCLK-Pads, BOOT- und RESET-Taste vorhanden.
 
+### Bring-up am Linux-PC (geprüft 2026-10-30)
+
+- USB-ID `1a86:55d2` „USB Dual_Serial“, Seriennr. `5C75025105`, Treiber `cdc_acm` (kein Zusatztreiber).
+- `/dev/serial/by-id/usb-1a86_USB_Dual_Serial_5C75025105-if00` (ttyACM0) = Kanal A, Exploration Server
+  antwortet; `-if02` (ttyACM1) = Kanal B (Debug).
+- Werksfirmware: Exploration Server, `rss_version a121-v1.12.0`, `hardware_name xm125`, max. 2 000 000 Baud.
+- Zugriff braucht Gruppe `dialout` (der Benutzer ist Mitglied; greift nach Neuanmeldung, bis dahin `sg dialout -c …`).
+- Python-Umgebung: `.venv` (Python 3.12, `acconeer-exptool[app]` 7.18.2).
+- Sparse IQ (Profil 3, 40 Punkte, 8 Sweeps, HWAAS 16): ~117 Frames/s. Distance-Detektor läuft.
+- Reproduzierbar: Verbindung direkt nach einer beendeten Session scheitert mit `LinkError: recv timeout`,
+  der nächste Versuch läuft (Ursache offen; Verdacht Baudraten-Umschaltung).
+
 ### MX1.25-10-Pin-Stecker (laut Pinout-Grafik, Reihenfolge von oben)
 
 | # | Signal | Funktion |

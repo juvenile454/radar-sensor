@@ -1,6 +1,6 @@
 # Konzept — 60-GHz-Radar am Android-Handy
 
-Stand 2026-10-27. Status: **Konzept, nichts bestellt, nichts gebaut.**
+Stand 2026-10-30. Status: **A121 Box geliefert; Phase 0 (PC-Bring-up) erledigt, Phase 1 begonnen.**
 Fokus: **den A121 vollständig ausreizen** — mit ESP32-S3, ohne Pico.
 
 ## Ziel
@@ -77,7 +77,7 @@ Datenrate grob: 40 Messpunkte × 4 Byte × 100 Hz ≈ 16 kB/s — passt in 921 6
 
 | Was | Wann | Preis |
 |---|---|---|
-| Waveshare A121 Range Sensor Box | jetzt | 48,99 € |
+| Waveshare A121 Range Sensor Box | geliefert, in Betrieb seit 2026-10-30 | 48,99 € |
 | USB-C↔USB-C-Datenkabel (Handy↔ESP32) | jetzt, falls nicht vorhanden | — |
 | Testmaterial: Sperrholz, Gipskartonrest, Pappe, Glasplatte, Metallblech, Maßband | Phase 1 | meist vorhanden |
 | Lochrasterplatine, Buchsenleisten 2,54 mm, Dupont-Kabel | Phase 3 | wenige € |

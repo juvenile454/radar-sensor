@@ -4,7 +4,8 @@
 Lernprojekt: löten, Mikrocontroller programmieren, Signalverarbeitung (Atmung, Puls, Materialtests).
 Aktueller Fokus: den A121 vollständig ausreizen; Pico und SAR-Scanner zurückgestellt.
 
-**Status 2026-10-27:** Konzeptphase. Nichts bestellt, keine Firmware, keine App.
+**Status 2026-10-30:** A121 läuft am Linux-PC (Exploration Server ab Werk), erste Referenzmessungen
+in `docs/EXPERIMENTE.md`. Noch keine eigene Firmware, keine App.
 
 ## Dokumente
 
@@ -16,7 +17,7 @@ Aktueller Fokus: den A121 vollständig ausreizen; Pico und SAR-Scanner zurückge
 
 | Ordner | Inhalt |
 |---|---|
-| `host/` | Python: Exploration Tool, Aufnahme-/Analyse-Skripte |
+| `host/` | Python: Exploration Tool, Aufnahme-/Analyse-Skripte (angelegt; Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
 | `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
 | `android/` | Android-App (Kotlin/Compose) |
