@@ -25,7 +25,7 @@ Ergebnis-Spalte erst nach echter Messung füllen. Aufnahmen nach `~/Data/radar-s
 |---|---|---|---|---|
 | M1 | Präsenz im Raum, Zonen, ruhig sitzend vs. bewegt | presence, smart_presence | Trefferquote, Reichweite | — |
 | M2 | Atmung sitzend/liegend, 0,3–1,5 m | breathing | Atemzüge/min vs. Zählen | — |
-| M3 | Puls sitzend, 40/60/80 cm, mit/ohne Linse | phase_tracking, sparse_iq (eigene Auswertung) | BPM vs. Smartwatch | — |
+| M3 | Puls sitzend, 40/60/80 cm, mit/ohne Linse | phase_tracking, sparse_iq (eigene Auswertung) | BPM vs. Smartwatch | Aufnahme A (2026-10-30, ~250 mm, hyperbolisch, 60 s, `host/a121_vitalaufnahme.py`): Atmung 20,5/min, Kandidaten 83/62/min = 4.×/3. Atmungs-Oberwelle → nicht belastbar; **keine Referenz** vorhanden. Offen: Referenzmessung, Atem-anhalten-Aufnahme. Live-Ansicht: `host/a121_livemonitor.py`. |
 | M4 | Gesten / Wischen / berührungsloser Knopf | hand_motion, touchless_button | Erkennungsrate | — |
 
 ## Materialien und Umgebung
