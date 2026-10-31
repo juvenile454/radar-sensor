@@ -2,8 +2,12 @@
 //
 // Konsole über den nativen USB-Port (115200, Zeilenende \n). Befehle: help
 // Pins wie in docs/HARDWARE.md (= Waveshare-ESP32-S3-Demos):
-//   I2C SDA 15, SCL 16, WAKE_UP 17 (Ausgang), MCU_INT 18 (Eingang, high = bereit)
+//   I2C SDA 15, SCL 16, WAKE_UP 17 (nur lesen, s. u.), MCU_INT 18 (Eingang, high = bereit)
 //   UART1: TX 4 → A121 RXD, RX 5 ← A121 TXD (Debug-UART des STM32, 921600 Baud)
+//
+// WAKE_UP treibt auf dem Waveshare-Board der USB-Chip CH342 (DTR0, Push-Pull) – auch ohne USB, weil er
+// am 5V-Netz hängt. Der ESP32 treibt GPIO17 deshalb nur auf ausdrücklichen Befehl ('wake') und gibt die
+// Leitung wieder frei, wenn sie nicht folgt.
 //
 // Hinweis: Die I2C-Register gibt es nur mit einer i2c_*-Firmware auf dem STM32.
 // Mit der Werksfirmware (Exploration Server) findet der Scan nichts unter 0x52.
@@ -133,10 +137,15 @@ static uint32_t waitNotBusy(uint32_t ms) {
   return 0xFFFFFFFF;
 }
 
+// WAKE_UP nur lesen (CH342 treibt die Leitung), dann auf MCU_INT = bereit warten
+static bool a121Ready(uint32_t ms) {
+  if (digitalRead(PIN_WAKE) == 0)
+    Serial.println("WAKE_UP ist LOW (vom CH342/DTR0 gehalten?) – A121 schläft; A121 stromlos machen und neu einschalten");
+  return waitReady(ms);
+}
+
 static void cmdCfg(uint32_t startMm, uint32_t endMm) {
-  pinMode(PIN_WAKE, OUTPUT);
-  digitalWrite(PIN_WAKE, HIGH);
-  if (!waitReady(1000)) { Serial.println("MCU_INT nicht bereit"); return; }
+  if (!a121Ready(1000)) { Serial.println("MCU_INT nicht bereit"); return; }
   bool ok = writeReg(REG_START, startMm) && writeReg(REG_END, endMm) &&
             writeReg(REG_COMMAND, CMD_APPLY_CONFIG_AND_CALIBRATE);
   uint32_t t0 = millis();
@@ -183,9 +192,7 @@ static void cmdVer() {
     Serial.println("Abbruch: SDA/SCL nicht beide high — 'bus'");
     return;
   }
-  pinMode(PIN_WAKE, OUTPUT);
-  digitalWrite(PIN_WAKE, HIGH);
-  if (!waitReady(500)) Serial.println("MCU_INT bleibt low (nicht bereit / keine I2C-Firmware?)");
+  if (!a121Ready(500)) Serial.println("MCU_INT bleibt low (nicht bereit / keine I2C-Firmware?)");
   const struct { uint16_t reg; const char *name; } regs[] = {
       {0x0000, "VERSION"}, {0x0001, "PROTOCOL_STATUS"}, {0x0003, "DETECTOR_STATUS"}, {0xFFFF, "APPLICATION_ID"}};
   for (auto &r : regs) {
@@ -208,7 +215,7 @@ static void help() {
       "  cfg [a b]   Distanz-Detektor: Bereich a–b mm setzen, Konfig anwenden + kalibrieren (Standard 150 2000)\n"
       "  r <reg>     Register lesen (z. B. r 0x46);  w <reg> <wert> schreiben\n"
       "  dist [n]    n Distanzmessungen (Ziele mm/dB, Temperatur)\n"
-      "  wake 0|1    WAKE_UP setzen\n"
+      "  wake 0|1|z  WAKE_UP treiben (gibt frei, falls die Leitung nicht folgt) / z = freigeben\n"
       "  uart        A121-Debug-UART (921600) an USB durchreichen an/aus\n"
       "  led <pin>   RGB-LED-Pin wählen (48 oder 38) und testen");
 }
@@ -239,8 +246,20 @@ static void handle(String cmd) {
     cmdDist(constrain(n, 1, 200));
   }
   else if (cmd.startsWith("wake ")) {
-    digitalWrite(PIN_WAKE, cmd.endsWith("1") ? HIGH : LOW);
-    Serial.printf("WAKE_UP = %d\n", digitalRead(PIN_WAKE));
+    if (cmd.endsWith("z")) {
+      pinMode(PIN_WAKE, INPUT);
+      Serial.printf("WAKE_UP freigegeben, Pegel %d\n", digitalRead(PIN_WAKE));
+    } else {
+      int want = cmd.endsWith("1") ? HIGH : LOW;
+      pinMode(PIN_WAKE, OUTPUT);  // nach 'probe' ist WAKE_UP Eingang – sonst wirkt digitalWrite nicht
+      digitalWrite(PIN_WAKE, want);
+      delayMicroseconds(100);
+      int got = digitalRead(PIN_WAKE);  // OUTPUT = Ein-/Ausgang → liest den echten Pegel
+      if (got != want) {
+        pinMode(PIN_WAKE, INPUT);  // nicht gegen den CH342 arbeiten
+        Serial.printf("WAKE_UP folgt nicht (Pegel %d) – extern getrieben (CH342 DTR0?), wieder freigegeben\n", got);
+      } else Serial.printf("WAKE_UP = %d (getrieben; 'wake z' gibt frei)\n", got);
+    }
   } else if (cmd == "uart") {
     uartBridge = !uartBridge;
     if (uartBridge) Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, PIN_UART_TX);
@@ -259,7 +278,7 @@ static void handle(String cmd) {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(PIN_WAKE, INPUT);  // erst bei 'wake'/'ver' treiben — schützt bei Verdrahtungsfehlern
+  pinMode(PIN_WAKE, INPUT);  // nie dauerhaft treiben: auf dem Board treibt der CH342 (DTR0) WAKE_UP
   pinMode(PIN_INT, INPUT_PULLDOWN);
   Wire.begin(PIN_SDA, PIN_SCL, 100000);  // Pull-ups 4,7 kΩ sitzen auf dem A121-Board (Schaltplan R13/R14)
   Wire.setTimeOut(20);

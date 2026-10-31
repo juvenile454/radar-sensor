@@ -59,6 +59,14 @@ Aus der Schaltplan-Netzliste (H6, gelesen 2026-10-30, ungeprüft am Board): 1 GP
 4 MCU_INT, 5 SCL, 6 SDA, 7 DEBUG_TX, 8 DEBUG_RX, 9 GND, 10 5V — passt zur Tabelle oben (umgekehrt).
 Weitere Schaltplan-Fakten: I2C-Pull-ups 4,7 kΩ nach 3,3 V auf dem A121-Board (R13/R14);
 USB-VBUS speist das 5V-Netz über Schottky-Diode D3 (MBR230) → 5 V vom Stecker fließt nicht zurück in den PC-USB.
+**WAKE_UP und MCU_INT hängen am CH342** (Schaltplan-Ausschnitt vergrößert gelesen 2026-10-31, Verlauf über
+PDF-Textkoordinaten gegengeprüft; Bauteile nicht nachgemessen): WAKE_UP ← DTR0 (Pin 23, Ausgang),
+MCU_INT → DSR0 (Pin 22, Eingang); STM32: WAKE_UP = PA11, MCU_INT = PB9. Der CH342 hängt mit VDD5/VBUS am
+5V-Netz und treibt WAKE_UP deshalb auch ohne USB aktiv. Am Board bestätigt: GPIO17 lässt sich gegen die Leitung
+weder auf HIGH (2026-10-31 früh) noch auf LOW (nach Neustart) ziehen. Folge: Der ESP32 steuert WAKE_UP nicht; die
+Bring-up-Firmware liest GPIO17 nur (`wake` treibt nur auf Befehl und gibt bei Widerstand sofort frei).
+Schaltplan: https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Range_Sensor_schematic.pdf
+(sha256 `38e88c1ef357ba4f1ce77ac87b70f4a609cc197ace7a70b9a56eb02349627440`, nicht im Repo).
 
 ## Verdrahtung ESP32-S3 ↔ A121 (gesteckt und geprüft 2026-10-30)
 
@@ -73,7 +81,7 @@ WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
 | TXD | GPIO5 (UART1 RX) | Daten ← STM32 |
 | SDA | GPIO15 | I2C |
 | SCL | GPIO16 | I2C |
-| WAKE_UP | GPIO17 | Wake-up |
+| WAKE_UP | GPIO17 | Wake-up – vom CH342 (DTR0) getrieben, ESP32 liest nur |
 | MCU_INT | GPIO18 | Busy |
 | GPIO0/1 | — | nicht verbunden |
 
@@ -127,12 +135,12 @@ Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
 9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
    `uart` im ESP32 reicht ihn an USB durch. Auch mit `i2c_distance_detector` nutzbar: Kommando 32
    (`w 0x100 32`) schaltet Logs ein, 34 gibt die Konfiguration aus.
-10. **Distanzmessung über I2C** – siehe nächster Abschnitt. **Offen.**
+10. **Distanzmessung über I2C** – siehe nächster Abschnitt. **Erledigt 2026-10-31** (Wand 570 mm erkannt).
 
-### I2C-Distanzdetektor am ESP32 (Stand 2026-10-30, Ende Tag 1)
+### I2C-Distanzdetektor am ESP32 (Stand 2026-10-31)
 
 Konsole (`help`): `info`, `bus`, `probe`, `scan`, `ver`, `cfg [start end]` (mm), `dist [n]`,
-`r <reg>`, `w <reg> <wert>`, `wake 0|1`, `uart`, `led 48|38`.
+`r <reg>`, `w <reg> <wert>`, `wake 0|1|z`, `uart`, `led 48|38`.
 Register/Kommandos wie Waveshare-Demo (`…/ESP32S3/Arduino/A121_Distance_Detector`): START 0x40, END 0x41,
 THRESHOLD_METHOD 0x46 (1 fest/Amplitude, 2 aufgezeichnet, 3 CFAR), PEAK_SORTING 0x47 (1 nächstes, 2 stärkstes),
 FIXED_AMPLITUDE_THRESHOLD 0x49 (×1000), THRESHOLD_SENSITIVITY 0x4A (×1000), COMMAND 0x100
@@ -147,16 +155,35 @@ Geprüft:
 - Standardwerte nach Modul-Reset: Profil max. 5, CFAR, Sensitivität 0,5, Signalqualität 15, Leckage-Kompensation an,
   Sortierung „stärkstes“.
 
-**Offenes Problem:** Sensor auf die Testperson gerichtet (Abstand nicht gemessen), Bereich 100–1500 mm:
+**Wandtest 2026-10-31 (gelöst):** A121 nur über ESP32-5Vin versorgt, Backsteinwand 570 mm (Maßband),
+hyperbolische Linse, Ablauf Modul-Reset → `cfg 300 1000` (CFAR, sonst Standard) → `dist 50`:
+**50/50 Messungen mit genau einem Ziel, Median 575 mm, σ 1,3 mm, Spanne 572–578 mm**, Stärke 2,3–3,1 dB,
+Messung ~18 ms. (+5 mm zum Maßband, +16 mm zur PC-Referenz 0,5585 m – andere Detektor-Konfiguration,
+nicht weiter bewertet.) Log: `~/Data/radar-sensor/2026-10-31_105545_esp_i2c_wand570.log`.
+Detektor-Konfiguration laut Debug-UART (`w 0x100 34`): 2 Subsweeps, Profil 1 (HWAAS 2) + Profil 3 (HWAAS 1),
+Startpunkt 68 bzw. 120. Versorgung über ESP32 und I2C-Kette funktionieren damit für ein starkes Ziel.
+
+**Hänger beim Einschalten 2026-10-31:** Nach dem Einstecken des ESP32 antwortete der A121
+nicht: `scan` leer, MCU_INT und WAKE_UP hart LOW (ESP32 treibt GPIO17 HIGH, liest aber 0; ohne lila Ader ist
+GPIO17 einwandfrei), RESET-Taste half nicht. Nach frischem Einschalten (erst per A121-USB, dann wieder über
+ESP32-5Vin) lief alles normal, `probe` → alle sechs Leitungen HIGH.
+Wahrscheinliche Ursache laut Schaltplan (s. o.): Der CH342 hielt WAKE_UP über DTR0 auf LOW → STM32 schläft, RESET
+ändert daran nichts. Warum DTR0 nach diesem einen Einschalten LOW war, ist offen. Die lockere grüne Ader (SCL)
+zur selben Zeit ist als Ursache weniger wahrscheinlich, aber nicht ausgeschlossen.
+Bis zur Firmware-Änderung am 2026-10-31 trieben `ver`/`cfg` GPIO17 auf HIGH – an diesem Morgen also gegen
+den CH342 (ca. 20 min, beide Seiten 3,3-V-Push-Pull). Seitdem treibt die Firmware WAKE_UP nicht mehr; `ver`/`cfg`
+melden ein LOW nur noch.
+Regel: Nach Umstecken einer Ader oder bei `WAKE_UP ist LOW` den A121 stromlos machen und neu einschalten,
+dann `probe` (alle HIGH) und `ver` prüfen, bevor gemessen wird. Hilft das nicht: A121 kurz per USB an den PC
+(rote Ader vorher ab).
+
+Tag 1 (2026-10-30): Sensor auf die Testperson gerichtet (Abstand nicht gemessen), Bereich 100–1500 mm:
 - CFAR (Standard, auch Sensitivität 0,2): über ~30 Messungen **0 Ziele**.
 - Feste Amplitudenschwelle 1,0 / 3,0 / 10,0: 5–10 „Ziele“ pro Messung an wechselnden Abständen; Stärke steigt
   stetig mit der Entfernung (−49 dB bei ~0,13 m … −20 dB bei ~1,1 m), Schwelle 3 vs. 10 ohne Unterschied →
   sieht nach Rauschen aus, kein stabiles Echo.
-- Am PC (Exploration Server) fand derselbe Sensor die Wand sofort. Ursache offen: Ausrichtung/Abstand,
-  Versorgung über ESP32 (4,74 V, Störungen?) oder fehlende Einstellung.
-- **Nächster Test:** Backsteinwand 570 mm, hyperbolische Linse (PC-Referenz 0,5585 m), `cfg 300 1000` mit CFAR.
-  Wenn das klappt → Ausrichtung; wenn nicht → Versorgung (z. B. A121 testweise per eigenem USB-C, rote Ader ab)
-  und Konfiguration prüfen.
+- Am PC (Exploration Server) fand derselbe Sensor die Wand sofort. Der Wandtest 2026-10-31 (oben) zeigt:
+  Kette und Versorgung über ESP32 funktionieren; offen bleibt nur, warum die Testperson als Ziel nicht erkannt wurde.
 
 **Achtung:** Der A121 hat zurzeit `i2c_distance_detector` drauf → Exploration Tool, `host/a121_*.py` und
 Live-Monitor funktionieren erst nach Zurückflashen (`acc_exploration_server_a121.bin`, Schritt 7).

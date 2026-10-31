@@ -1,7 +1,7 @@
 # Konzept — 60-GHz-Radar am Android-Handy
 
-Stand 2026-10-30. Status: **Phase 0 erledigt; Phase 1 und 2 begonnen (Puls ohne Referenz); Phase 3 begonnen:
-ESP32-S3 ↔ A121 verdrahtet, I2C läuft, Distanzmessung über ESP32 liefert noch keine echten Ziele.**
+Stand 2026-10-31. Status: **Phase 0 erledigt; Phase 1 und 2 begonnen (Puls ohne Referenz); Phase 3 begonnen:
+ESP32-S3 ↔ A121 verdrahtet, I2C läuft, Distanzmessung über ESP32 findet die Wand (570 mm → 575 mm, 50/50).**
 Fokus: **den A121 vollständig ausreizen** — mit ESP32-S3, ohne Pico.
 
 ## Ziel
