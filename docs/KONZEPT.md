@@ -1,7 +1,6 @@
 # Konzept — 60-GHz-Radar am Android-Handy
 
-Stand 2026-10-31. Status: **Phase 0 erledigt; Phase 1 und 2 begonnen (Puls ohne Referenz); Phase 3 begonnen:
-ESP32-S3 ↔ A121 verdrahtet, I2C läuft, Distanzmessung über ESP32 findet die Wand (570 mm → 575 mm, 50/50).**
+Stand 2026-10-31. Status: **Phase 0 erledigt; Phase 1 und 2 weit ausgebaut (3-Subsweep Sparse-IQ mit On-Chip-Loopback @ 60 Hz sowie gleitende 7-s-Hilbert-Atmungsprojektion auf PC und ESP32 verifiziert; Referenzmessung per Smartwatch/Oximeter noch offen); Phase 3 & 4 Firmware-Architektur gebaut und verifiziert: Dual-Stack ESP32-S3 Firmware (`firmware/esp32s3/`) + `USART1`-Exploration-Server-Firmware für den STM32L431 (`firmware/stm32l431/`, `host/build_stm32_usart1_server.py`), womit der ESP32-S3 über den 10-Pin-Stecker (`GPIO4`/`GPIO5` + `GPIO15`/`GPIO16`) vollen Zugriff auf 100 % der A121-Funktionen inkl. On-Device C++ Vital-DSP im PSRAM (`iq3`), Continuous Sweep Mode (`doppler`) und transparenter High-Speed-Bridge (`bridge`) hat.**
 Fokus: **den A121 vollständig ausreizen** — mit ESP32-S3, ohne Pico.
 
 ## Ziel

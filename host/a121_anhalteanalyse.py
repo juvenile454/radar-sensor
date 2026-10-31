@@ -1,60 +1,134 @@
 """Auswertung einer Live-Monitor-/Vitalaufnahme mit Atem-anhalten-Abschnitt (Experiment M3, Aufnahme B).
 
-Findet den ruhigsten Abschnitt (geringste Brustbewegung) automatisch und vergleicht dort und im
-Atem-Abschnitt das Pulsband 0,8–2,5 Hz per Spektrum, Autokorrelation und Spitzenzählung.
+Verwendet:
+- Phasenstabilitäts-Bin-Auswahl (vermeidet Mehrwege-Auslöschung / I/Q-Nulldurchgänge wie bei Bin 79)
+- I/Q-Kreisfit + regularisierte DACM-Phasendemodulation
+- Hilbert-Atmungs-Oberwellenprojektion für den Atem-Abschnitt
+- Spektrum, Beschleunigungs-HPS (f0·2f0·3f0), Autokorrelation und Spitzenzählung (IBI)
 
   .venv/bin/python host/a121_anhalteanalyse.py <aufnahme.npz> <ausgabe_ohne_endung>
 
 Ausgabe: Kennzahlen auf stdout, <ausgabe>.png und <ausgabe>_seg.npy (Abschnittsgrenzen in Frames).
 Ohne Referenzpuls ist das Ergebnis nur ein Rhythmus-Nachweis, keine Pulsmessung.
 """
-import sys, numpy as np
+import sys
+import numpy as np
 from scipy import signal
-import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
-z = np.load(sys.argv[1]); iq = z["iq"]; fs = float(z["fs"]); d = z["distances_m"]
-print("frames", iq.shape, "fs", fs, "Dauer", len(iq)/fs, "s, zero-frames", int((np.abs(iq).sum(axis=1) == 0).sum()))
-amp = np.abs(iq).mean(axis=0); k = int(np.argmax(amp)); print("Ziel", d[k], "target_bin gespeichert", int(z["target_bin"]), d[int(z["target_bin"])])
-zz = iq[:, max(k-2, 0):k+3].mean(axis=1)
-disp = signal.detrend(np.unwrap(np.angle(zz)) * 5.0/(4*np.pi))
-t = np.arange(len(disp))/fs
-br = signal.sosfiltfilt(signal.butter(2, [0.1, 0.6], btype="band", fs=fs, output="sos"), disp)
-heart = signal.sosfiltfilt(signal.butter(4, [0.8, 2.5], btype="band", fs=fs, output="sos"), disp)
-# Atemaktivität: gleitende Spitze-Spitze (4 s) der Verschiebung ohne Trend
-w = int(4*fs); act = np.array([np.ptp(signal.detrend(disp[max(0, i-w//2):i+w//2])) for i in range(0, len(disp))])
-for s0 in range(0, int(len(disp)/fs), 5):
-    seg = slice(int(s0*fs), int((s0+5)*fs))
-    print(f"  {s0:2d}-{s0+5:2d} s: Bewegung p-p {np.ptp(signal.detrend(disp[seg])):.2f} mm, Pulsband rms {heart[seg].std()*1000:.0f} µm")
-quiet = act < np.percentile(act, 30) * 1.5
-# längster zusammenhängender ruhiger Abschnitt
+from a121_vitalaufnahme import (
+    dacm_displacement_mm,
+    hps_cardiac_peaks,
+    project_out_respiration_harmonics,
+    select_stable_chest_iq,
+)
+
+z = np.load(sys.argv[1])
+iq = z["iq"]
+fs = float(z["fs"])
+d = z["distances_m"]
+print("frames", iq.shape, "fs", fs, "Dauer", len(iq) / fs, "s, zero-frames", int((np.abs(iq).sum(axis=1) == 0).sum()))
+
+# Phasenstabiler Bin vs. naives Amplitudenmaximum
+k_raw, k_best, z_iq = select_stable_chest_iq(iq, d)
+saved_bin = int(z["target_bin"]) if "target_bin" in z else k_raw
+print(f"Gespeicherter target_bin in Datei: Bin {saved_bin} ({d[saved_bin]*1000:.1f} mm)")
+
+disp = signal.detrend(dacm_displacement_mm(z_iq))
+t = np.arange(len(disp)) / fs
+
+sos_h = signal.butter(4, [0.8, 2.5], btype="band", fs=fs, output="sos")
+br, disp_clean = project_out_respiration_harmonics(disp, fs=fs, max_harm=5)
+heart = signal.sosfiltfilt(sos_h, disp_clean)
+
+# Zum Vergleich: naiver Bin ohne Kreiszentrierung (zeigt ggf. Nulldurchgangs-Artefakt)
+zz_naive = iq[:, max(k_raw - 2, 0):k_raw + 3].mean(axis=1)
+disp_naive = signal.detrend(np.unwrap(np.angle(zz_naive)) * (5.0 / (4.0 * np.pi)))
+heart_naive = signal.sosfiltfilt(sos_h, disp_naive)
+
+# Atemaktivität: gleitende Spitze-Spitze (4 s) der Atmungskomponente + Verschiebung
+w = int(4 * fs)
+act = np.array([np.ptp(signal.detrend(disp[max(0, i - w // 2):i + w // 2])) for i in range(len(disp))])
+for s0 in range(0, int(len(disp) / fs), 5):
+    seg = slice(int(s0 * fs), int((s0 + 5) * fs))
+    print(
+        f"  {s0:2d}-{s0+5:2d} s: Bewegung p-p {np.ptp(signal.detrend(disp[seg])):.2f} mm, "
+        f"Pulsband rms {heart[seg].std()*1000:.0f} µm (naiv Bin {k_raw}: {heart_naive[seg].std()*1000:.0f} µm)"
+    )
+
+quiet = act < np.percentile(act, 35) * 1.35
 best, cur, start = (0, 0), 0, 0
 for i, q in enumerate(quiet):
     if q:
-        if cur == 0: start = i
+        if cur == 0:
+            start = i
         cur += 1
-        if cur > best[1]-best[0]: best = (start, i+1)
-    else: cur = 0
-a, b = best; print(f"ruhigster Abschnitt: {a/fs:.1f}–{b/fs:.1f} s ({(b-a)/fs:.1f} s)")
+        if cur > best[1] - best[0]:
+            best = (start, i + 1)
+    else:
+        cur = 0
+a, b = best
+print(f"ruhigster Abschnitt: {a/fs:.1f}–{b/fs:.1f} s ({(b-a)/fs:.1f} s)")
 np.save(sys.argv[2] + "_seg.npy", np.array([a, b]))
-def analyse(x, name):
-    f, p = signal.welch(x, fs=fs, nperseg=len(x), nfft=int(fs*120), window="hann")
+
+
+def analyse(x_heart, x_disp_clean, name):
+    f, p = signal.welch(x_heart, fs=fs, nperseg=len(x_heart), nfft=int(fs * 120), window="hann")
     m = (f >= 0.8) & (f <= 2.5)
-    idx, _ = signal.find_peaks(p[m]); idx = idx[np.argsort(p[m][idx])[::-1]][:3]
-    print(f"  {name}: Spektral-Kandidaten /min:", [(round(f[m][i]*60, 1), round(p[m][i]/p[m].max(), 2)) for i in idx])
-    ac = np.correlate(x - x.mean(), x - x.mean(), "full")[len(x)-1:]; ac /= ac[0]
-    lo, hi = int(fs*60/150), int(fs*60/48)
-    j = lo + int(np.argmax(ac[lo:hi])); print(f"  {name}: Autokorrelation max bei {j/fs:.3f} s → {60*fs/j:.1f} /min, r={ac[j]:.2f}")
-    pk, _ = signal.find_peaks(x, distance=int(fs*0.4), prominence=x.std()*0.5)
+    idx, _ = signal.find_peaks(p[m])
+    idx = idx[np.argsort(p[m][idx])[::-1]][:3]
+    print(f"  {name}: Spektral-Kandidaten /min:", [(round(float(f[m][i] * 60), 1), round(float(p[m][i] / p[m].max()), 2)) for i in idx])
+    _, _, hps_pks = hps_cardiac_peaks(x_disp_clean, fs=fs, fmin=0.85, fmax=2.3)
+    print(f"  {name}: Beschleunigungs-HPS (f0·2f0·3f0) /min:", hps_pks)
+    ac = np.correlate(x_heart - x_heart.mean(), x_heart - x_heart.mean(), "full")[len(x_heart) - 1:]
+    ac /= max(float(ac[0]), 1e-12)
+    lo, hi = int(fs * 60 / 150), int(fs * 60 / 48)
+    j = lo + int(np.argmax(ac[lo:hi]))
+    print(f"  {name}: Autokorrelation max bei {j/fs:.3f} s -> {60*fs/j:.1f} /min, r={ac[j]:.2f}")
+    pk, _ = signal.find_peaks(x_heart, distance=int(fs * 0.48), prominence=x_heart.std() * 0.45)
     if len(pk) > 2:
-        ibi = np.diff(pk)/fs; print(f"  {name}: {len(pk)} Spitzen, Abstand {ibi.mean():.3f} s ± {ibi.std():.3f} → {60/ibi.mean():.1f} /min")
-    return f, p
+        ibi = np.diff(pk) / fs
+        print(
+            f"  {name}: {len(pk)} Spitzen, Abstand {ibi.mean():.3f} s ± {ibi.std():.3f} "
+            f"(CV {ibi.std()/ibi.mean()*100:.1f} %) -> {60/ibi.mean():.1f} /min"
+        )
+    return f, p, pk
+
+
 hold = heart[a:b]
-fH, pH = analyse(hold, "Anhalten")
-seg_b = slice(0, a) if a > fs*10 else slice(b, len(heart))
-fB, pB = analyse(heart[seg_b], "Atmen")
+fH, pH, pkH = analyse(hold, disp_clean[a:b], "Anhalten")
+seg_b = slice(0, a) if a > fs * 10 else slice(b, len(heart))
+fB, pB, _ = analyse(heart[seg_b], disp_clean[seg_b], "Atmen (mit Hilbert-Projektion)")
+
 fig, ax = plt.subplots(3, 1, figsize=(11, 9))
-ax[0].plot(t, disp, lw=0.8); ax[0].plot(t, br); ax[0].axvspan(a/fs, b/fs, color="y", alpha=0.3); ax[0].set_ylabel("mm"); ax[0].set_title("Brustverschiebung (gelb: ruhigster Abschnitt)")
-ax[1].plot(t, heart*1000, lw=0.8); ax[1].axvspan(a/fs, b/fs, color="y", alpha=0.3); ax[1].set_ylabel("µm"); ax[1].set_title("Pulsband 0,8–2,5 Hz")
-m = (fH > 0.5) & (fH < 3)
-ax[2].plot(fH[m]*60, pH[m]/pH[m].max(), label="Anhalten"); ax[2].plot(fB[m]*60, pB[m]/pB[m].max(), label="Atmen"); ax[2].legend(); ax[2].set_xlabel("/min"); ax[2].set_title("Spektrum Pulsband (normiert)")
-fig.tight_layout(); fig.savefig(sys.argv[2] + ".png", dpi=90); print("Plot", sys.argv[2] + ".png")
+ax[0].plot(t, disp, lw=0.9, label=f"DACM Verschiebung (Bin {k_best}, {d[k_best]*1000:.0f} mm)")
+ax[0].plot(t, br, lw=1.2, label="Atmung (0,1–0,6 Hz)")
+ax[0].axvspan(a / fs, b / fs, color="y", alpha=0.3, label="ruhigster Abschnitt (Atem anhalten)")
+ax[0].set_ylabel("mm")
+ax[0].set_title("Brustverschiebung (gelb: ruhigster Abschnitt)")
+ax[0].legend(loc="upper right")
+ax[0].grid(True, alpha=0.3)
+
+ax[1].plot(t, heart_naive * 1000, lw=0.6, color="0.7", alpha=0.7, label=f"Naiv Bin {k_raw} (mit Multipath-Einbruch)")
+ax[1].plot(t, heart * 1000, lw=0.9, color="tab:green", label=f"Stabil Bin {k_best} + DACM + Projektion")
+if len(pkH) > 0:
+    ax[1].plot(t[a:b][pkH], hold[pkH] * 1000, "ro", ms=3.5, label=f"Pulse im Anhalte-Abschnitt ({len(pkH)})")
+ax[1].axvspan(a / fs, b / fs, color="y", alpha=0.3)
+ax[1].set_ylabel("µm")
+ax[1].set_title("Pulsband 0,8–2,5 Hz: Stabiler Bin + DACM vs. naiver Bin")
+ax[1].legend(loc="upper right")
+ax[1].grid(True, alpha=0.3)
+
+m = (fH > 0.5) & (fH < 3.0)
+ax[2].plot(fH[m] * 60, pH[m] / pH[m].max(), lw=1.2, label="Anhalten")
+ax[2].plot(fB[m] * 60, pB[m] / pB[m].max(), lw=1.2, label="Atmen (nach Oberwellen-Projektion)")
+ax[2].legend(loc="upper right")
+ax[2].set_xlabel("/min")
+ax[2].set_title("Spektrum Pulsband (normiert)")
+ax[2].grid(True, alpha=0.3)
+
+fig.tight_layout()
+fig.savefig(sys.argv[2] + ".png", dpi=110)
+print("Plot", sys.argv[2] + ".png")
