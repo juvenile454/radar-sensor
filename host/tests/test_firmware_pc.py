@@ -40,6 +40,28 @@ class FirmwareSyntaxTest(unittest.TestCase):
         self.assertEqual(c.returncode, 0, c.stderr[-2000:])
 
 
+class BuildFlagsTest(unittest.TestCase):
+    """Nachrechnung am PC, im Prüfstand und am Handy übersetzen mit -ffp-contract=off; die Firmware muss es auch, sonst
+    fasst GCC auf dem ESP32-S3 Multiplikation und Addition zu madd.s zusammen und die Werte weichen in den letzten
+    Bits ab (der Vergleich ESP32 ↔ Nachrechnung wäre nicht mehr bitgleich)."""
+
+    def flags(self) -> list[str]:
+        ini = (REPO / "firmware" / "esp32s3" / "platformio.ini").read_text().splitlines()
+        i = next(k for k, ln in enumerate(ini) if ln.startswith("build_flags"))
+        vals = [ini[i].split("=", 1)[1]]
+        for ln in ini[i + 1:]:
+            if not ln[:1].isspace():
+                break
+            vals.append(ln)
+        return [t for ln in vals for t in ln.split(";", 1)[0].split()]
+
+    def test_fp_contract_off_like_replay(self):
+        f = self.flags()
+        self.assertIn("-DBOARD_HAS_PSRAM", f)  # Leser findet die Liste
+        self.assertIn("-ffp-contract=off", f)
+        self.assertFalse([x for x in f if x in ("-ffast-math", "-Ofast") or x.startswith("-ffp-contract=fast")])
+
+
 class Iq3PresetTest(unittest.TestCase):
     def run_preset(self, *defines: str) -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory() as d:

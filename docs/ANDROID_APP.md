@@ -120,6 +120,10 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   Vermutete Ursache: unterschiedliche Float-Mathebibliotheken (newlib am ESP32, glibc/bionic). Eine Variante mit
   zusammengefassten Multiply-Add-Befehlen (FMA) ändert daran fast nichts. Der Shim rechnet `atan2f`, `cosf`, `powf`,
   `log10f` über double; damit sind PC und Handy gleich, gegen den ESP32 so gut wie die Float-Funktionen.
+  Seit dem Abschluss-Review des Vital-Plans übersetzt auch die Firmware mit `-ffp-contract=off` (`platformio.ini`;
+  vorher durfte GCC am ESP32-S3 zu `madd.s` zusammenfassen, die Nachrechnung nicht). Nicht gebaut, nicht geflasht:
+  Erste Prüfung nach dem nächsten Flashen ist `replay-cpp` gegen eine neue Live-Aufnahme, Zahl gleicher Zeilen gegen
+  die Tabelle oben, und `compute_us` in `@DSP` gegen vorher (ohne `madd.s` etwas langsamer).
 
 ## Bedienung und Werkzeuge
 
