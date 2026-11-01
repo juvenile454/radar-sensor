@@ -76,6 +76,18 @@ class SceneTest(unittest.TestCase):
             self.assertLess(float(amp.mean()), 60.0)
 
 
+class LeaveBenchTest(unittest.TestCase):
+    """Abschluss-Review C1: Person geht — danach weder gültiger Puls noch Zustand Apnoe (Prüfen Nr. 1 und 4)."""
+
+    def test_no_apnea_after_leaving(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "weg"],
+                           capture_output=True, text=True)
+        self.assertNotIn("VERLETZT weg: weg_apnoe_n", r.stdout)
+        self.assertNotIn("VERLETZT weg: weg_gueltig_n", r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout[-1500:])
+        self.assertIn(("weg", "weg_apnoe_n", "<=", 0), [(s, *x) for s, xs in vital_sim.LIMITS.items() for x in xs])
+
+
 class CheckCommandTest(unittest.TestCase):
     """Fertig-Kriterium V0.5: heutiger Header → Exit 0, absichtlich verschlechterter Header → Exit 1."""
 

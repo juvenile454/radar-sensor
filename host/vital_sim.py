@@ -146,10 +146,11 @@ def gauss_env(dd, fwhm):
 
 
 def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=lambda t: 15.0, breath_pp_mm=2.5,
-                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True):
+                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True, leave=None):
     """Schreibt <path>.iq (int16 real/imag je Punkt, 105 Punkte je Frame) und <path>_truth.npz.
 
-    person=False: nur Tisch, Wand und Möbel (leerer Platz vor dem Sensor)."""
+    person=False: nur Tisch, Wand und Möbel (leerer Platz vor dem Sensor). leave=t: Die Person geht bei t s (ihre
+    Streuzentren blenden in 1 s aus, Tisch, Wand und Möbel bleiben)."""
     rng = np.random.default_rng(seed)
     n = int(T * FS)
     t = np.arange(n) / FS
@@ -174,10 +175,13 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
     rd = (ROOM_START_PT + np.arange(ROOM_N) * ROOM_STEP) * STEP_M
     Z = np.zeros((n, ZOOM_N), complex)
     R = np.zeros((n, ROOM_N), complex)
+    pres = np.clip(1.0 - (t - leave), 0.0, 1.0) if leave is not None else np.ones(n)  # Person da (1) / weg (0)
     for r0, A, bs, hs, p0 in scat:
         r = r0 + bs * b + hs * h + (body if bs > 0 else 0.0)
         rot = np.exp(1j * (p0 - 4 * np.pi * r / LAM))
         a_t = A * (1 + 0.08 * bs * np.sin(ph + 0.7))  # Amplitude schwankt etwas mit der Atmung
+        if bs > 0:
+            a_t = a_t * pres
         Z += (a_t * rot)[:, None] * gauss_env(zd[None, :] - r[:, None], 0.040)   # Profil 1
         R += (a_t * rot)[:, None] * gauss_env(rd[None, :] - r[:, None], 0.140)   # Profil 3
     Z += 25 * (rng.normal(size=Z.shape) + 1j * rng.normal(size=Z.shape)) / np.sqrt(2)
@@ -212,6 +216,8 @@ SCENARIOS = {
     "tachy6": ("Puls 120 = 6 × Atmung 20", dict(rr_fn=lambda t: 20.0, hr_fn=lambda t: 120.0)),
     # Metronom 6 /min (R3): unter dem Spektralband der Atmung (ab 7 /min), nur Atemzug für Atemzug (V3.4) misst sie
     "takt6":  ("Metronom 6 /min (R3), Puls 64", dict(rr_fn=lambda t: 6.0, hr_fn=lambda t: 64.0)),
+    # Person steht auf und geht (Abschluss-Review C1): danach weder gültiger Puls noch „Apnoe" (Prüfen Nr. 1 und 4)
+    "weg":    ("Person geht bei 60 s", dict(leave=60.0)),
 }
 
 # Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
@@ -236,6 +242,8 @@ LIMITS = {
     "tachy6":  [("konf_falsch", "<=", 60.0)],                                                             # V1.3
     # Atmung 6 /min liegt unter dem Spektralband (Atem-MAE ≈ 8 /min, keine Grenze); Puls und Atemzüge schon (V3.4)
     "takt6":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8)],                                           # V3.4
+    # Person geht (Abschluss-Review C1): Puls bis dahin wie base, danach kein gültiger Wert und keine Apnoe
+    "weg":     [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("weg_gueltig_n", "<=", 0), ("weg_apnoe_n", "<=", 0)],
     # über alle Szenarien mit Person: Konfidenz der Reports mit > 10 /min Fehler bzw. ≤ 5 /min (V1.3)
     "alle":    [("konf_falsch", "<=", 40.0), ("konf_richtig", ">=", 70.0)],
 }
@@ -588,6 +596,11 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
                    atemzug_erst_s=float(b[0, 0] / 1000.0), atemzug_erst_n=float(b[0, 0] / 1000.0 * rr[0] / 60.0))
     else:
         res.update(atemzug_mae=np.nan, atemzug_p1=np.nan, atemzug_erst_s=np.nan, atemzug_erst_n=np.nan)
+    leave = SCENARIOS[name][1].get("leave")
+    if leave is not None:  # gültig: ab 16 s nach dem Gehen (nur noch leerer Platz im Fenster); Apnoe: ab 2 s (niemand da)
+        res["weg_gueltig_n"] = int(np.sum(v & (d["t_s"] >= leave + 16.0)))
+        apnea = (d["state"] == 5) | (np.nan_to_num(d["br_state"], nan=-1) == 2)
+        res["weg_apnoe_n"] = int(np.sum(apnea & (d["t_s"] >= leave + 2.0)))
     if name == "anhalt":  # gemeldete Atemfrequenz, während der Atem ganz angehalten ist (Fenster 45–60 s)
         m = (d["t_s"] >= 55) & (d["t_s"] <= 62) & v
         res["atem_beim_anhalten"] = np.round(d["br"][m], 1).tolist()

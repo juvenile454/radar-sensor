@@ -147,6 +147,9 @@ static constexpr float    kApneaRel    = 0.10f;  /* angehalten: ≥ 90 % unter d
 static constexpr float    kShallowRel  = 0.70f;  /* flach: ≥ 30 % darunter */
 static constexpr uint8_t  kBrLowReports = 1U;    /* „seit ≥ 10 s": ein niedriger Wert, das Fenster ist schon 10 s lang */
 static constexpr float    kBrMotionPct = 50.0f;  /* Zustand Bewegung ab motion_pct > 50 */
+/* Ohne sauberes Echo in so vielen Reports in Folge ist die Person weg: Referenz vergessen, sonst wird der erste
+ * Rausch-Report mit „Echo" gegen die alte Atemtiefe zur Apnoe (Abschluss-Review C1, Prüfstand weg) */
+static constexpr uint8_t  kBrEchoLostReports = 3U;
 static constexpr uint32_t kTickGapMs   = 25U;    /* tick-Abstand > 25 ms gilt als Lücke (Soll 16,7 ms; XM125: 1 tick = 1 ms) */
 static constexpr float    kSatMaxPct   = 1.0f;   /* ab 1 % gesättigter Frames im Fenster: Konfidenz × 0,5 (V1.5) */
 static constexpr uint8_t  kBrStateNormal = 0U, kBrStateNoPeak = 1U, kBrStateApnea = 2U, kBrStateMotion = 3U,
@@ -608,11 +611,12 @@ inline float breathAmplitude(const float *x, uint16_t N, float fs) {
 /** Atemzustand je Report (V1.4): 0 normal, 1 keine Atemspitze (oder kein sauberes Echo, amp < 0), 2 angehalten /
  *  Apnoe (Amplitude < 10 % des Medians der letzten 60 Werte, kBrLowReports in Folge), 3 Bewegung (motion_pct > 50),
  *  4 flach (< 70 %, ebenso lange). Während 2 und 3 wächst der Bezug nicht mit: Ein langes Anhalten oder Bewegen
- *  verschöbe sonst den Median. */
+ *  verschöbe sonst den Median. Nach kBrEchoLostReports Reports ohne sauberes Echo gilt der Bezug nicht mehr (Person
+ *  gegangen); er baut sich danach neu auf. */
 class BreathStateTracker {
 public:
     void reset() {
-        n_ = idx_ = apnea_cnt_ = shallow_cnt_ = 0;
+        n_ = idx_ = apnea_cnt_ = shallow_cnt_ = no_echo_ = 0;
         state_ = kBrStateNormal;
     }
     uint8_t update(float amp_um, bool breath_peak, float motion_pct) {
@@ -622,8 +626,11 @@ public:
             st = kBrStateMotion;
         } else if (amp_um < 0.0f) {
             apnea_cnt_ = shallow_cnt_ = 0;
+            no_echo_   = inc(no_echo_);
+            if (no_echo_ >= kBrEchoLostReports) n_ = idx_ = 0;
             st = kBrStateNoPeak;
         } else {
+            no_echo_ = 0;
             const float med = (n_ >= kBrMinRing) ? median() : -1.0f;
             apnea_cnt_   = (med > 0.0f && amp_um < kApneaRel * med) ? inc(apnea_cnt_) : 0;
             shallow_cnt_ = (med > 0.0f && amp_um < kShallowRel * med) ? inc(shallow_cnt_) : 0;
@@ -652,7 +659,7 @@ public:
 private:
     static uint8_t inc(uint8_t c) { return c < 255U ? (uint8_t)(c + 1U) : c; }
     float   ring_[kBrRingLen] = {};
-    uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, state_ = kBrStateNormal;
+    uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, no_echo_ = 0, state_ = kBrStateNormal;
 };
 
 /** Ergebnis der Einzelschläge (V1.6). */

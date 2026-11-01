@@ -271,6 +271,15 @@ class BreathStateTest(unittest.TestCase):
         self.assertEqual(st[40], 1)
         self.assertEqual(st[70], 3)
 
+    def test_reference_forgotten_after_echo_lost(self):
+        """Abschluss-Review C1: Person geht (kein sauberes Echo, amp < 0), danach ein Rausch-Report mit „Echo" — das ist
+        kein Atemanhalten; die Referenz der gegangenen Person gilt nach 3 Reports ohne Echo nicht mehr."""
+        st = self.states("amp = (k < 40) ? 2000.0f : (k < 43) ? -1.0f : 30.0f; peak = (k < 40); motion = 0")
+        self.assertNotIn(2, st[43:])
+        # kurzer Echo-Ausfall (2 Reports) beim Anhalten: Referenz bleibt, Apnoe wird erkannt
+        st = self.states("amp = (k < 40) ? 2000.0f : (k < 42) ? -1.0f : 30.0f; peak = (k < 40); motion = 0")
+        self.assertEqual(st[42], 2)
+
     def test_no_apnea_before_reference(self):
         st = self.states("amp = 30.0f; peak = true; motion = 0")
         self.assertNotIn(2, st)
