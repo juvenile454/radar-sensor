@@ -39,6 +39,17 @@ Ergebnis-Spalte erst nach echter Messung füllen. Aufnahmen nach `~/Data/radar-s
 | U5 | Wasser-Fließgeschwindigkeit (Wasserhahn, Gartenschlauch) | surface_velocity | m/s plausibel? | — |
 | U6 | Füllstand: Eimer/Glas Wasser, Mülleimer | tank_level, waste_level | mm vs. Lineal | — |
 
+## Übertragung zum Handy (Android-App)
+
+Aufbau: ESP32-S3 (`2026-11-01-app1`) per C-auf-C am Galaxy S26 Ultra, A121 über die rote 5V-Ader, App per USB-CDC.
+Details und Werkzeuge: `docs/ANDROID_APP.md`. Aufnahmen unter `~/Data/radar-sensor/phone/`.
+
+| # | Experiment | Messgröße | Ergebnis |
+|---|---|---|---|
+| T1 | Dauerlauf `iq3 0 raw` über USB, Aufnahme im Hintergrund, Bildschirm aus | Frameverlust, Rate, Pausen | 2026-11-01, 31,7 min: 113 289 Frames, 59,64 Hz nach tick, **0 Lücken**, 0 Neuverbindungen, ≈ 41 kB/s. Größter tick-Abstand 440 ms (alle 38 Abstände > 100 ms bei `@REZOOM`), größte Empfangspause 337 ms (DSP-Report ESP32 Ø 270 ms, max. 323 ms). Akku 83 → 80 % in 39 min (abgelesen) |
+| T2 | Kabel abziehen/einstecken während `iq3` | Wiederanlauf | 2026-11-01, 2×: ESP32 startet neu (Handy-Strom), App verbindet selbst und startet `iq3` neu; 0 Lücken innerhalb der 3 Streams. Pause bis zum neuen Stream 34,9 s (mit Berechtigungsdialog) bzw. 8,2 s (ohne; inkl. Zeit ohne Kabel) |
+| T3 | ESP32-DSP am Handy nachrechnen (NDK, Rohdaten aus T1) | Gleichheit Handy / PC / ESP32 | 2026-11-01: Handy = PC bytegleich; gegen ESP32 51 715 / 128 197 Zeilen gleich, Rest meist letzte Stelle, Weg ≤ 0,21 µm, Atemtiefe ≤ 1,6 µm, IBI in 1 / 1632 `@VITAL` um 16,7 ms. Rechenzeit Handy 28,4 s für 31,7 min |
+
 ## Nicht möglich mit einem Sensor
 
 - `bilateration` braucht zwei Sensoren.
