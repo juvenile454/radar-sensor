@@ -141,5 +141,21 @@ class StateBenchTest(unittest.TestCase):
         self.assertIn(("beweg", "zustand_beweg_n", ">=", 5.0), [(k, *x) for k, v in vital_sim.LIMITS.items() for x in v])
 
 
+class BreathBenchTest(unittest.TestCase):
+    """V3.4: Prüfstand wertet @BREATH aus (Rate gegen die wahre Atemfrequenz, erster Wert in Atemzügen); Szenario
+    takt6 = Metronom 6 /min (R3, unter dem Spektralband)."""
+
+    def test_breath_metrics(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "takt6", "base",
+                            "niemand"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+        self.assertIn("Atemzug für Atemzug", r.stdout)
+        self.assertIn("takt6", vital_sim.SCENARIOS)
+        lim = [(k, *x) for k, v in vital_sim.LIMITS.items() for x in v]
+        self.assertIn(("takt6", "atemzug_mae", "<=", 1.0), lim)
+        self.assertIn(("niemand", "atemzug_n", "<=", 0), lim)
+        self.assertIn(("base", "atemzug_erst_n", "<=", 2.5), lim)
+
+
 if __name__ == "__main__":
     unittest.main()

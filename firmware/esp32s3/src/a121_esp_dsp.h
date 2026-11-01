@@ -633,6 +633,150 @@ inline uint8_t measurementState(bool person, bool echo_ok, bool breath, bool val
     return person ? kStSearch : kStNoPerson;
 }
 
+/** Tor für @BREATH (V3.4): nur in ERFASSUNG, GÜLTIG und APNOE. Ohne Person ist der Weg des Telemetrie-Strahls
+ *  Rauschen (Prüfstand leer/niemand: 19–22 „Atemzüge" in 120 s), in BEWEGUNG Körperbewegung. */
+inline bool breathGateOpen(uint8_t state) { return state == kStAcquire || state == kStValid || state == kStApnea; }
+
+#define A121_DSP_BREATH 1  /* Atemzug-Erkennung und @BREATH (V3.4; für host/dsp_replay mit älteren Headern) */
+
+/** Ein erkannter Atemzug (V3.4): Spitze des gefilterten Wegs, Abstand zur vorigen Spitze im Band 4–42 /min. */
+struct BreathEvent {
+    uint32_t frame       = 0;     /* Frames seit reset() beim Erkennen (Spitze + Filterlaufzeit + Hysterese) */
+    uint32_t interval_ms = 0;     /* Abstand zur vorigen Spitze */
+    float    depth_um    = 0.0f;  /* Spitze − voriges Tal */
+    float    rate_cpm    = 0.0f;  /* 60 / Median der letzten (bis zu) kBrRateN Abstände */
+};
+
+static constexpr uint32_t kBrMinIntervalFr = 86U;   /* 42 /min = 1,43 s */
+static constexpr uint32_t kBrMaxIntervalFr = 900U;  /* 4 /min = 15 s */
+static constexpr uint8_t  kBrRateN         = 4U;
+static constexpr float    kBrHystFrac      = 0.3f;    /* Hysterese = 30 % der Spitze-Spitze-Spanne der letzten 8 s */
+static constexpr float    kBrHystMinUm     = 200.0f;  /* darunter Puls-Restwelligkeit (Puls 100 µm → ≈ 40 µm) und
+                                                      * kleine Wellen beim Anhalten (Prüfstand 144–157 µm); echter
+                                                      * Atemhub sitzend 2,3–3,4 mm (M2, M3) */
+static constexpr uint8_t  kBrSpanBlocks    = 8U;      /* Spanne aus 8 Blöcken zu 1 s */
+static_assert(kFsHz == 60.0f, "Bandpass-Koeffizienten der Atemzug-Erkennung gelten für 60 Hz");
+
+/**
+ * Atmung Atemzug für Atemzug (V3.4) auf dem Weg des Telemetrie-Strahls (µm je Frame): Bandpass 0,05–0,8 Hz aus
+ * Hochpass 1. Ordnung (ein Hochpass 2. Ordnung schwingt nach einem Atemstopp über und erzeugte einen falschen Atemzug;
+ * Preis: Tiefe bei 6 /min ≈ 11 % zu klein) und Butterworth-Tiefpass 2. Ordnung, in double (die Pole liegen dicht an
+ * z = 1), dann Spitzen und Täler mit Hysterese. Die Hysterese
+ * folgt der Spanne (max − min) der letzten 8 s, damit nach tiefen Atemzügen auch flache wieder durchgehen; nach unten
+ * begrenzt auf kBrHystMinUm gegen die Restwelligkeit des Pulses. Je Spitze ein Ereignis mit dem Abstand zur vorigen
+ * Spitze, wenn er im Band 4–42 /min liegt; bei kürzeren Abständen ersetzt die neue Spitze die alte als Bezug (sonst
+ * würde aus 45 /min jede zweite Spitze als 22 /min gezählt), längere beginnen die Rate neu, und erst die übernächste
+ * Spitze wird Bezug.
+ */
+class BreathDetector {
+public:
+    void reset() { *this = BreathDetector(); }
+
+    /** Einen Wert einspeisen; true, wenn damit ein Atemzug erkannt ist (ev gefüllt). */
+    bool push(float disp_um, BreathEvent &ev) {
+        static constexpr double kSos[2][5] = {  /* b0, b1, b2, a1, a2; scipy butter(1, 0.05, 'high') und butter(2, 0.8) */
+            {0.9973888361673892, -0.9973888361673892, 0.0, -0.9947776723347783, 0.0},
+            {0.0016556093437783469, 0.0033112186875566938, 0.0016556093437783469, -1.8816500461793153,
+             0.8882724835544287}};
+        double v = (double)disp_um;
+        for (int i = 0; i < 2; i++) {  /* Direktform II transponiert */
+            const double y = kSos[i][0] * v + s_[i][0];
+            s_[i][0] = kSos[i][1] * v - kSos[i][3] * y + s_[i][1];
+            s_[i][1] = kSos[i][2] * v - kSos[i][4] * y;
+            v = y;
+        }
+        const float y = (float)v;
+        const uint32_t n = n_++;
+
+        /* Spanne der letzten kBrSpanBlocks Sekunden (laufender Block eingeschlossen) */
+        if (n % 60U == 0U) {
+            blk_ = (uint8_t)((blk_ + 1U) % kBrSpanBlocks);
+            bmax_[blk_] = bmin_[blk_] = y;
+            if (nblk_ < kBrSpanBlocks) nblk_++;
+        }
+        if (y > bmax_[blk_]) bmax_[blk_] = y;
+        if (y < bmin_[blk_]) bmin_[blk_] = y;
+        float hi = bmax_[blk_], lo = bmin_[blk_];
+        for (uint8_t b = 0; b < nblk_; b++) {
+            if (bmax_[b] > hi) hi = bmax_[b];
+            if (bmin_[b] < lo) lo = bmin_[b];
+        }
+        const float h = fmaxf(kBrHystMinUm, kBrHystFrac * (hi - lo));
+
+        bool got = false;
+        if (dir_ == 0) {  /* Start: nur die Richtung festlegen; der Startwert ist keine Spitze und kein Tal */
+            if (n == 0 || y > ext_hi_) ext_hi_ = y;
+            if (n == 0 || y < ext_lo_) ext_lo_ = y;
+            if (y < ext_hi_ - h) {
+                dir_ = -1; ext_ = y; ext_n_ = n;
+            } else if (y > ext_lo_ + h) {
+                dir_ = 1; ext_ = y; ext_n_ = n;
+            }
+        } else if (dir_ > 0) {  /* Spitze suchen */
+            if (y > ext_) { ext_ = y; ext_n_ = n; }
+            else if (y < ext_ - h) {
+                got = onPeak(ext_, ext_n_, n, ev);
+                dir_ = -1; ext_ = y; ext_n_ = n;
+            }
+        } else {  /* Tal suchen */
+            if (y < ext_) { ext_ = y; ext_n_ = n; }
+            else if (y > ext_ + h) {
+                trough_ = ext_; have_trough_ = true;
+                dir_ = 1; ext_ = y; ext_n_ = n;
+            }
+        }
+        return got;
+    }
+
+private:
+    bool onPeak(float v, uint32_t at, uint32_t now, BreathEvent &ev) {
+        if (!have_peak_) {
+            have_peak_ = true;
+            peak_n_    = at;
+            return false;
+        }
+        const uint32_t d = at - peak_n_;
+        peak_n_ = at;
+        if (d < kBrMinIntervalFr) return false;  /* zu kurz (> 42 /min): kein Ereignis, neue Spitze ist Bezug */
+        if (d > kBrMaxIntervalFr || !have_trough_) {  /* Pause oder Lücke (< 4 /min): Rate neu */
+            niv_ = 0;
+            /* die erste „Spitze" nach einer Pause ist oft nur die Ruhelage, bevor der Weg wieder fällt: erst die
+             * nächste Spitze wird Bezug */
+            have_peak_ = !(d > kBrMaxIntervalFr);
+            return false;
+        }
+        const uint32_t iv = (uint32_t)lroundf((float)d * 1000.0f / kFsHz);
+        for (uint8_t i = kBrRateN - 1U; i > 0; i--) iv_[i] = iv_[i - 1];
+        iv_[0] = iv;
+        if (niv_ < kBrRateN) niv_++;
+        uint32_t srt[kBrRateN];
+        memcpy(srt, iv_, sizeof(srt));
+        for (uint8_t i = 1; i < niv_; i++)  /* Einfügesortierung, höchstens 4 Werte */
+            for (uint8_t j = i; j > 0 && srt[j - 1] > srt[j]; j--) {
+                const uint32_t t = srt[j];
+                srt[j] = srt[j - 1];
+                srt[j - 1] = t;
+            }
+        const float med = (niv_ % 2U) ? (float)srt[niv_ / 2U] : 0.5f * (float)(srt[niv_ / 2U - 1U] + srt[niv_ / 2U]);
+        ev.frame       = now;
+        ev.interval_ms = iv;
+        ev.depth_um    = v - trough_;
+        ev.rate_cpm    = 60000.0f / med;
+        return true;
+    }
+
+    double   s_[2][2]  = {{0.0, 0.0}, {0.0, 0.0}};
+    uint32_t n_        = 0;
+    float    bmax_[kBrSpanBlocks] = {}, bmin_[kBrSpanBlocks] = {};
+    uint8_t  blk_ = kBrSpanBlocks - 1U, nblk_ = 0;
+    int8_t   dir_      = 0;
+    float    ext_ = 0.0f, ext_hi_ = 0.0f, ext_lo_ = 0.0f, trough_ = 0.0f;
+    uint32_t ext_n_ = 0, peak_n_ = 0;
+    bool     have_peak_ = false, have_trough_ = false;
+    uint32_t iv_[kBrRateN] = {};
+    uint8_t  niv_ = 0;
+};
+
 struct VitalReport {
     bool     valid;
     uint32_t frame_count;
@@ -707,6 +851,7 @@ public:
         tot_delayed_ = tot_sat_ = tot_tickgap_ = tot_frames_ = 0;  /* neuer Stream */
         state_ = 0xFFU;
         state_since_tot_ = 0;
+        breath_gate_ = false;
         prev_delayed_ = prev_sat_ = prev_tickgap_ = 0;
 
         if (!allocated_) {
@@ -761,6 +906,8 @@ public:
         last_temp_c_          = 0;
         person_run_           = 0;  /* Raumprofil beginnt neu */
         br_track_.reset();
+        breath_det_.reset();  /* Weg beginnt bei 0: Filter und Spitzen neu (V3.4) */
+        breath_pending_       = false;
         have_last_tick_       = false;  /* Rezoom/Neubeginn: der nächste tick-Abstand zählt nicht als Lücke */
         memset(hist_sat_, 0, sizeof(hist_sat_));
 
@@ -793,6 +940,22 @@ public:
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
     uint32_t frameCount() const { return frame_count_; }  /* Frames seit begin()/Rezoom/Neubeginn */
+
+    /** Atemzug aus dem letzten pushFrame() abholen (V3.4; im Frame-Takt, Kern 1); false = keiner oder Tor zu. */
+    bool takeBreathEvent(BreathEvent &ev) {
+        if (!breath_pending_) return false;
+        breath_pending_ = false;
+        if (!breath_gate_) return false;
+        ev = breath_ev_;
+        return true;
+    }
+
+    /**
+     * Tor für @BREATH (V3.4) aus dem Zustand des letzten ausgegebenen Reports (breathGateOpen()). Im Frame-Takt setzen,
+     * wenn das Report-Ergebnis ausgegeben wird (ESP32: nach @STATE; Nachrechnung: bei @DSP), nicht im Report selbst:
+     * so sehen ESP32 und Nachrechnung das Tor ab demselben Frame. Erkannt wird auch bei geschlossenem Tor weiter.
+     */
+    void setBreathGate(bool open) { breath_gate_ = open; }
 
     /** Raumprofil (Subsweep 2): geglättete Amplitude und Bewegung je Punkt, kRoomPoints Werte. */
     const float *roomAmp() const { return room_amp_ema_; }
@@ -907,6 +1070,7 @@ public:
 
         const float disp_um = cum_phase_rad_ * kRadToUm;
         out_um_sample       = disp_um;
+        breath_pending_     = breath_det_.push(disp_um, breath_ev_);  /* V3.4 */
         hist_sat_[hist_write_idx_]    = ff.saturated ? 1U : 0U;
         hist_lb_phi_[hist_write_idx_] = lb_phi;
         hist_write_idx_ = (uint16_t)((hist_write_idx_ + 1U) % kHistoryLen);
@@ -1707,6 +1871,10 @@ private:
     int16_t  last_temp_c_          = 0;
     float    last_lb_amp_          = 0.0f;
     float    cum_phase_rad_        = 0.0f;
+    BreathDetector breath_det_;                                    /* V3.4, nur Push-Seite */
+    BreathEvent    breath_ev_;
+    bool     breath_pending_       = false;
+    bool     breath_gate_          = false;  /* V3.4, Push-Seite */
     float    prev_centered_i_      = 0.0f;
     float    prev_centered_q_      = 0.0f;
     bool     have_prev_iq_         = false;
@@ -1833,6 +2001,14 @@ inline size_t formatVitalLine(char *buf, size_t cap, uint32_t t_ms, const VitalR
 inline size_t formatStateLine(char *buf, size_t cap, uint32_t t_ms, const VitalReport &r) {
     return clampLen(snprintf(buf, cap, "@STATE,%lu,%u,%lu", (unsigned long)t_ms, (unsigned)r.state,
                              (unsigned long)r.state_since_ms),
+                    cap);
+}
+
+/** @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4): je erkanntem Atemzug, direkt nach @IQ3/@RAW des Frames.
+ *  rate = 60 / Median der letzten (bis zu) 4 Abstände, /min. */
+inline size_t formatBreathLine(char *buf, size_t cap, uint32_t t_ms, uint32_t tick, const BreathEvent &ev) {
+    return clampLen(snprintf(buf, cap, "@BREATH,%lu,%lu,%lu,%.0f,%.1f", (unsigned long)t_ms, (unsigned long)tick,
+                             (unsigned long)ev.interval_ms, ev.depth_um, ev.rate_cpm),
                     cap);
 }
 

@@ -690,6 +690,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   static const uint32_t kRoomProfEvery = 12;
   static char roomLine[a121_dsp::kRoomLineMax];
   static char repLine[a121_dsp::kReportLineMax];
+  static char breathLine[64];
   static char rawB64[((a121_dsp::kTotal3SubPts * sizeof(a121_dsp::Complex16) + 2) / 3) * 4 + 1];
   uint32_t nFrames = 0;
   ReconnectState rs;
@@ -717,6 +718,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     Serial.println(roomLine);
     if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
     printLine(repLine, a121_dsp::formatStateLine(repLine, sizeof(repLine), millis() - tStart, rep));  // V3.5
+    g_dsp.setBreathGate(a121_dsp::breathGateOpen(rep.state));  // @BREATH ab dem nächsten Frame nur mit Person (V3.4)
 
     // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
     if (mayRezoom && rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {
@@ -811,6 +813,11 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       Serial.write((const uint8_t *)rawB64, olen);
       Serial.print('\n');
     }
+
+    // V3.4: je erkanntem Atemzug @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (direkt nach @IQ3/@RAW des Frames)
+    a121_dsp::BreathEvent breath;
+    if (g_dsp.takeBreathEvent(breath))
+      printLine(breathLine, a121_dsp::formatBreathLine(breathLine, sizeof(breathLine), millis() - tStart, meta.tick, breath));
 
     if (nFrames % kRoomProfEvery == 0) {
       a121_dsp::formatRoomProfileLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, g_dsp);
@@ -1030,7 +1037,8 @@ static void help() {
       "  stm_reset             15-ms UART-Break auf GPIO16 (Neustart des Servers, je nach Firmware)\n"
       "  iq3 [sek] [start_mm] [raw]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
       "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm; 0 s = endlos)\n"
-      "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL 1/s,\n"
+      "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL/@STATE 1/s,\n"
+      "                        @BREATH je Atemzug (Abstand, Tiefe, Rate),\n"
       "                        mit 'raw' zusätzlich @RAW je Frame (1 + Zoom + 80 IQ-Punkte, Base64, ≈ 35 kB/s)\n"
       "  doppler [sek] [mm] [hz] Continuous Sweep Mode (CSM) + Double Buffering Mikro-Doppler (Standard: 15 s, 500 mm, 2000 Hz)\n"
       "                        Streams: beliebiges Zeichen beendet; Strg+R (0x12) startet den Server zum Test neu\n"

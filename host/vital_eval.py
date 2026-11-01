@@ -53,6 +53,7 @@ class Recording:
     starts_ms: list[float]           # rx_ms von @IQ3_START, @REZOOM, @RECAL (Neubeginn der Historie)
     end_ms: float                    # letzte Empfangszeit
     n_recal: int = 0                 # @RECAL-Zeilen (Neu-Kalibrierung, V1.5)
+    breath: dict | None = None       # @BREATH (V3.4): rx_ms, t_ms, interval_ms, depth_um, rate
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -120,24 +121,41 @@ def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[floa
     return vd, dd, starts
 
 
+BREATH_FIELDS = ["t_ms", "tick", "interval_ms", "depth_um", "rate"]
+
+
+def parse_breath(lines: list[str], rx: np.ndarray) -> dict[str, np.ndarray]:
+    """@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4) mit Empfangszeit."""
+    rows = []
+    for i, ln in enumerate(lines):
+        if ln.startswith("@BREATH,"):
+            v = [_num(x) for x in ln.split(",")[1:6]]
+            if len(v) == 5:
+                rows.append([rx[i] if i < rx.size else math.nan] + v)
+    a = np.array(rows, float).reshape(-1, 6)
+    return {k: a[:, i] for i, k in enumerate(["rx_ms"] + BREATH_FIELDS)}
+
+
 def load_recording(folder: pathlib.Path, lines: list[str] | None = None) -> Recording:
     """lines: statt stream.log neu gerechnete Zeilen (--replay); deren rx_ms kommt über t_ms aus dem Original."""
     folder = pathlib.Path(folder)
     orig = (folder / "stream.log").read_text(errors="replace").splitlines()
     rx = np.array([_num(r[1]) for r in _read_csv(folder / "rxtime.csv")], float)
     vd, dd, starts = parse_lines(orig, rx)
+    br = parse_breath(orig, rx)
     if lines is not None:
         vd, dd, _ = parse_lines(lines, np.full(len(lines), math.nan))
+        br = parse_breath(lines, np.full(len(lines), math.nan))
         ref_t, ref_rx = _t_to_rx(orig, rx)
-        vd["rx_ms"] = np.interp(vd["t_ms"], ref_t, ref_rx) if ref_t.size else vd["t_ms"]
-        dd["rx_ms"] = np.interp(dd["t_ms"], ref_t, ref_rx) if ref_t.size else dd["t_ms"]
+        for x in (vd, dd, br):
+            x["rx_ms"] = np.interp(x["t_ms"], ref_t, ref_rx) if ref_t.size else x["t_ms"]
     ref = _read_csv(folder / "ref_hr.csv")
     beats, rr = beats_from_ref(np.array([_num(r[0]) for r in ref], float),
                                np.array([_num(r[2]) if len(r) > 2 else math.nan for r in ref], float))
     events = [(_num(r[0]), ",".join(r[1:]).strip()) for r in _read_csv(folder / "events.csv")]
     end = float(np.nanmax(rx)) if rx.size else 0.0
     n_recal = sum(1 for ln in orig if ln.startswith("@RECAL,"))
-    return Recording(folder, vd, dd, beats, rr, events, starts, end, n_recal)
+    return Recording(folder, vd, dd, beats, rr, events, starts, end, n_recal, br)
 
 
 def _t_to_rx(lines: list[str], rx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -324,6 +342,19 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         res["br"] = {"n": int(m.sum()), "mae": float(np.mean(e)) if e.size else math.nan,
                      "p1": 100.0 * float(np.mean(e <= 1.0)) if e.size else math.nan}
     holds = intervals(rec.events, "anhalten", rec.end_ms)
+    b = rec.breath
+    if b is not None and b["rx_ms"].size:  # V3.4: Rate je Atemzug gegen das Metronom (R3)
+        bt = b["rx_ms"]
+        be = {"n": int(bt.size), "n_ref": 0, "mae": math.nan, "p1": math.nan,
+              "first_s": first_value_delays(rec.starts_ms, bt),
+              "in_hold": int(sum(((bt >= a) & (bt <= z)).sum() for a, z in holds))}
+        if marks.size >= 3:
+            bref = np.array([br_ref_at(marks, x, win_s) for x in bt])
+            m = np.isfinite(bref) & np.isfinite(b["rate"])
+            e = np.abs(b["rate"][m] - bref[m])
+            be.update(n_ref=int(m.sum()), mae=float(np.mean(e)) if e.size else math.nan,
+                      p1=100.0 * float(np.mean(e <= 1.0)) if e.size else math.nan)
+        res["breath_events"] = be
     if holds:
         if np.isfinite(d["br_state"]).any():
             res["apnea"] = apnea_eval(t, d["br_state"], holds)
@@ -378,6 +409,16 @@ def format_report(name: str, r: dict) -> str:
     if "br" in r:
         b = r["br"]
         w(f"Atmung gegen Metronom: {b['n']} Reports, MAE {_f(b['mae'])} /min, innerhalb ±1 /min {_f(b['p1'])} %.\n\n")
+    if "breath_events" in r:
+        b = r["breath_events"]
+        w(f"Atmung Atemzug für Atemzug (@BREATH): {b['n']} Atemzüge")
+        if b["n_ref"]:
+            w(f", gegen Metronom {b['n_ref']}: MAE {_f(b['mae'])} /min, innerhalb ±1 /min {_f(b['p1'])} %")
+        if b["first_s"]:
+            w(f"; erster nach Start {_f(b['first_s'][0])} s")
+        if b["in_hold"]:
+            w(f"; {b['in_hold']} in Anhalte-Abschnitten")
+        w(".\n\n")
     if "apnea" in r:
         a = r["apnea"]
         if isinstance(a, str):

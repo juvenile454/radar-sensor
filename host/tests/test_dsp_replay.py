@@ -237,5 +237,41 @@ class StateReplayTest(unittest.TestCase):
         self.assertRegex(rep, r"@STATE\s+verglichen\s+12, gleich\s+12")
 
 
+class BreathReplayTest(unittest.TestCase):
+    """V3.4: Die Nachrechnung schreibt je Atemzug eine @BREATH-Zeile direkt nach @IQ3 des Frames (eigene, wenn der
+    ESP32 keine hatte; sonst verglichen)."""
+
+    def test_breath_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            vital_sim.make_frames(d / "base", seed=1, T=30.0)       # Atmung 15 /min
+            skel, out = d / "skel.log", d / "out.log"
+            vital_sim.write_skeleton(pathlib.Path(f"{d / 'base'}.iq"), 244, skel, vital_placeholders=False)
+            vital_sim.replay_skeleton(skel, out)
+            lines = out.read_text().splitlines()
+            idx = [i for i, ln in enumerate(lines) if ln.startswith("@BREATH,")]
+            self.assertGreaterEqual(len(idx), 4)
+            for i in idx:
+                iq3 = lines[i - 1].split(",")
+                self.assertEqual(iq3[0], "@IQ3")
+                b = lines[i].split(",")
+                self.assertEqual(len(b), 6)
+                self.assertEqual((b[1], b[2]), (iq3[1], iq3[8]))     # Zeit und tick des Frames
+                self.assertAlmostEqual(float(b[3]), 4000.0, delta=200.0)
+                self.assertAlmostEqual(float(b[5]), 15.0, delta=1.0)
+            # mit @BREATH vom ESP32 (gleicher Inhalt, direkt nach @RAW) keine Abweichung
+            src = skel.read_text().splitlines()
+            by_frame = {lines[i - 1].split(",")[7]: lines[i] for i in idx}
+            withb = []
+            for ln in src:
+                withb.append(ln)
+                if ln.startswith("@RAW,") and ln.split(",")[1] in by_frame:
+                    withb.append(by_frame[ln.split(",")[1]])
+            skel2, out2 = d / "skel2.log", d / "out2.log"
+            skel2.write_text("\n".join(withb) + "\n")
+            rep = vital_sim.replay_skeleton(skel2, out2)
+        self.assertRegex(rep, rf"@BREATH\s+verglichen\s+{len(idx)}, gleich\s+{len(idx)}")
+
+
 if __name__ == "__main__":
     unittest.main()

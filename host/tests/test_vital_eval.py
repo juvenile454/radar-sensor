@@ -240,5 +240,40 @@ class MotionStateEvalTest(unittest.TestCase):
         self.assertIn("Zustand BEWEGUNG", ve.format_report("x", r))
 
 
+class BreathEventsEvalTest(unittest.TestCase):
+    def test_breath_vs_metronome(self):
+        """V3.4 (Abnahme R3): Rate je @BREATH gegen das Metronom (Einatem-Marker „ein"), Anteil ±1 /min, erster Wert
+        nach dem Start; Atemzüge in Anhalte-Abschnitten werden gezählt."""
+        lines, rx = ["@IQ3_START,610,670,60.0,1"], [0]
+        for k in range(2, 12):  # Metronom 10 /min (Marker alle 6 s), @BREATH ab 12,5 s, ein Ausreißer 12,5 /min
+            t = k * 6000 + 500
+            lines.append(f"@BREATH,{t},{t},6000,2400,{12.5 if k == 7 else 10.0}")
+            rx.append(t)
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text("\n".join(lines) + "\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n" + "".join(f"{i},{t}\n" for i, t in enumerate(rx)))
+            (p / "events.csv").write_text("rx_ms,text\n" + "".join(f"{k * 6000},ein\n" for k in range(13))
+                                          + "40000,anhalten_start\n50000,anhalten_ende\n")
+            r = ve.evaluate(ve.load_recording(p))
+        b = r["breath_events"]
+        self.assertEqual(b["n"], 10)
+        self.assertEqual(b["n_ref"], 10)
+        self.assertAlmostEqual(b["mae"], 0.25, places=6)
+        self.assertAlmostEqual(b["p1"], 90.0, places=6)
+        self.assertEqual(b["first_s"], [12.5])
+        self.assertEqual(b["in_hold"], 2)                  # 42,5 s und 48,5 s
+        self.assertIn("Atemzug für Atemzug", ve.format_report("x", r))
+
+    def test_old_firmware_without_breath(self):
+        lines, rx = ["@IQ3_START,610,670,60.0,1", "@DSP,1000,1,5,80.0,1000,0,0,0,0,0,0,0"], [0, 1000]
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text("\n".join(lines) + "\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n" + "".join(f"{i},{t}\n" for i, t in enumerate(rx)))
+            r = ve.evaluate(ve.load_recording(p))
+        self.assertNotIn("breath_events", r)
+
+
 if __name__ == "__main__":
     unittest.main()

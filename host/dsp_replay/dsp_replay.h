@@ -89,6 +89,7 @@ public:
         while (n > 0 && (s[n - 1] == '\r' || s[n - 1] == '\n' || s[n - 1] == ' ')) n--;
         cur_.assign(s, n);
         const char *c = cur_.c_str();
+        if (pend_breath_ && !starts(c, "@BREATH,")) flushBreath();  /* @BREATH gehört direkt hinter @IQ3/@RAW */
         if (starts(c, "@IQ3_START,")) onStart(c);
         else if (!running_) return;
         else if (starts(c, "@IQ3,")) onIq3(c);
@@ -98,6 +99,7 @@ public:
         else if (starts(c, "@ROOM,")) onRoom(c);
         else if (starts(c, "@VITAL,")) onVital(c);
         else if (starts(c, "@STATE,")) onState(c);
+        else if (starts(c, "@BREATH,")) onBreath(c);
         else if (starts(c, "@REZOOM,")) onRezoom(c);
         else if (starts(c, "@RECAL,")) onRecal(c);
         else if (starts(c, "@RECONNECT,")) onReconnect(c);
@@ -146,7 +148,7 @@ public:
     }
 
 private:
-    enum { IQ3, ROOMPROF, DSP, ROOM, VITAL, REZOOM, STATE, NTAGS };
+    enum { IQ3, ROOMPROF, DSP, ROOM, VITAL, REZOOM, STATE, BREATH, NTAGS };
 
     static bool starts(const char *s, const char *p) { return strncmp(s, p, strlen(p)) == 0; }
 
@@ -265,8 +267,22 @@ private:
         flushState();
     }
 
-    /** Erwartete, aber vom ESP32 nicht ausgegebene Zeilen des letzten Reports melden. */
+#ifdef A121_DSP_BREATH
+    /** Eigenes @BREATH ausgeben, wenn der ESP32 zu diesem Frame keines hatte (vor V3.4; Zeit = @IQ3-Zeile). */
+    void flushBreath() {
+        if (!pend_breath_) return;
+        missing("@BREATH neu gerechnet, beim ESP32 fehlt sie");
+        formatBreathLine(buf_, sizeof(buf_), breath_t_ms_, breath_tick_, breath_);
+        emit(buf_);
+        pend_breath_ = false;
+    }
+#else
+    void flushBreath() {}
+#endif
+
+    /** Erwartete, aber vom ESP32 nicht ausgegebene Zeilen des letzten Frames bzw. Reports melden. */
     void closePending() {
+        flushBreath();
         flushReport();
         if (pend_rezoom_) missing("@REZOOM neu gerechnet, beim ESP32 fehlt er");
         pend_rezoom_ = false;
@@ -365,6 +381,13 @@ private:
         ff.saturated = iq3 && lfield(iq3, 6) != 0;
         ff.delayed   = delayed > 0;
         dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um, ff);
+#ifdef A121_DSP_BREATH
+        if (dsp_.takeBreathEvent(breath_)) {  /* ausgegeben wird nach @IQ3, verglichen mit der folgenden ESP32-Zeile */
+            pend_breath_  = true;
+            breath_t_ms_  = iq3 ? (uint32_t)ufield(iq3, 1) : 0U;
+            breath_tick_  = (uint32_t)tick;
+        }
+#endif
 #ifdef A121_DSP_SNAPSHOT
         const size_t si = (size_t)dsp_.frameCount() % kSnapRing;
         dsp_.takeSnapshot(snaps_[si]);
@@ -421,6 +444,9 @@ private:
 #ifdef A121_DSP_STATE
         pend_state_ = true;
 #endif
+#ifdef A121_DSP_BREATH
+        dsp_.setBreathGate(breathGateOpen(rep_.state));  /* wie cmdIq3() nach @STATE: ab dem nächsten Frame */
+#endif
         pend_rezoom_ = rep_.needs_rezoom && rep_.recommended_zoom_start_pt != zoom_pt_;
     }
 
@@ -462,6 +488,23 @@ private:
         emit(c);
 #endif
     }
+
+#ifdef A121_DSP_BREATH
+    /** @BREATH vom ESP32 (V3.4): mit dem eigenen dieses Frames vergleichen. */
+    void onBreath(const char *c) {
+        if (!pend_breath_) {
+            missing("@BREATH beim ESP32, neu gerechnet keiner");
+            stats_[BREATH].compared++;
+            return;
+        }
+        pend_breath_ = false;
+        formatBreathLine(buf_, sizeof(buf_), (uint32_t)ufield(c, 1), breath_tick_, breath_);
+        compare(BREATH, c, buf_);
+        emit(buf_);
+    }
+#else
+    void onBreath(const char *c) { emit(c); }
+#endif
 
     void onRezoom(const char *c) {
         flushReport();
@@ -515,7 +558,11 @@ private:
     UltimateEspDsp &dsp_;
     VitalReport rep_ = {};
     bool running_ = false, have_iq3_ = false, have_rep_ = false, vital_ok_ = false;
-    bool pend_vital_ = false, pend_rezoom_ = false, pend_state_ = false;
+    bool pend_vital_ = false, pend_rezoom_ = false, pend_state_ = false, pend_breath_ = false;
+#ifdef A121_DSP_BREATH
+    BreathEvent breath_;
+#endif
+    uint32_t breath_t_ms_ = 0, breath_tick_ = 0;
     int32_t zoom_pt_ = 0;
     uint32_t dsp_t_ms_ = 0;
     long last_frame_ = -1;
@@ -531,7 +578,8 @@ private:
 #endif
     std::vector<bool> snap_ok_ = std::vector<bool>(kSnapRing, false);
     char buf_[kRoomLineMax];
-    TagStat stats_[NTAGS] = {{"@IQ3"}, {"@ROOMPROF"}, {"@DSP"}, {"@ROOM"}, {"@VITAL"}, {"@REZOOM"}, {"@STATE"}};
+    TagStat stats_[NTAGS] = {{"@IQ3"},  {"@ROOMPROF"}, {"@DSP"},   {"@ROOM"},
+                             {"@VITAL"}, {"@REZOOM"},   {"@STATE"}, {"@BREATH"}};
 };
 
 }  // namespace dsp_replay

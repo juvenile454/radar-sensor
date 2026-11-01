@@ -114,6 +114,16 @@ Prüfstand vorab (nur Simulation, `vital_sim.py bench --hr-win 600|720|900`): Re
 mit 10 s verletzt `beweg` (MAE 1,5), `anhalt` (Apnoe nicht erkannt, ±5-Anteil 96 %) und `leer` (1 gültiger Report)
 die Grenzwerte, mit 12 s nur `beweg` knapp (MAE 1,4 statt ≤ 1,3), 15 s hält alle. Standard bleibt 15 s bis Tag A.
 
+**Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
+jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start
+nach 2 Atemzügen. `vital_eval.py` schreibt dazu je Sitzung „Atmung Atemzug für Atemzug" (gegen die Marker „ein",
+Atemzüge in Anhalte-Abschnitten mitgezählt; R2 prüft, dass beim Anhalten keine kommen). Prüfstand vorab (nur
+Simulation): MAE 0,0–0,15 /min, alle innerhalb ±1 /min, erster Wert nach 2,0 Atemzügen (auch `takt6`, 6 /min, wo die
+spektrale Atmung mit Band ab 7 /min 8 /min daneben liegt); Ausnahmen: `flach` (0,6 mm) erst nach 4 Atemzügen (der
+Telemetrie-Strahl zentriert mit einem gleitenden Mittelwert und schwingt bei kleinem Bogen erst nach ≈ 9 s ein),
+`anhalt` 2 Atemzüge direkt nach dem Anhalten 17–19 statt 16 /min; ohne Person keine Zeile (Tor: nur in ERFASSUNG,
+GÜLTIG, APNOE).
+
 — offen (braucht Gurt und Aufnahmen)
 
 | Sitzung | Tag | Puls-MAE | ±5 /min | Verfügbarkeit | Konfidenz ≥ 70 %: ±5 | Atmung-MAE | Apnoe erkannt / Verzug |

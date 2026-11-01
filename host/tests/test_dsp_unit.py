@@ -3,6 +3,7 @@
   .venv/bin/python -m unittest host/tests/test_dsp_unit.py
 """
 
+import math
 import pathlib
 import subprocess
 import sys
@@ -690,6 +691,141 @@ class MeasurementStateTest(unittest.TestCase):
         self.assertEqual(seq[-1][0], 3)
         first_valid = next(i for i, (st, _) in enumerate(seq) if st == 3)
         self.assertEqual(seq[-1][1], (len(seq) - 1 - first_valid) * 1000)
+
+
+class BreathDetectorTest(unittest.TestCase):
+    """V3.4: Atmung Atemzug für Atemzug. Bandpass 0,05–0,8 Hz auf dem Weg (µm), Spitzen und Täler mit Hysterese; je
+    Spitze ein Ereignis mit Abstand zur vorigen Spitze (ms) und Tiefe (Spitze − voriges Tal, µm); Rate = 60 / Median
+    der letzten 4 Abstände; nur Abstände im Band 4–42 /min."""
+
+    @staticmethod
+    def events(signal: str, seconds: float) -> list[tuple[float, ...]]:
+        """signal: C-Ausdruck in t (s, double) für den Weg in µm. Rückgabe je Ereignis (Frame, Abstand_ms, Tiefe_um, Rate)."""
+        out = run_cpp(f"""
+        BreathDetector bd; BreathEvent ev;
+        for (uint32_t k = 0; k < (uint32_t)({seconds} * 60); k++) {{
+            const double t = k / 60.0;
+            if (bd.push((float)({signal}), ev))
+                printf("%lu %lu %.1f %.3f\\n", (unsigned long)ev.frame, (unsigned long)ev.interval_ms, ev.depth_um, ev.rate_cpm);
+        }}""")
+        return [tuple(float(x) for x in ln.split()) for ln in out.splitlines()]
+
+    @staticmethod
+    def hp_gain(f_hz: float) -> float:
+        """Verstärkung des Hochpasses 1. Ordnung bei 0,05 Hz (die Tiefe ist bei langsamer Atmung entsprechend kleiner)."""
+        return f_hz / math.hypot(f_hz, 0.05)
+
+    def assert_steady(self, ev, period_s: float, per_min: float, start_tol: float = 0.02, iv_tol_ms: float = 17.0):
+        """Die ersten zwei Ereignisse (Filter schwingt ein) auf start_tol genau, danach Abstand ±iv_tol_ms, Rate ±0,1."""
+        for i, (_, iv, _, rate) in enumerate(ev):
+            if i < 2:
+                self.assertAlmostEqual(iv, period_s * 1000.0, delta=start_tol * period_s * 1000.0)
+                self.assertAlmostEqual(rate, per_min, delta=start_tol * per_min)
+            else:
+                self.assertAlmostEqual(iv, period_s * 1000.0, delta=iv_tol_ms)
+                self.assertAlmostEqual(rate, per_min, delta=0.1)
+
+    def check_rhythm(self, per_min: float, seconds: float):
+        period = 60.0 / per_min
+        ev = self.events(f"1250.0 * sin(6.283185307 * {per_min / 60.0} * t)", seconds)
+        self.assertGreaterEqual(len(ev), int(seconds / period) - 2)
+        self.assert_steady(ev, period, per_min)
+        for _, _, depth, _ in ev[2:]:
+            self.assertAlmostEqual(depth, 2500.0 * self.hp_gain(per_min / 60.0), delta=0.03 * 2500.0)
+        # erster Wert nach 2 Atemzügen: nicht vor der 2. Spitze, spätestens 2,5 s nach ihr
+        self.assertGreater(ev[0][0] / 60.0, 1.25 * period)
+        self.assertLess(ev[0][0] / 60.0, 1.25 * period + 2.5)
+
+    def test_12_per_min(self):
+        self.check_rhythm(12.0, 60.0)
+
+    def test_6_per_min(self):
+        self.check_rhythm(6.0, 120.0)
+
+    def test_non_sinusoidal_breath(self):
+        # Form wie im Prüfstand (2./3. Oberwelle), 15 /min, 2,5 mm
+        ph = "(6.283185307 * 0.25 * t)"
+        ev = self.events(f"2500.0 / 2.3 * (sin({ph}) + 0.15 * sin(2 * {ph} + 0.5) + 0.05 * sin(3 * {ph} + 1.0))", 60.0)
+        self.assertGreaterEqual(len(ev), 12)
+        self.assert_steady(ev, 4.0, 15.0)
+
+    def test_band_limits(self):
+        self.assertEqual(self.events("1000.0 * sin(6.283185307 * 0.75 * t)", 60.0), [])    # 45 /min: zu schnell
+        self.assertEqual(self.events("1250.0 * sin(6.283185307 * 0.05 * t)", 120.0), [])   # 3 /min: zu langsam
+
+    def test_pulse_ripple_alone_no_breath(self):
+        self.assertEqual(self.events("50.0 * sin(6.283185307 * 1.2 * t)", 60.0), [])        # Puls 100 µm, keine Atmung
+
+    def test_shallow_after_deep(self):
+        """Die Schwelle folgt der Tiefe: Nach 30 s mit 4 mm gehen 0,6-mm-Atemzüge nach höchstens 15 s wieder durch."""
+        ev = self.events("(t < 30 ? 2000.0 : 300.0) * sin(6.283185307 * 0.25 * t)", 90.0)
+        late = [e for e in ev if e[0] > 45 * 60]
+        self.assertGreaterEqual(len(late), 10)
+        for _, iv, depth, _ in late:
+            self.assertAlmostEqual(iv, 4000.0, delta=17.0)
+            self.assertAlmostEqual(depth, 600.0 * self.hp_gain(0.25), delta=30.0)
+
+    def test_pause_restarts_rate(self):
+        """20 s ohne Atmung: kein Abstand über 15 s, danach neuer Wert nach 2 Atemzügen aus den neuen Abständen."""
+        ev = self.events("(t > 30 && t < 50 ? 0.0 : 1250.0) * sin(6.283185307 * 0.25 * t)", 90.0)
+        self.assert_steady(ev, 4.0, 15.0)
+        self.assertTrue(any(e[0] > 55 * 60 for e in ev))
+        # angehalten nach dem Einatmen (Weg bleibt oben): ebenso kein Atemzug in der Pause
+        w = "6.283185307 * 0.25"
+        ev = self.events(f"(t < 29 ? 1250.0 * sin({w} * t) : t < 49 ? 1250.0 : 1250.0 * sin({w} * (t - 20)))", 90.0)
+        self.assert_steady(ev, 4.0, 15.0)
+        self.assertFalse(any(33 * 60 < e[0] < 51 * 60 for e in ev))
+        self.assertTrue(any(e[0] > 62 * 60 for e in ev))
+
+    def test_breath_line(self):
+        out = run_cpp('BreathEvent ev; ev.interval_ms = 5000; ev.depth_um = 2499.6f; ev.rate_cpm = 12.04f; char b[80];'
+                      'formatBreathLine(b, sizeof(b), 1234, 5678, ev); printf("%s", b);')
+        self.assertEqual(out, "@BREATH,1234,5678,5000,2500,12.0")
+
+    def test_push_side_of_dsp(self):
+        """Im DSP: Weg des Telemetrie-Strahls, Ereignis nach pushFrame() abholen; Neubeginn (Rezoom) startet neu."""
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
+            "d.pushFrame(pts, kTotal3SubPts, 20, 0, um);",
+            "d.pushFrame(pts, kTotal3SubPts, 20, 0, um); BreathEvent ev; "
+            "if (d.takeBreathEvent(ev)) printf(\"%lu %lu %.3f\\n\", (unsigned long)k, (unsigned long)ev.interval_ms, ev.rate_cpm);") + """
+        d.setBreathGate(true);
+        push(1800, 1.2f);
+        printf("R\\n");
+        d.setZoomStartPoint(244);
+        push(1800, 1.2f);""")
+        before, after = out.split("R\n")
+        # Puls-Restwelligkeit auf der flachen Atemspitze: Abstände ±100 ms, Rate (Median aus 4) ±0,2 /min
+        ev = [[float(x) for x in ln.split()] for ln in before.splitlines()]
+        self.assertGreaterEqual(len(ev), 4)
+        for i, (_, iv, rate) in enumerate(ev):
+            self.assertAlmostEqual(iv, 1000.0 / 0.23, delta=200.0 if i < 2 else 100.0)
+            if i >= 3:
+                self.assertAlmostEqual(rate, 0.23 * 60.0, delta=0.2)
+        ev2 = [[float(x) for x in ln.split()] for ln in after.splitlines()]
+        self.assertGreaterEqual(len(ev2), 4)
+        self.assertGreater(ev2[0][0] - 1800, 1.0 / 0.23 * 60)   # nicht vor dem 2. Atemzug nach dem Neubeginn
+
+
+    def test_gate_from_state(self):
+        """Ausgabe nur in ERFASSUNG, GÜLTIG und APNOE (ohne Person ist der Weg Rauschen, in BEWEGUNG Körperbewegung)."""
+        out = run_cpp('for (uint8_t st = 0; st <= 5; st++) printf("%d", breathGateOpen(st));')
+        self.assertEqual(out, "001101")
+
+    def test_gate_closed_drops_events(self):
+        """Tor zu (Start): erkannt wird weiter, aber kein Ereignis; nach dem Öffnen gleich mit dem bisherigen Verlauf."""
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
+            "d.pushFrame(pts, kTotal3SubPts, 20, 0, um);",
+            "d.pushFrame(pts, kTotal3SubPts, 20, 0, um); BreathEvent ev; "
+            "if (d.takeBreathEvent(ev)) printf(\"%lu %lu\\n\", (unsigned long)k, (unsigned long)ev.interval_ms);") + """
+        push(1800, 1.2f);
+        printf("A\\n");
+        d.setBreathGate(true);
+        push(600, 1.2f);""")
+        closed, opened = out.split("A\n")
+        self.assertEqual(closed, "")
+        ev = [[float(x) for x in ln.split()] for ln in opened.splitlines()]
+        self.assertGreaterEqual(len(ev), 2)
+        self.assertLess(ev[0][0] - 1800, 1.0 / 0.23 * 60 + 60)   # spätestens ein Atemzug nach dem Öffnen
 
 
 if __name__ == "__main__":

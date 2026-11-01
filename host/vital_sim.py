@@ -210,6 +210,8 @@ SCENARIOS = {
     # Puls genau auf einer Atem-Oberwelle (120 = 6 × 20, die 3. Oberwelle 60 ist im Modell stärker als der Puls):
     # spektral nicht trennbar; der Wert darf falsch sein, die Konfidenz muss es zeigen (AUDIT_VITAL.md, Prüfen Nr. 2)
     "tachy6": ("Puls 120 = 6 × Atmung 20", dict(rr_fn=lambda t: 20.0, hr_fn=lambda t: 120.0)),
+    # Metronom 6 /min (R3): unter dem Spektralband der Atmung (ab 7 /min), nur Atemzug für Atemzug (V3.4) misst sie
+    "takt6":  ("Metronom 6 /min (R3), Puls 64", dict(rr_fn=lambda t: 6.0, hr_fn=lambda t: 64.0)),
 }
 
 # Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
@@ -232,6 +234,8 @@ LIMITS = {
     "leer":    [("n_valid", "<=", 0)],                                                                    # V1.3
     "niemand": [("n_valid", "<=", 0)],                                                                    # V1.3
     "tachy6":  [("konf_falsch", "<=", 60.0)],                                                             # V1.3
+    # Atmung 6 /min liegt unter dem Spektralband (Atem-MAE ≈ 8 /min, keine Grenze); Puls und Atemzüge schon (V3.4)
+    "takt6":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8)],                                           # V3.4
     # über alle Szenarien mit Person: Konfidenz der Reports mit > 10 /min Fehler bzw. ≤ 5 /min (V1.3)
     "alle":    [("konf_falsch", "<=", 40.0), ("konf_richtig", ">=", 70.0)],
 }
@@ -240,7 +244,7 @@ PERSON_FREE = ("leer", "niemand")
 # V2.4: erster gültiger Wert nach höchstens 6 s (wachsendes Fenster). base, harm4, brady, tachy6: Im 6-s-Fenster liegt
 # die stärkste Spitze dort auf 2 × Puls oder am Bandrand, Autokorrelation/Einzelschläge bestätigen sie nicht, der
 # vorläufige Wert wird verworfen; Grenze dort wie vor V2.4 (8 s).
-FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0}
+FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0, "takt6": 10.0}
 for _scen in LIMITS:
     if _scen not in PERSON_FREE + ("alle",):
         LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
@@ -249,6 +253,17 @@ LIMITS["beweg"].append(("zustand_beweg_n", ">=", 5.0))
 for _scen in LIMITS:
     if _scen != "alle":
         LIMITS[_scen].append(("zustand_beweg_fehl", "<=", 0))
+# V3.4 Atemzug für Atemzug: R3-Kriterium ±1 /min als MAE, Anteil ±1 /min wie gemessen (anhalt: die zwei Atemzüge nach
+# dem Anhalten; flach mit 48 Zoom-Punkten 93 %), erster Wert nach höchstens 2,5 Atemzügen (flach: Telemetrie-Strahl
+# schwingt bei 0,6 mm Atemhub erst nach ≈ 9 s ein, 4,1 Atemzüge); ohne Person kein @BREATH
+BREATH_FIRST_N = {"flach": 4.5}
+BREATH_P1 = {"anhalt": 90.0, "flach": 90.0}
+for _scen in LIMITS:
+    if _scen in PERSON_FREE:
+        LIMITS[_scen].append(("atemzug_n", "<=", 0))
+    elif _scen != "alle":
+        LIMITS[_scen] += [("atemzug_mae", "<=", 1.0), ("atemzug_p1", ">=", BREATH_P1.get(_scen, 100.0)),
+                          ("atemzug_erst_n", "<=", BREATH_FIRST_N.get(_scen, 2.5))]
 
 
 def check_limits(results: dict, limits: dict) -> list[str]:
@@ -283,9 +298,19 @@ int main(int argc, char **argv) {
     while (fread(pts, sizeof(pts[0]), kTotal3SubPts, f) == kTotal3SubPts) {
         float um;
         dsp.pushFrame(pts, kTotal3SubPts, 20, 0.0f, um);
+#ifdef A121_DSP_BREATH
+        BreathEvent bev;
+        if (dsp.takeBreathEvent(bev)) {
+            formatBreathLine(line, sizeof(line), (uint32_t)lround(n * 1000.0 / 60.0), n, bev);
+            puts(line);
+        }
+#endif
         if (++n % 60) continue;
         VitalReport r;
         const bool ok = dsp.computeVitalReport(r);
+#ifdef A121_DSP_BREATH
+        dsp.setBreathGate(breathGateOpen(r.state));
+#endif
         const uint32_t t_ms = (uint32_t)lround(n * 1000.0 / 60.0);
         formatDspLine(line, sizeof(line), t_ms, ok, r, r.compute_us);
         puts(line);
@@ -501,6 +526,9 @@ def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -
     d["hr"], d["rmssd"], d["us"] = d["hr_fused"], d["rmssd_ms"], d["compute_us"]
     st = {int(p[1]): int(p[2]) for p in (ln.split(",") for ln in lines if ln.startswith("@STATE,")) if len(p) >= 3}
     d["state"] = np.array([st.get(int(t), -1) for t in dd["t_ms"]], float)  # -1: Header ohne @STATE (vor V3.5)
+    # @BREATH (V3.4): t_ms, Frame, Abstand_ms, Tiefe_um, Rate je Atemzug
+    d["breath"] = np.array([[float(x) for x in ln.split(",")[1:6]] for ln in lines if ln.startswith("@BREATH,")],
+                           float).reshape(-1, 5)
     return d
 
 
@@ -548,6 +576,16 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     res["apnoe_fehl"] = ap["false_alarms"]
     if holds:
         res["apnoe_verzug_s"] = ap["delays_s"][0] if ap["delays_s"] else np.nan
+    # Atemzug für Atemzug (V3.4): Rate je @BREATH gegen die wahre Atemfrequenz; erster Wert in Atemzügen ab Start
+    b = d["breath"]
+    res["atemzug_n"] = int(len(b))
+    if len(b):
+        rr = np.interp(b[:, 0] / 1000.0, tr["t"], tr["rr"])
+        e = np.abs(b[:, 4] - rr)
+        res.update(atemzug_mae=float(e.mean()), atemzug_p1=float(100 * np.mean(e <= 1.0)),
+                   atemzug_erst_s=float(b[0, 0] / 1000.0), atemzug_erst_n=float(b[0, 0] / 1000.0 * rr[0] / 60.0))
+    else:
+        res.update(atemzug_mae=np.nan, atemzug_p1=np.nan, atemzug_erst_s=np.nan, atemzug_erst_n=np.nan)
     if name == "anhalt":  # gemeldete Atemfrequenz, während der Atem ganz angehalten ist (Fenster 45–60 s)
         m = (d["t_s"] >= 55) & (d["t_s"] <= 62) & v
         res["atem_beim_anhalten"] = np.round(d["br"][m], 1).tolist()
@@ -597,6 +635,13 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                       f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms ({r['rmssd_anteil']:3.0f} %) {r['konf']:4.0f}"
                       f" {kf}  {extra}")
             print(f"Rechenzeit je Report am PC (Median): {r['us'] / 1000:.1f} ms (ESP32 live vor V2.2: ≈ 270–320 ms)")
+            print("\nAtemzug für Atemzug (V3.4, @BREATH): Rate = 60 / Median der letzten 4 Abstände gegen die wahre "
+                  "Atemfrequenz; erster Wert in Atemzügen ab Start")
+            print(f"{'Szenario':8s} {'Atemzüge':>8s} {'MAE':>6s} {'±1/min':>7s} {'erst':>6s} {'(Atemzüge)':>10s}")
+            for nm in names:
+                r = evaluate(exe, data / nm, nm) if var != "original" else results[nm]
+                print(f"{nm:8s} {r['atemzug_n']:8d} {r['atemzug_mae']:6.2f} {r['atemzug_p1']:6.0f} % "
+                      f"{r['atemzug_erst_s']:5.1f}s {r['atemzug_erst_n']:8.1f}")
         results["alle"] = pooled(results)
         p = results["alle"]
         print(f"Alle Szenarien mit Person: Konfidenz-Median bei > 10 /min Fehler {p['konf_falsch']:.0f} % "
