@@ -561,9 +561,10 @@ static void cmdHello() {
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", (unsigned)(mac & 0xFF), (unsigned)((mac >> 8) & 0xFF),
            (unsigned)((mac >> 16) & 0xFF), (unsigned)((mac >> 24) & 0xFF), (unsigned)((mac >> 32) & 0xFF),
            (unsigned)((mac >> 40) & 0xFF));
-  Serial.printf("@HELLO,proto=%d,fw=%s,build=%s %s,link=%s,server=%s,mac=%s,up_ms=%lu,modes=iq3 doppler sess bridge i2c\n",
+  Serial.printf("@HELLO,proto=%d,fw=%s,build=%s %s,link=%s,server=%s,mac=%s,up_ms=%lu,modes=iq3 doppler sess bridge i2c,"
+                "iq3=%s\n",
                 PROTO_VERSION, FW_VERSION, __DATE__, __TIME__, linkName(), g_serverVersion.c_str(), macStr,
-                (unsigned long)millis());
+                (unsigned long)millis(), a121_srv::iq3PresetTag());
 }
 
 // Eingabe während eines Streams (iq3, doppler): 0x12 (Strg+R) startet den Server absichtlich per Break neu, damit sich

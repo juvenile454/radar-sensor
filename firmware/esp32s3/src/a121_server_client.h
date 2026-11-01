@@ -40,6 +40,37 @@
 
 namespace a121_srv {
 
+/* iq3-Preset (V4, Messung V4.1/V4.2 in docs/EXPERIMENTE.md): Zoom- und Loopback-Einstellung als Übersetzungsschalter,
+ * Standard wie bisher. Die DSP rechnet nur mit 60 Hz (Filter), deshalb ist die Frame-Rate kein Schalter. */
+#ifndef A121_IQ3_ZOOM_PROFILE
+#define A121_IQ3_ZOOM_PROFILE 1
+#endif
+#ifndef A121_IQ3_ZOOM_HWAAS
+#define A121_IQ3_ZOOM_HWAAS 32
+#endif
+#ifndef A121_IQ3_LOOP_PROFILE
+#define A121_IQ3_LOOP_PROFILE 1
+#endif
+#ifndef A121_IQ3_LOOP_GAIN
+#define A121_IQ3_LOOP_GAIN 16
+#endif
+#ifndef A121_IQ3_LOOP_PRF
+#define A121_IQ3_LOOP_PRF "19_5_MHz"  /* 19,5 MHz nur mit Profil 1; 15,6 MHz geht, weil der Zoom 15,6 MHz hat */
+#endif
+static_assert(A121_IQ3_ZOOM_PROFILE >= 1 && A121_IQ3_ZOOM_PROFILE <= 5, "A121_IQ3_ZOOM_PROFILE: 1..5");
+static_assert(A121_IQ3_ZOOM_HWAAS >= 1 && A121_IQ3_ZOOM_HWAAS <= 511, "A121_IQ3_ZOOM_HWAAS: 1..511");
+static_assert(A121_IQ3_LOOP_PROFILE >= 1 && A121_IQ3_LOOP_PROFILE <= 5 && A121_IQ3_LOOP_PROFILE != 2,
+              "A121_IQ3_LOOP_PROFILE: Loopback geht nicht mit Profil 2");
+static_assert(A121_IQ3_LOOP_GAIN >= 0 && A121_IQ3_LOOP_GAIN <= 23, "A121_IQ3_LOOP_GAIN: 0..23");
+
+#define A121_IQ3_STR2(x) #x
+#define A121_IQ3_STR(x) A121_IQ3_STR2(x)
+/** Kennung des iq3-Presets für @HELLO, z. B. "p1h32/lp1g16/19_5_MHz" (Zoom-Profil/HWAAS, Loopback-Profil/Gain/PRF). */
+inline const char *iq3PresetTag() {
+    return "p" A121_IQ3_STR(A121_IQ3_ZOOM_PROFILE) "h" A121_IQ3_STR(A121_IQ3_ZOOM_HWAAS) "/lp" A121_IQ3_STR(
+        A121_IQ3_LOOP_PROFILE) "g" A121_IQ3_STR(A121_IQ3_LOOP_GAIN) "/" A121_IQ3_LOOP_PRF;
+}
+
 struct SubsweepSpec {
     int32_t     start_point;
     uint16_t    num_points;
@@ -235,8 +266,9 @@ public:
 
     /**
      * @brief Baut das 3-Subsweep Ultimate Vital + Raum-Tracking Preset:
-     *        - Subsweep 0: On-Chip Loopback (1 Punkt, Profil 1, HWAAS 8, Loopback=true)
-     *        - Subsweep 1: 2.5-mm Vital-Zoom (24 Punkte = 60 mm, Step 1, Profil 1, HWAAS 32, Phase Enhancement)
+     *        - Subsweep 0: On-Chip Loopback (1 Punkt, Profil 1, HWAAS 8, Gain 16, 19,5 MHz, Loopback=true)
+     *        - Subsweep 1: 2.5-mm Vital-Zoom (24 Punkte = 60 mm, Step 1, Profil 1, HWAAS 32, 15,6 MHz, Phase Enhancement)
+     *        Zoom-Profil/HWAAS und Loopback-Profil/Gain/PRF über A121_IQ3_* (oben, Standard wie hier).
      *        - Subsweep 2: Full-Room Scan (80 Punkte, 0.30..2.67 m, Step 12 = 30 mm, Profil 3, HWAAS 16)
      */
     static SessionSpec make3SubsweepPreset(int32_t zoom_start_pt = 200, float frame_rate_hz = 60.0f) {
@@ -252,12 +284,12 @@ public:
 
         /* Subsweep 0: Interner On-Chip TX->RX Loopback */
         spec.subsweeps[0] = {
-            0, 1, 1, 1, 8, 16,
-            true, false, true, true, "19_5_MHz"
+            0, 1, 1, A121_IQ3_LOOP_PROFILE, 8, A121_IQ3_LOOP_GAIN,
+            true, false, true, true, A121_IQ3_LOOP_PRF
         };
         /* Subsweep 1: Kohärenter 2.5-mm Vital-Zoom */
         spec.subsweeps[1] = {
-            zoom_start_pt, a121_dsp::kZoomPoints, 1, 1, 32, 16,
+            zoom_start_pt, a121_dsp::kZoomPoints, 1, A121_IQ3_ZOOM_PROFILE, A121_IQ3_ZOOM_HWAAS, 16,
             true, true, true, false, "15_6_MHz"
         };
         /* Subsweep 2: Gleichzeitiger Raum-Scan (0.30..2.67 m, 30-mm Raster) */

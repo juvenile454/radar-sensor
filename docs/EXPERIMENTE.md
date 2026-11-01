@@ -191,6 +191,73 @@ GÜLTIG, APNOE).
 |---|---|---|---|---|---|---|---|
 | — | — | — | — | — | — | — | — |
 
+### V4 Sensor-Konfiguration (Messplan, offen)
+
+Plan V4.1–V4.4 in `docs/AUDIT_VITAL.md` (Experimente G1, G5, M3). Daten nach `~/Data/radar-sensor/v4/`,
+nicht ins Repo. Vor jeder Aufnahme den ESP32 eindeutig bestimmen (`ls -l /dev/serial/by-id`, genau ein
+`usb-Espressif…-if00`); die Werkzeuge brechen ab, wenn es nicht genau einer ist. Sensor nur in seinen zulässigen
+Einstellungen betreiben (Profile, HWAAS, PRF, Gain); exptool prüft jede Konfiguration vor dem Setup.
+
+**V4.1 Weg-Rauschen statisch.** Metallplatte 0,6 m vor dem Sensor (Maßband), Raum leer, nichts bewegt sich; ESP32
+und Sensor 5 min eingeschaltet (Temperatur). `sess run` liefert nur Amplituden, keine Phase; deshalb nimmt
+`host/noise_floor.py record` über die ESP32-Brücke `bridge` mit exptool auf (Loopback + 24 Zoom-Punkte ab
+`--start-mm`, je 60 s; ohne Angaben wie das `iq3`-Preset: Zoom Profil 1, HWAAS 32, Gain 16, 15,6 MHz; Loopback
+Profil 1, HWAAS 8, Gain 16, 19,5 MHz). Zuerst die Lage des Echos mit `iq3 10` oder `sess run 5 peak` bestimmen und
+`--start-mm` so wählen, dass es in der Mitte der 60 mm liegt (Platte bei 600 mm → `--start-mm 570`).
+
+| Block | Aufnahmen | Werte |
+|---|---|---|
+| Zoom | 24 | `--profile` 1 / 2 / 3 × `--hwaas` 16 / 32 / 64 / 128 × `--rate` 30 / 60 |
+| Loopback | 5 | bei Zoom Profil 1, HWAAS 32, 60 Hz: `--loop-profile 4 --loop-prf 15.6`, `--loop-profile 5 --loop-prf 15.6`, `--loop-prf 15.6`, `--loop-gain 10`, und die Grundeinstellung noch einmal am Ende (Drift) |
+| Firmware-Pfad | 1 | `iq3 60 570 raw` mit `host/esp_record.py` (dieselbe Einstellung wie Zoom 1/32/60, aber über die Firmware) |
+| Neustart | — | Phase vor/nach Session-Neustart: `host/rezoom_check.py` (V2.3 Schritt 1) |
+
+Exptool-Regeln (offline geprüft, `host/tests/test_noise_floor.py`): 19,5 MHz nur mit Profil 1; Loopback nicht mit
+Profil 2; die PRF eines Subsweeps darf nicht kleiner sein als die des folgenden — Loopback mit 15,6 MHz geht also nur,
+weil der Zoom 15,6 MHz hat. Ob der Sensor 60 Hz bei HWAAS 128 schafft, zeigt erst die Messung: `record` zählt Frames
+mit Flags (gesättigt, verspätet, Kalibrierung); eine Einstellung mit Flags gilt als nicht erreichbar.
+
+```bash
+sg dialout -c ".venv/bin/python host/noise_floor.py record --out ~/Data/radar-sensor/v4/v41/p1_h32_60.npz --start-mm 570 --profile 1 --hwaas 32 --rate 60"
+```
+
+```bash
+.venv/bin/python host/noise_floor.py eval ~/Data/radar-sensor/v4/v41/*.npz ~/Data/radar-sensor/v4/v41/iq3_* > ~/Data/radar-sensor/v4/v41/bericht.txt
+```
+
+Auswertung je Aufnahme: Weg-RMS im Band 0,6–5 Hz (wie das Pulsband der DSP), Median der starken Zoom-Punkte und bester
+Punkt, je für Derotation `aus`, `roh` (wie die Firmware) und `tiefpass` (Loopback-Phase mit 0,8 Hz geglättet, wie
+früher am PC). Entscheidung: Rauschboden je Einstellung (kleinster Median ohne Flags); Derotation `roh` bleibt, wenn
+sie den Median gegen `aus` senkt; `tiefpass` kommt in die Firmware, wenn er mindestens 10 % unter `roh` liegt;
+Loopback-Einstellung wie die beste der fünf.
+
+**V4.2 Person mit Gurt.** Die 3 besten Einstellungen aus V4.1 mit 60 Hz (die DSP rechnet nur mit 60 Hz) je als
+Firmware-Variante übersetzen und je R1 (5 min, M5) aufnehmen. Zoom-Profil/HWAAS und Loopback-Profil/Gain/PRF sind
+Übersetzungsschalter in `firmware/esp32s3/src/a121_server_client.h` (`A121_IQ3_ZOOM_PROFILE`, `A121_IQ3_ZOOM_HWAAS`,
+`A121_IQ3_LOOP_PROFILE`, `A121_IQ3_LOOP_GAIN`, `A121_IQ3_LOOP_PRF`; Standard 1 / 32 / 1 / 16 / 19,5 MHz), z. B. in
+`platformio.ini` als `build_flags = -DA121_IQ3_ZOOM_HWAAS=64`. `@HELLO` meldet die Einstellung als `iq3=p1h64/lp1g16/19_5_MHz`
+(steht in `meta.json` der Aufnahme). Flashen nur nach eindeutiger Port-Bestimmung. Auswertung mit `vital_eval.py`
+wie M5; Entscheidung: Puls-MAE und Verfügbarkeit in R1, bei Gleichstand der kleinere Rauschboden. Ergebnis wird das
+neue Standard-Preset. 30 Hz nur, wenn V4.1 dort deutlich weniger Rauschen zeigt — dafür müsste die DSP (Filter,
+Fenster) für 30 Hz neu ausgelegt werden (eigener Plan).
+
+**V4.3 Linse und Abstand.** Wie R6/R7 in M5 (ohne / hyperbolische Linse × 0,4 / 0,6 / 0,8 / 1,0 m, je 3 min mit Gurt),
+mit dem Preset aus V4.2. Entscheidung: empfohlener Aufbau = kleinster Puls-MAE bei Verfügbarkeit ≥ 80 %; Reichweite =
+größter Abstand mit Puls-MAE ≤ 5 /min.
+
+**V4.4 Zoom-Breite.** Firmware mit `A121_ZOOM_POINTS=48` gegen 24 (Standard), je R1 und R5 an Tag A; auswerten mit
+`vital_eval.py` (für die Nachrechnung mit 48 Punkten eine Header-Kopie mit `#define A121_ZOOM_POINTS 48`). Entscheidung
+für V2.3 Schritt 3: 48 nur, wenn R5 (Bewegung) mehr gültige Werte bei gleichem Puls-MAE in R1 hat.
+
+— offen (braucht Metallplatte, Gurt, Aufnahmen; Werkzeuge nur mit Simulation geprüft)
+
+| Messung | Ergebnis |
+|---|---|
+| V4.1 Rauschboden | — |
+| V4.2 Preset | — |
+| V4.3 Aufbau / Reichweite | — |
+| V4.4 Zoom-Breite | — |
+
 ## Materialien und Umgebung
 
 | # | Experiment | Modul | Messgröße | Ergebnis |

@@ -60,7 +60,8 @@ unlesbare Zeilen, DSP-Rechenzeit, Temperatur, Zeilen je Tag, Ereignisse.
 
 ## Firmware-Erweiterungen (ESP32, nur ergänzend) — umgesetzt in `2026-11-01-app1`
 
-- **F1** `hello` → `@HELLO,proto=1,fw=…,build=…,link=srv|i2c|frei,server=…,mac=…,up_ms=…,modes=…`.
+- **F1** `hello` → `@HELLO,proto=1,fw=…,build=…,link=srv|i2c|frei,server=…,mac=…,up_ms=…,modes=…`; seit V4 hinten
+  `iq3=p1h32/lp1g16/19_5_MHz` (iq3-Preset: Zoom-Profil/HWAAS, Loopback-Profil/Gain/PRF).
 - **F2** `@IQ3` und `@DOPPLER` hinten um Frame-Zähler und Sensor-`tick` ergänzt.
 - **F3** `iq3 [sek] [start_mm] raw` → je Frame `@RAW,frame,tick,n,<Base64>` (105 Punkte = 420 B), App misst
   ≈ 41 kB/s gesamt statt ≈ 5 kB/s.

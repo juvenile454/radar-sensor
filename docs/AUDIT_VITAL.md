@@ -1,8 +1,9 @@
 # Audit Vitalerkennung — Befunde und Umsetzungsplan
 
-Stand 2026-11-01. Ziel: bessere Vitalerkennung (Atmung, Puls), genauere Daten, schnellere Erkennung, belastbare
-Auswertung. Geprüft wurden Doku, Firmware (ESP32-DSP, Server-Client, `iq3`-Schleife), PC-Skripte, C++-Nachrechnung und
-App. Dazu Herstellerdoku (Acconeer), Fachliteratur und ein synthetischer Prüfstand (`host/vital_sim.py`).
+Stand 2026-11-01 (Umsetzung der Software-Teile: Abschnitt 6, „Stand der Umsetzung“). Ziel: bessere Vitalerkennung
+(Atmung, Puls), genauere Daten, schnellere Erkennung, belastbare Auswertung. Geprüft wurden Doku, Firmware (ESP32-DSP,
+Server-Client, `iq3`-Schleife), PC-Skripte, C++-Nachrechnung und App. Dazu Herstellerdoku (Acconeer), Fachliteratur
+und ein synthetischer Prüfstand (`host/vital_sim.py`).
 
 **Wichtig:** Im Audit lagen keine Messdaten vor (die liegen unter `~/Data/radar-sensor/`). Zahlen sind deshalb
 mit ihrer Quelle markiert: **[Code]** gelesen, **[Doku]** aus `docs/`, **[Sim]** aus dem Prüfstand (Modell, keine
@@ -391,6 +392,27 @@ Nutzung prüfen; Daten nach `~/Data/radar-sensor/public/`, nicht ins Repo.
   KTU-Abschlussarbeit (A121): https://epubl.ktu.edu/object/elaba:199466836/index.html
 
 ## 6. Umsetzungsplan
+
+### Stand der Umsetzung (2026-11-01)
+
+Die Software-Teile aller Phasen sind umgesetzt und am PC geprüft (Python-Suite `host/tests`, Prüfstand
+`vital_sim.py bench --check`, Nachrechnung, App-Logik in einem JVM-Projekt). **Nichts davon ist am Gerät gelaufen:**
+In der Cloud-Umgebung gab es weder ESP32-Toolchain noch Android-SDK. Die Firmware ist nur mit Stub-Headern am PC
+übersetzt (`host/tests/test_firmware_pc.py`), nicht mit `pio run` gebaut und nicht geflasht; von der App sind Logik,
+Parser, Speicher und JNI-Bibliotheken am PC getestet, Oberfläche (Compose), Controller und NDK-Build nicht übersetzt.
+Alle Zahlen zu Varianten stammen aus dem Prüfstand **[Sim]**; ob sie an echten Daten halten, zeigt erst Tag A/B.
+
+| Phase | umgesetzt (am PC geprüft) | offen (Gerät, Gurt, Aufnahmen, Freigabe) |
+|---|---|---|
+| V0 | V0.1/V0.2 Gurt (BLE), Marker, Metronom in der App; V0.4 `vital_eval.py`; V0.5 Prüfstand `--check`, Szenario `leer`; V0.3 Messplan M5 (`EXPERIMENTE.md`) | Gurt am Handy, Aufnahmen Tag A/B (V0.3), Basislinie (V0.6) |
+| V1 | V1.1–V1.7 im Header (Kreisfit, Pulsband 40–180, Kandidaten/Verfolgung/Konfidenz/Lebenszeichen, Atemzustand, Sensor-Flags und `@RECAL`, IBI/RMSSD, Aufräumen) | Abnahmen an Tag A/B, Live-Lauf |
+| V2 | V2.1 Report auf Kern 0 aus Schnappschuss, V2.2 FFT, V2.3 Rezoom ohne Verlust, V2.4/V2.5 schneller Start und Reaktion | Empfangspause und Rechenzeit am ESP32 messen, 30-min-Lauf, V2.3 Schritt 3 (nach V4.4) |
+| V3 | V3.4 Atemzüge (`@BREATH`) und V3.5 Zustand (`@STATE`) im Standard; V3.1 Kombination, V3.2 Viterbi, V3.3 Oberwellen-Abzug, V3.6 Vorlage für Einzelschläge als Schalter, Standard aus; V3.7 nicht begonnen (Voraussetzung fehlt) | A/B an Tag A, Übernahme nur nach Tag B |
+| V4 | Messplan (`EXPERIMENTE.md`, „V4 Sensor-Konfiguration"), `host/noise_floor.py` (Weg-Rauschen, Aufnahme über `bridge`), iq3-Preset als Übersetzungsschalter, Kennung in `@HELLO` | alle Messungen V4.1–V4.4 |
+| V5 | V5.1 Gütezustand und Abweichung gegen den Gurt, V5.2 Handy-DSP live aus `@RAW` (`A121_DSP_HEAVY`), V5.3 alte PC-Skripte als Archiv | Screenshots je Zustand, 30 min live mit CPU ≤ 20 %, NDK-Build |
+
+Einzelergebnisse und Befehle je Aufgabe: `docs/EXPERIMENTE.md` (Prüfstand, Messpläne), `docs/ANDROID_APP.md` (App,
+offene Gerätetests), `docs/HARDWARE.md` (Befehle, Schalter).
 
 ### Leitlinien
 
