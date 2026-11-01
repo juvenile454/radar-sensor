@@ -12,6 +12,7 @@ import de.timo.radarsensor.core.RadarController
  *   … --es cmd rec_start --es name usb_lang | rec_stop | send --es line "iq3 0 raw" | stop | usb | disconnect
  *   … --es cmd ref_scan | ref_connect --es addr <mac> | ref_disconnect | ref_status        (EKG-Gurt, V0.1)
  *   … --es cmd mark --es text anhalten_start | metro --ei rate 15 (0 = aus)                 (Marker, Metronom, V0.2)
+ *   … --es cmd phone_dsp --ez on true | phone_dsp_status                         (Handy-DSP live aus @RAW, V5.2)
  *
  * Antwort steht im Ergebnis von `am broadcast` (data="…").
  */
@@ -95,6 +96,17 @@ class DebugReceiver : BroadcastReceiver() {
                         }
                         else -> "Takt nur ${de.timo.radarsensor.record.MetronomeSchedule.RATES} /min"
                     }
+                }
+                "phone_dsp" -> {
+                    val on = intent.getBooleanExtra("on", true)
+                    c.setPhoneDsp(on)
+                    if (on && c.phoneDspError != null) "Handy-DSP nicht verfügbar: ${c.phoneDspError}" else "Handy-DSP ${if (on) "ein" else "aus"}"
+                }
+                "phone_dsp_status" -> {
+                    val s = c.store.snapshot()
+                    "Handy-DSP ${if (c.phoneDspOn.value) "ein" else "aus"} | CPU ${s.phoneCpuPct?.let { "%.2f %%".format(it) } ?: "-"} | " +
+                        "Werte ${s.phoneT.size} | letzter ${s.lastPhoneVital} | Zustand ${s.lastPhoneState?.let { de.timo.radarsensor.protocol.MeasState.name(it.state) } ?: "-"} | " +
+                        "ESP32 ${s.lastVital?.hrFusedBpm ?: "-"} | Bibliothek ${c.phoneDspError ?: "geladen"}"
                 }
                 "status", null -> ""
                 else -> "unbekannt: $cmd"

@@ -101,6 +101,14 @@ class LiveSnapshot(
     val refT: FloatArray,
     val refHr: FloatArray,
     val lastRef: HrMeasurement?,
+    /** Handy-DSP (V5.2, A121_DSP_HEAVY): Puls und Konfidenz auf derselben Zeitachse wie vitalT, CPU-Anteil in % */
+    val phoneT: FloatArray,
+    val phoneHr: FloatArray,
+    val phoneConf: FloatArray,
+    val lastPhoneVital: Vital?,
+    val lastPhoneDsp: Dsp?,
+    val lastPhoneState: MeasState?,
+    val phoneCpuPct: Float?,
     // Doppler
     val dopT: FloatArray,
     val dopV: FloatArray,
@@ -188,6 +196,7 @@ class LiveStore(
     private var zoomStart = Float.NaN
     private var zoomEnd = Float.NaN
     private var lastRoomT = Float.NaN
+    private var lastRoomTms = 0L
 
     private val vT = FloatRing(vitalCapacity)
     private val vBr = FloatRing(vitalCapacity)
@@ -208,6 +217,13 @@ class LiveStore(
     private val refT = FloatRing(vitalCapacity)
     private val refHr = FloatRing(vitalCapacity)
     private var lastRef: HrMeasurement? = null
+    private val phT = FloatRing(vitalCapacity)
+    private val phHr = FloatRing(vitalCapacity)
+    private val phConf = FloatRing(vitalCapacity)
+    private var lastPhoneVital: Vital? = null
+    private var lastPhoneDsp: Dsp? = null
+    private var lastPhoneState: MeasState? = null
+    private var phoneCpuPct: Float? = null
     private val dT = FloatRing(vitalCapacity)
     private val dCompute = FloatRing(vitalCapacity)
     private val dMotion = FloatRing(vitalCapacity)
@@ -260,6 +276,7 @@ class LiveStore(
             is Room -> {
                 room = msg
                 lastRoomT = time(msg.tick, msg.tMs)
+                lastRoomTms = msg.tMs
                 msg.targets.firstOrNull()?.let {
                     targetT.add(lastRoomT)
                     targetDist.add(it.distMm)
@@ -357,6 +374,30 @@ class LiveStore(
      * Gurt-Benachrichtigung (V0.1): Zeit = letzte Radar-Datenzeit + seitdem vergangene Zeit, damit Referenz- und
      * Radarkurve übereinander liegen. Ohne Radardaten (noch keine Zeitachse) verworfen.
      */
+    /**
+     * Handy-DSP (V5.2): eine am Handy neu gerechnete Zeile (`@VITAL`, `@DSP`, `@STATE`). Ihr t_ms ist der des ESP32-Reports;
+     * die Zeit kommt relativ zur letzten `@ROOM`-Zeile, so liegt der Handy-Wert genau neben dem ESP32-Wert.
+     */
+    fun phone(msg: EspMsg) =
+        synchronized(lock) {
+            when (msg) {
+                is Vital -> {
+                    lastPhoneVital = msg
+                    phT.add(if (lastRoomT.isNaN()) time(null, msg.tMs) else lastRoomT + (msg.tMs - lastRoomTms) / 1000f)
+                    phHr.add(msg.hrFusedBpm)
+                    phConf.add(msg.confidencePct)
+                }
+                is Dsp -> lastPhoneDsp = msg
+                is MeasState -> lastPhoneState = msg
+                else -> {}
+            }
+        }
+
+    fun phoneCpu(pct: Float?) =
+        synchronized(lock) {
+            phoneCpuPct = pct
+        }
+
     fun reference(m: HrMeasurement) {
         synchronized(lock) {
             if (lastDataNs == NO_DATA) return
@@ -391,7 +432,7 @@ class LiveStore(
         tOffset = 0f
         tMax = 0f
         lastDataNs = NO_DATA
-        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, bT, bRate, refT, refHr, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
+        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, bT, bRate, refT, refHr, phT, phHr, phConf, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
             .forEach { it.clear() }
         iqSaturated = 0
         iqDelayed = 0
@@ -409,6 +450,10 @@ class LiveStore(
         lastVital = null
         lastDsp = null
         lastRef = null
+        lastPhoneVital = null
+        lastPhoneDsp = null
+        lastPhoneState = null
+        phoneCpuPct = null
         lastState = null
         lastBreath = null
         dopplerStart = null
@@ -564,6 +609,13 @@ class LiveStore(
                 refT = refT.toArray(),
                 refHr = refHr.toArray(),
                 lastRef = lastRef,
+                phoneT = phT.toArray(),
+                phoneHr = phHr.toArray(),
+                phoneConf = phConf.toArray(),
+                lastPhoneVital = lastPhoneVital,
+                lastPhoneDsp = lastPhoneDsp,
+                lastPhoneState = lastPhoneState,
+                phoneCpuPct = phoneCpuPct,
                 dopT = dopT.toArray(),
                 dopV = dopV.toArray(),
                 dopAmp = dopAmp.toArray(),

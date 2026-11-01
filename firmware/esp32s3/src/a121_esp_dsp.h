@@ -30,7 +30,8 @@
  *      nicht auf einer Atem-Oberwelle m ≤ 3 liegt (V3.1). Variante A121_DSP_COMBINE (V3.1): statt Einzelspektren die
  *      1. Hauptkomponente der 12 stärksten Punkte als ein Kanal (combinePrincipal), effektive Punktzahl hinten in @DSP.
  *      Variante A121_DSP_IBI_TEMPLATE (V3.6): Einzelschläge im Band 0,6–8 Hz über Vorlage und Korrelationsfilter
- *      (templateIbi) statt Spitzen im Pulsband.
+ *      (templateIbi) statt Spitzen im Pulsband. A121_DSP_HEAVY (V5.2, nur Handy): A121_DSP_VITERBI und
+ *      A121_DSP_HARM_REMOVE zusammen.
  *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
  *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
  *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
@@ -61,6 +62,16 @@
 #include <algorithm>
 
 #include "a121_fft.h"
+
+/* Handy-Fassung (V5.2): die rechenaufwendigeren Varianten zusammen, nur in der App-Bibliothek radardsp_live. */
+#ifdef A121_DSP_HEAVY
+#ifndef A121_DSP_VITERBI
+#define A121_DSP_VITERBI
+#endif
+#ifndef A121_DSP_HARM_REMOVE
+#define A121_DSP_HARM_REMOVE
+#endif
+#endif
 
 namespace a121_dsp {
 

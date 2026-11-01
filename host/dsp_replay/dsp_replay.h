@@ -107,6 +107,12 @@ public:
         else if (strcmp(c, "@END") == 0) onEnd(c);
     }
 
+    /** Neu gerechnete Zeilen an fn statt in die Datei out (Live-Pfad am Handy, dsp_live.h); nullptr = wieder Datei. */
+    void setSink(void (*fn)(void *ctx, const char *line), void *ctx) {
+        sink_     = fn;
+        sink_ctx_ = ctx;
+    }
+
     /** Liest eine ganze Datei. Rückgabe false, wenn sie nicht lesbar ist. */
     bool runFile(FILE *in) {
         if (!in) return false;
@@ -179,6 +185,10 @@ private:
     }
 
     void emit(const char *s) {
+        if (sink_) {
+            sink_(sink_ctx_, s);
+            return;
+        }
         if (out_) {
             fputs(s, out_);
             fputc('\n', out_);
@@ -555,6 +565,8 @@ private:
 
     FILE *out_;
     FILE *rep_out_;
+    void (*sink_)(void *, const char *) = nullptr;
+    void *sink_ctx_                     = nullptr;
     UltimateEspDsp &dsp_;
     VitalReport rep_ = {};
     bool running_ = false, have_iq3_ = false, have_rep_ = false, vital_ok_ = false;

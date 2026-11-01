@@ -12,6 +12,8 @@ import android.os.SystemClock
 import android.util.Log
 import de.timo.radarsensor.BuildConfig
 import de.timo.radarsensor.dsp.DspReplay
+import de.timo.radarsensor.dsp.LiveDsp
+import de.timo.radarsensor.dsp.PhoneDsp
 import de.timo.radarsensor.live.LiveStore
 import de.timo.radarsensor.protocol.End
 import de.timo.radarsensor.protocol.LineAssembler
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 sealed interface ConnState {
@@ -266,6 +269,7 @@ object RadarController {
         val m = LineParser.parse(line)
         if (m is End || m is SessEnd) activeStream = null // Stream regulär zu Ende (feste Dauer oder Stopp)
         store.apply(line, m)
+        dspExec.execute { phoneDsp.offer(line) }
     }
 
     private suspend fun rateLoop() {
@@ -279,6 +283,10 @@ object RadarController {
             val l = lines.get()
             val dt = (now - lastT) / 1e9f
             _stats.value = LinkStats((b - lastB) / dt, (l - lastL) / dt, b, connectedSince)
+            dspExec.execute {
+                phoneDsp.sampleCpu(SystemClock.elapsedRealtimeNanos())
+                store.phoneCpu(phoneDsp.cpuPct)
+            }
             lastB = b
             lastL = l
             lastT = now
@@ -363,6 +371,36 @@ object RadarController {
                 }
             store.note("DSP nachgerechnet: ${_dspStatus.value}")
         }
+    }
+
+    // ---------------------------------------------------------------- Handy-DSP live (V5.2)
+
+    /** Eigener Thread: Empfang wartet nicht auf die Rechnung, Reihenfolge der Zeilen bleibt. */
+    private val dspExec = Executors.newSingleThreadExecutor { r -> Thread(r, "handy-dsp").apply { isDaemon = true } }
+
+    /** Live-DSP aus `@RAW` (nur bei `iq3 … raw`), Ergebnisse als zweite Reihe neben den ESP32-Werten. */
+    private val phoneDsp = PhoneDsp(LiveDsp) { line -> store.phone(LineParser.parse(line)) }
+
+    private val _phoneDspOn = MutableStateFlow(false)
+    val phoneDspOn: StateFlow<Boolean> = _phoneDspOn.asStateFlow()
+
+    /** Warum die Bibliothek fehlt (null = geladen). */
+    val phoneDspError: String? get() = LiveDsp.loadError
+
+    /** Ein: rechnet ab sofort mit (mitten im Stream mit dessen Start- und Zoom-Zeile), aus: keine Rechenlast. */
+    fun setPhoneDsp(on: Boolean) {
+        dspExec.execute {
+            phoneDsp.setEnabled(on)
+            _phoneDspOn.value = phoneDsp.enabled
+            store.phoneCpu(phoneDsp.cpuPct)
+        }
+        store.note(
+            when {
+                !on -> "Handy-DSP aus"
+                phoneDspError != null -> "Handy-DSP nicht verfügbar: $phoneDspError"
+                else -> "Handy-DSP ein (Viterbi + Oberwellen-Abzug, braucht iq3 … raw)"
+            },
+        )
     }
 
     // ---------------------------------------------------------------- USB

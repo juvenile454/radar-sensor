@@ -198,6 +198,7 @@ fun VitalPage(s: LiveSnapshot) =
         deviation(s.vitalT, s.vitalHr, s.refT, s.refHr, windowS = 60f)?.let { d ->
             Labeled("Radar − Gurt", "zuletzt %+.0f /min · Median |Δ| %.1f /min (%d Werte, 60 s)".format(d.last, d.medianAbs, d.n))
         }
+        PhoneDspPanel(s)
         Text(
             if (s.lastRef != null) {
                 "Gurt als Referenz: Abweichung gilt nur für diese Sitzung, keine allgemeine Genauigkeitsaussage."
@@ -220,6 +221,7 @@ fun VitalPage(s: LiveSnapshot) =
             listOf(
                 Series(s.refT, s.refHr, Pal.ok, "Gurt"),
                 Series(s.vitalT, s.vitalHr, Pal.c2, "fused"),
+                Series(s.phoneT, s.phoneHr, Pal.warn, "Handy"),
                 Series(s.vitalT, s.vitalHrSpec, Pal.c3, "Spektrum", dots = true),
                 Series(s.vitalT, s.vitalHrAcf, Pal.c4, "AKF", dots = true),
                 Series(s.vitalT, s.vitalHrIbi, Pal.c5, "IBI", dots = true),
@@ -253,6 +255,41 @@ fun VitalPage(s: LiveSnapshot) =
                 (d.nEff?.let { " · N_eff ${f1(it)}" } ?: ""))
         }
     }
+
+/**
+ * Handy-DSP live (V5.2): derselbe Firmware-Header am Handy aus `@RAW`, mit Viterbi und Abzug der Atem-Oberwellen
+ * (A121_DSP_HEAVY). Werte zeitgleich neben dem ESP32; braucht einen Stream `iq3 … raw`.
+ */
+@Composable
+private fun PhoneDspPanel(s: LiveSnapshot) {
+    val on by RadarController.phoneDspOn.collectAsState()
+    val err = RadarController.phoneDspError
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (err != null) {
+            Text("Handy-DSP nicht verfügbar: $err", fontSize = 11.sp, color = Pal.warn)
+        } else if (on) {
+            Quick("Handy-DSP aus", Pal.bad) { RadarController.setPhoneDsp(false) }
+        } else {
+            Quick("Handy-DSP ein") { RadarController.setPhoneDsp(true) }
+            Quick("iq3 raw starten") { RadarController.send("iq3 0 raw") }
+        }
+    }
+    if (!on) return
+    val pv = s.lastPhoneVital
+    val pq = pulseQuality(pv, s.lastPhoneDsp, s.lastPhoneState)
+    Labeled(
+        "Handy",
+        f0(pv?.hrFusedBpm?.takeIf { it > 0 }) + " /min" + (if (pq.grey) " (unsicher)" else "") +
+            " · Konfidenz ${f0(pv?.confidencePct)} % · ${pq.stateText} · CPU " + (s.phoneCpuPct?.let { "%.1f %%".format(it) } ?: "–") +
+            (if (s.rawFrames == 0L) " · kein @RAW" else ""),
+    )
+    deviation(s.phoneT, s.phoneHr, s.vitalT, s.vitalHr, windowS = 60f)?.let { d ->
+        Labeled("Handy − ESP32", "zuletzt %+.1f /min · Median |Δ| %.1f /min (%d Werte, 60 s)".format(d.last, d.medianAbs, d.n))
+    }
+    deviation(s.phoneT, s.phoneHr, s.refT, s.refHr, windowS = 60f)?.let { d ->
+        Labeled("Handy − Gurt", "zuletzt %+.0f /min · Median |Δ| %.1f /min (%d Werte, 60 s)".format(d.last, d.medianAbs, d.n))
+    }
+}
 
 /**
  * EKG-Gurt (V0.1), Marker und Metronom-Atmung (V0.2). Marker landen in events.csv der laufenden Aufnahme

@@ -129,7 +129,8 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   `adb shell am broadcast -a de.timo.radarsensor.DEBUG -n de.timo.radarsensor/.debug.DebugReceiver --es cmd <befehl>`
   mit `status`, `usb`, `disconnect`, `send --es line "'iq3 0 raw'"`, `stop`, `rec_start --es name <name>`, `rec_stop`,
   `dsp_replay --es name <aufnahmeordner>`; EKG-Gurt (V0.1) `ref_scan`, `ref_connect --es addr <mac>`, `ref_disconnect`,
-  `ref_status`; Marker und Metronom (V0.2) `mark --es text anhalten_start`, `metro --ei rate 15` (6/10/15/20, 0 = aus).
+  `ref_status`; Marker und Metronom (V0.2) `mark --es text anhalten_start`, `metro --ei rate 15` (6/10/15/20, 0 = aus);
+  Handy-DSP (V5.2) `phone_dsp --ez on true|false`, `phone_dsp_status` (Puls, Zustand, CPU-Anteil, ESP32-Wert daneben).
   Antwort steht im `data="…"` der Broadcast-Ausgabe.
 - **EKG-Gurt und Marker (V0.1/V0.2, Vital-Tab):** „Gurt suchen" findet Geräte mit Heart Rate Service (z. B. Polar
   H10), Antippen verbindet; reißt die Verbindung ab, verbindet Android von selbst wieder. Jede Benachrichtigung geht in
@@ -138,6 +139,16 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   (`anhalten_start`/`_ende`, `bewegung_…`, `zaehlen_…`, so liest `host/vital_eval.py` sie); das Metronom (6/10/15/20
   /min) piept zum Einatmen und schreibt je Ton `ein`. Beide Dateien entstehen erst mit dem ersten Wert, Zeitachse wie
   `rxtime.csv`. Berechtigungen Bluetooth (Suche ohne Standort) fragt die App beim Start.
+- **Handy-DSP live (V5.2, Vital-Tab):** „Handy-DSP ein" rechnet jeden empfangenen Frame eines `iq3 … raw`-Streams
+  mit demselben Firmware-Header am Handy nach (Bibliothek `libradardsp_live.so`, `host/dsp_replay/dsp_live.h`), aber
+  mit den schwereren Varianten (`A121_DSP_HEAVY` = Viterbi-Verfolgung V3.2 + Abzug der Atem-Oberwellen V3.3). Er
+  rechnet an denselben Stellen wie der ESP32 (an dessen `@DSP`-Zeilen, aus demselben Schnappschuss) und folgt
+  Rezoom/Neu-Kalibrierung; die Werte erscheinen als gelbe Kurve „Handy" neben „fused" im Pulsdiagramm, dazu
+  Konfidenz, Zustand, „Handy − ESP32" und „Handy − Gurt" (60 s) und der CPU-Anteil an einem Kern (Thread-CPU-Zeit je
+  Sekunde). Einschalten mitten im Stream geht (Start- und letzte Rezoom-Zeile werden nachgereicht, erster Wert nach
+  ≈ 6 s). Eigener Rechen-Thread, der Empfang wartet nicht. Standard aus (Akku). Nicht in der Aufnahme: dieselben
+  Werte rechnet der PC aus `stream.log` nach (`vital_eval.py --replay` mit einer Header-Kopie, vorn
+  `#define A121_DSP_HEAVY 1`, wie in `EXPERIMENTE.md`); Handy = PC war in A5 bytegleich, für diese Variante nicht geprüft.
 - **Aufnahmen holen:** `adb pull /sdcard/Android/data/de.timo.radarsensor/files/recordings/<ordner>
   ~/Data/radar-sensor/phone/`. Schreiben in den App-Ordner (z. B. Fixtures für die Wiedergabe) nur über
   `run-as de.timo.radarsensor`.
@@ -156,6 +167,12 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   nicht übersetzt (kein Android-SDK in der Cloud-Umgebung). Offen am Handy (nur mit Freigabe): 10 min `iq3 0 raw` mit
   Gurt — `ref_hr.csv` vorhanden, Summe der RR = Aufnahmedauer ±2 %, Puls = Polar-App ±1 /min; Abstand der
   Metronom-Marker = Sollwert ±20 ms.
+- Handy-DSP live (V5.2): Live-Pfad am PC gleich der Nachrechnung (`host/tests/test_dsp_live.py`, Rechenzeit am PC
+  0,29 % eines Kerns für 120 s simulierte Daten mit `A121_DSP_HEAVY`); JNI-Bibliothek am PC gegen die JDK-`jni.h`
+  übersetzt und aus Kotlin getestet (Zuführung, Neubeginn, CPU-Anteil). Nicht übersetzt: NDK-Build, Controller,
+  Debug-Befehle, Oberfläche. Offen am Handy (nur mit Freigabe): 30 min `iq3 0 raw` live mit „Handy-DSP ein",
+  CPU-Anteil ≤ 20 % eines Kerns (`phone_dsp_status`), Handy- und ESP32-Wert nebeneinander (Screenshot). Schätzung aus
+  A5 (Handy ≈ 3,5 × langsamer als der PC): ≈ 1 % — nicht gemessen.
 - Knopf „DSP neu“ unter Aufnahmen nur per Debug-Befehl geprüft, nicht angesehen (Handy war gesperrt).
 - Doppler-Tab: Achsenbeschriftung der Amplitude endet unter dem Maximum (Linien selbst werden nicht abgeschnitten).
 

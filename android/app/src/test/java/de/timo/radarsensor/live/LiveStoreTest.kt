@@ -147,4 +147,47 @@ class LiveStoreTest {
         assertEquals(2, snap.lastState?.state)
         assertEquals(2200f, snap.lastBreath?.depthUm)
     }
+    @Test fun handyWerteNebenEsp32() {
+        val s = LiveStore()
+        s.feed(
+            "@IQ3_START,500,560,60.0,0",
+            "@ROOM,12211,13000,58,56,0",
+            "@VITAL,12211,22.3,64.2,64.2,69.2,72.0,833.3,118.2,100,2897.9,215.2,10.5,84.95,718,3",
+        )
+        val esp = s.snapshot()
+        listOf(
+            "@DSP,12211,1,5,81.0,300000,0,0,55,0",
+            "@VITAL,12211,22.0,66.5,66.5,69.0,70.0,860.0,100.0,81,2897.9,215.2,10.5,84.95,718,3",
+            "@STATE,12211,3,5000",
+        ).forEach { s.phone(LineParser.parse(it)) }
+        s.phoneCpu(1.5f)
+        val snap = s.snapshot()
+        assertEquals(1, snap.phoneT.size)
+        assertEquals(esp.vitalT[0], snap.phoneT[0], 1e-6f) // gleicher Zeitpunkt wie der ESP32-Wert
+        assertEquals(66.5f, snap.phoneHr[0], 1e-6f)
+        assertEquals(81f, snap.phoneConf[0], 1e-6f)
+        assertEquals(64.2f, snap.vitalHr[0], 1e-6f) // ESP32-Reihe unverändert
+        assertEquals(81.0f, snap.lastPhoneDsp?.confidencePct)
+        assertEquals(3, snap.lastPhoneState?.state)
+        assertEquals(66.5f, snap.lastPhoneVital?.hrFusedBpm)
+        assertEquals(1.5f, snap.phoneCpuPct)
+        s.clear()
+        val c = s.snapshot()
+        assertEquals(0, c.phoneT.size)
+        assertEquals(null, c.lastPhoneVital)
+        assertEquals(null, c.phoneCpuPct)
+    }
+
+    @Test fun handyWertZeitAusTms() {
+        // Handy-Zeile mit anderem t_ms als die letzte @ROOM-Zeile: Zeit relativ dazu (gleiche Zeitachse wie vitalT)
+        val s = LiveStore()
+        s.feed(
+            "@IQ3_START,500,560,60.0,0",
+            "@ROOM,12211,13000,58,56,0",
+            "@VITAL,12211,22.3,64.2,64.2,69.2,72.0,833.3,118.2,100,2897.9,215.2,10.5,84.95,718,3",
+        )
+        s.phone(LineParser.parse("@VITAL,13211,22.0,66.5,66.5,69.0,70.0,860.0,100.0,81,2897.9,215.2,10.5,84.95,718,3"))
+        val snap = s.snapshot()
+        assertEquals(snap.vitalT[0] + 1f, snap.phoneT[0], 1e-3f)
+    }
 }
