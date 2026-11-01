@@ -2,7 +2,7 @@
 
 Stand 2026-11-01: **gebaut, geflasht und über den ESP32 am Gerät geprüft** (`srv_info`, `stm_reset`, `iq3`, `doppler`,
 `bridge` + exptool; Ergebnisse und zwei behobene ESP32-Bugs in `docs/HARDWARE.md`, „ESP32-Test am Gerät 2026-11-01“).
-Mobil (rote Ader statt A121-USB) ist noch nicht geprüft.
+Mobil (rote Ader statt A121-USB) am 2026-11-01 ebenso geprüft, inkl. Durchsatzgrenze ≈ 195 kB/s bei 2 Mbaud.
 **Gehärtet am 2026-11-01:** Der Server startet bei jedem UART-Fehler neu. Vorher machte ein Noise- oder Overrun-Fehler ihn taub,
 bis RESET gedrückt wurde; neu gestartet hat er nur bei einem Break. Am Gerät mit absichtlichem Baudfehler geprüft.
 Image: `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin` (SHA256 `b29e328d…1757`);
@@ -76,7 +76,7 @@ Danach antwortet der Server **nicht mehr über USB**; PC-Tools laufen über die 
    nach einem Reset) kommen über PA9.
 3. ESP32: `srv_info`, dann `iq3 10`, `doppler 5`, `stm_reset`; am PC `bridge` + exptool.
 4. Erst danach mobil: A121-USB ab, rote Ader an (nie beides gleichzeitig, HARDWARE.md „Stromversorgung“).
-Schritte 1–3 erledigt am 2026-11-01; Schritt 4 offen.
+Schritte 1–4 erledigt am 2026-11-01 (Ergebnisse in `docs/HARDWARE.md`).
 
 ## Weitere Dateien hier
 

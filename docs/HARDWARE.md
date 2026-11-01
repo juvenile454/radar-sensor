@@ -368,6 +368,29 @@ startet jetzt bei **jedem** Fehler der Server-UART neu (`ErrorCode != HAL_UART_E
   Session ist dann weg. Der ESP32-Client merkt das an `frame_timeout` und muss neu verbinden; ein automatisches Neuverbinden
   während `iq3`/`doppler` gibt es noch nicht.
 
+**Mobiler Aufbau am Gerät 2026-11-01 (~09 Uhr): A121 nur über die rote Ader vom ESP32-5Vin, kein A121-USB**
+(am PC nur `…12:34:56:78:9A:BC` sichtbar, der CH342 meldet sich ohne USB nicht an). STM32-Debug-Log über die gelbe Ader (`uart`, GPIO5).
+- `probe`/`bus`: alle Leitungen HIGH, MCU_INT LOW (Server-Firmware nutzt ihn nicht). `srv_info` und `stm_reset` funktionieren.
+  Das Debug-Log zeigt den Neustart („Acconeer Exploration Server“, „Waiting for host line break“).
+- ESP32-eigene Server-UART seit 2026-11-01 auf **2 Mbaud** (`SRV_BAUD`, vorher 921 600; die Debug-UART bleibt bei 921 600):
+  - `iq3 30`: 1783 Frames in 30 s (59,4 Hz), ohne Sättigung. Weiter 24 Lücken von bis zu 354 ms, je eine pro DSP-Report
+    (Rechenzeit auf dem ESP32, nicht der Link). Sensortemperatur stieg von 14 auf 19 °C.
+  - `doppler 10`: 31,2 Hz (64 Sweeps @ 2 kHz). `doppler 10 500 4000`: 62,3 Hz (64 Sweeps @ 4 kHz = 16 ms pro Frame, also lückenlos).
+- **Durchsatz über die Bridge** (exptool 7.18.2, 2 Mbaud; Sparse IQ, Profil 3, HWAAS 1, je 4 s pro Stufe; Skript lag im Scratchpad, nicht im Repo):
+  | angefordert | erreicht | `frame_delayed` |
+  |---|---|---|
+  | 16×60 @ 30 Hz = 115 kB/s | 30,0 Hz = 115 kB/s | 0/121 |
+  | 32×100 @ 10 Hz = 128 kB/s | 10,0 Hz = 128 kB/s | 0/41 |
+  | 32×100 @ 20–60 Hz = 256–768 kB/s | 15,2 Hz ≈ 194–195 kB/s | 60/61 |
+  Die Grenze ist die 2-Mbaud-UART (200 kB/s brutto). Darüber bremst der Server und kennzeichnet die Frames als `frame_delayed`,
+  wie vorgesehen. Zwei Läufe hintereinander mit je 5 061 804 Bytes zum PC: kein UART-Fehler (Overflow, Puffer, Framing,
+  Parity), kein unvollständiger USB-Write, höchstens 129 Bytes standen im ESP32-Puffer an.
+- **Bug 3, behoben (ESP32): Bei Überlast gingen in der Bridge Daten verloren** (exptool brach mit „Cannot decode header“ ab).
+  Die Zähler (`@BRIDGE_STATS` nach `+++EXIT`) zeigten einen unvollständigen USB-Write und keine UART-Fehler. HWCDC hat
+  standardmäßig nur einen 256-Byte-Sendepuffer und verwirft Daten, wenn der PC 100 ms lang nicht abholt.
+  Fix: `Serial.setTxBufferSize(16384)`, `setTxTimeoutMs(500)`, und die Bridge sendet den Rest nach einem unvollständigen Write erneut.
+- Nicht geprüft: Stromaufnahme im roten Draht, Dauerbetrieb über Stunden, Betrieb am Handy statt am PC.
+
 Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`
   (https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Firmware.zip)

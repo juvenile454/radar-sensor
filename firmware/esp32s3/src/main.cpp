@@ -32,7 +32,10 @@ static const int PIN_UART_TX = 4;
 static const int PIN_UART_RX = 5;
 static const int PIN_MISC_GPIO0 = 6;  // braune Ader -> STM32 PB1 (MISC_GPIO0)
 static const int PIN_MISC_GPIO1 = 7;  // graue Ader  -> STM32 PA4 (MISC_GPIO1)
-static const uint32_t A121_BAUD = 921600;
+static const uint32_t A121_BAUD = 921600;   // Debug-UART des STM32 (printf auf PA9 → GPIO5)
+// Server-UART (LPUART1): Höchstrate des Servers. Am 2026-11-01 über die Bridge ~10 MB ohne einen UART-Fehler;
+// netto ≈ 195 kB/s, bei 921 600 Baud wären es ≈ 90 kB/s.
+static const uint32_t SRV_BAUD = 2000000;
 static const uint8_t A121_ADDR = 0x52;
 
 static const int PIN_SRV_RX = PIN_SDA;  // GPIO15 ← STM32 PB11 (LPUART1_TX), orange Ader
@@ -494,7 +497,7 @@ static void cmdVer() {
 static bool ensureServerConnected() {
   useSrvLink();
   String sysInfo;
-  if (g_srv.connectAndNegotiateBaud(A121_BAUD, &sysInfo)) {
+  if (g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo)) {
     return true;
   }
   // Kein I2C-Gegentest: Läuft doch der Server, würde der ESP32 gegen PB11 auf der SDA-Ader treiben.
@@ -519,7 +522,7 @@ static void cmdStmReset() {
   useSrvLink();
   Serial.println("Sende 15-ms UART-Break auf GPIO16 (-> PB10) und verbinde neu...");
   String sysInfo;  // connectAndNegotiateBaud() schickt den Break selbst
-  if (g_srv.connectAndNegotiateBaud(A121_BAUD, &sysInfo)) {
+  if (g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo)) {
     Serial.printf("Server antwortet @ %lu Baud: %s\n", (unsigned long)g_srv.currentBaud(), sysInfo.c_str());
   } else {
     Serial.println("Break gesendet, Server antwortet nicht. RESET-Taste am A121 drücken.");
@@ -705,17 +708,40 @@ static void cmdBridge() {
   Serial.println("Beenden durch Senden von '+++EXIT\\n'.");
 
   useSrvLink();
-  g_srv.connectAndNegotiateBaud(A121_BAUD);
+  g_srv.connectAndNegotiateBaud(SRV_BAUD);
   String hostLine;
   uint8_t rxBuf[1024];
   uint8_t txBuf[512];
 
+  // Statistik für '+++EXIT': findet Datenverluste (UART-FIFO/Puffer voll, Bitfehler, USB-Schreibfehler).
+  static volatile uint32_t errOvf, errBufFull, errFrame, errParity, errBreak;
+  errOvf = errBufFull = errFrame = errParity = errBreak = 0;
+  uint32_t bytesToHost = 0, bytesToSrv = 0, usbShort = 0, maxAvail = 0;
+  // Nach connectAndNegotiateBaud() registrieren: HardwareSerial::end() löscht den Callback.
+  SrvUart.onReceiveError([](hardwareSerial_error_t e) {
+    switch (e) {
+      case UART_FIFO_OVF_ERROR: errOvf++; break;
+      case UART_BUFFER_FULL_ERROR: errBufFull++; break;
+      case UART_FRAME_ERROR: errFrame++; break;
+      case UART_PARITY_ERROR: errParity++; break;
+      case UART_BREAK_ERROR: errBreak++; break;
+    }
+  });
+
   while (true) {
     while (SrvUart.available()) {
       size_t avail = SrvUart.available();
+      if (avail > maxAvail) maxAvail = avail;
       if (avail > sizeof(rxBuf)) avail = sizeof(rxBuf);
       size_t n = SrvUart.readBytes(rxBuf, avail);
-      Serial.write(rxBuf, n);
+      // Rest nach einem unvollständigen USB-Write erneut senden statt verwerfen (bis ~2 s, dann aufgeben).
+      size_t done = 0;
+      for (int tries = 0; done < n && tries < 4; tries++) {
+        size_t w = Serial.write(rxBuf + done, n - done);
+        if (w != n - done) usbShort++;
+        done += w;
+      }
+      bytesToHost += done;
     }
     // Host → Server blockweise weiterreichen; jede abgeschlossene Zeile vorher auf Steuerbefehle prüfen.
     while (Serial.available()) {
@@ -728,10 +754,18 @@ static void cmdBridge() {
           continue;
         }
         if (hostLine.indexOf("+++EXIT") >= 0) {
+          SrvUart.onReceiveError(nullptr);
           Serial.println("\nBridge beendet.");
+          Serial.printf("@BRIDGE_STATS,baud=%lu,to_host=%lu,to_srv=%lu,usb_short=%lu,max_rx_backlog=%lu,"
+                        "uart_fifo_ovf=%lu,uart_buf_full=%lu,uart_frame=%lu,uart_parity=%lu,uart_break=%lu\n",
+                        (unsigned long)g_srv.currentBaud(), (unsigned long)bytesToHost, (unsigned long)bytesToSrv,
+                        (unsigned long)usbShort, (unsigned long)maxAvail, (unsigned long)errOvf,
+                        (unsigned long)errBufFull, (unsigned long)errFrame, (unsigned long)errParity,
+                        (unsigned long)errBreak);
           return;
         }
         SrvUart.write(txBuf + from, i + 1 - from);
+        bytesToSrv += i + 1 - from;
         from = i + 1;
         uint32_t newBaud = 0;
         if (hostLine.indexOf("\"set_uart_baudrate\"") >= 0) {
@@ -749,7 +783,10 @@ static void cmdBridge() {
           g_srv.begin(newBaud);
         }
       }
-      if (from < n) SrvUart.write(txBuf + from, n - from);
+      if (from < n) {
+        SrvUart.write(txBuf + from, n - from);
+        bytesToSrv += n - from;
+      }
     }
   }
 }
@@ -782,7 +819,7 @@ static void help() {
       "  wake 0|1|z            WAKE_UP (GPIO17/PA11) treiben / freigeben\n"
       "  led <pin>             RGB-LED-Pin wählen (48 oder 38) und testen\n"
       "  --- Modus A: Exploration Server (LPUART1, GPIO16 TX -> PB10, GPIO15 RX <- PB11) ---\n"
-      "  srv_info              Server verbinden (921600 Baud) & Info lesen (schaltet auf 'link srv')\n"
+      "  srv_info              Server verbinden (2 Mbaud) & Info lesen (schaltet auf 'link srv')\n"
       "  stm_reset             15-ms UART-Break auf GPIO16 (Neustart des Servers, je nach Firmware)\n"
       "  iq3 [sek] [start_mm]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
       "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm)\n"
@@ -899,6 +936,10 @@ void setup() {
   // Standard sind 256 Bytes, und HWCDC verwirft alles darüber stillschweigend. Ein exptool-setup-Befehl
   // ist ~460 Bytes lang und kam in der Bridge sonst ohne Zeilenende an (2026-11-01 am Gerät gesehen).
   Serial.setRxBufferSize(4096);
+  // Sendeseite ebenso: Standard sind 256 Bytes, und HWCDC verwirft Daten, wenn der PC 100 ms lang nicht abholt.
+  // In der Bridge kam das bei Überlast (exptool > 2-Mbaud-Grenze) vor (2026-11-01, usb_short=1).
+  Serial.setTxBufferSize(16384);
+  Serial.setTxTimeoutMs(500);
   Serial.begin(115200);
   pinMode(PIN_WAKE, INPUT);  // nie dauerhaft treiben: auf dem Board treibt der CH342 (DTR0) WAKE_UP
   pinMode(PIN_INT, INPUT_PULLDOWN);
