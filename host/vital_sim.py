@@ -26,7 +26,6 @@ Die erzeugten Frames (je Szenario ≈ 3 MB) landen in einem temporären Ordner o
 from __future__ import annotations
 
 import argparse
-import io
 import pathlib
 import subprocess
 import sys
@@ -239,9 +238,11 @@ def check_limits(results: dict, limits: dict) -> list[str]:
                 msgs.append(f"{scen}: {metric} = {shown}, Grenze {op} {lim}")
     return msgs
 
+# Prüfstand-Programm: Frames einspielen, je 60 Frames ein Report, Ausgabe als @DSP-/@VITAL-Zeilen über die
+# Formatfunktionen des Headers (dsp_replay.h bringt sie auch für ältere Header mit, z. B. die Basislinie).
 HARNESS = r"""
 #include <Arduino.h>
-#include "a121_esp_dsp.h"
+#include "dsp_replay.h"
 using namespace a121_dsp;
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb");
@@ -249,17 +250,21 @@ int main(int argc, char **argv) {
     static UltimateEspDsp dsp;
     if (!dsp.begin(atoi(argv[2]), 120, kRoomStep)) return 3;
     Complex16 pts[kTotal3SubPts];
+    char line[kRoomLineMax];
     uint32_t n = 0;
-    printf("t_s,valid,br,hr,hr_spec,hr_acf,hr_ibi,rmssd,conf,harm,us\n");
     while (fread(pts, sizeof(pts[0]), kTotal3SubPts, f) == kTotal3SubPts) {
         float um;
         dsp.pushFrame(pts, kTotal3SubPts, 20, 0.0f, um);
         if (++n % 60) continue;
         VitalReport r;
         const bool ok = dsp.computeVitalReport(r);
-        printf("%.2f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%d,%lu\n", n / 60.0, ok, r.br_bpm, r.hr_fused_bpm,
-               r.hr_spec_bpm, r.hr_acf_bpm, r.hr_ibi_bpm, r.rmssd_ms, r.confidence_pct, r.hr_harm,
-               (unsigned long)r.compute_us);
+        const uint32_t t_ms = (uint32_t)lround(n * 1000.0 / 60.0);
+        formatDspLine(line, sizeof(line), t_ms, ok, r, r.compute_us);
+        puts(line);
+        if (ok) {
+            formatVitalLine(line, sizeof(line), t_ms, r);
+            puts(line);
+        }
     }
     return 0;
 }
@@ -316,9 +321,10 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER, with_variants: b
         d.mkdir(exist_ok=True)
         (d / "a121_esp_dsp.h").write_text(text)
         exe = tmp / f"harness_{name}"
-        # Header-Ordner und Firmware-Ordner als Rückfall (weitere Header neben a121_esp_dsp.h)
+        # Shim zuerst (chrono-micros), dann Header-Ordner, Firmware-Ordner als Rückfall, dsp_replay für die Formate
         subprocess.run(["g++", "-O2", "-std=c++17", f"-I{tmp / 'inc'}", f"-I{d}", f"-I{header.parent}",
-                        f"-I{DSP_HEADER.parent}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"], check=True)
+                        f"-I{DSP_HEADER.parent}", f"-I{REPLAY_DIR}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"],
+                       check=True)
         exes[name] = exe
     return exes
 
@@ -444,11 +450,29 @@ def truth_at(tr, t_end, win=15.0):
     return hr, float(tr["rr"][m].mean()), rmssd
 
 
+def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -> dict[str, np.ndarray]:
+    """Reports des Prüfstand-Programms je @DSP-Zeile: alle @DSP-Felder (fehlende = NaN), dazu t_s, valid und die
+    @VITAL-Felder des Reports (ungültige Reports: NaN)."""
+    from vital_eval import parse_lines
+    from a121_esp_ultimate import VITAL_FIELDS
+
+    lines = subprocess.run([str(exe), f"{base}.iq", str(zoom_start_pt)], capture_output=True, text=True,
+                           check=True).stdout.splitlines()
+    vd, dd, _ = parse_lines(lines, np.full(len(lines), np.nan))
+    d = dict(dd)
+    d["t_s"] = dd["t_ms"] / 1000.0
+    d["valid"] = dd["ok"]
+    pos = {t: i for i, t in enumerate(vd["t_ms"])}
+    for k in VITAL_FIELDS[1:]:
+        d[k] = np.array([vd[k][pos[t]] if t in pos else np.nan for t in dd["t_ms"]])
+    # Namen wie früher im Prüfstand
+    d["hr"], d["rmssd"], d["us"] = d["hr_fused"], d["rmssd_ms"], d["compute_us"]
+    return d
+
+
 def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     tr = np.load(f"{base}_truth.npz")
-    out = subprocess.run([str(exe), f"{base}.iq", str(int(tr["zoom_start_pt"]))], capture_output=True, text=True,
-                         check=True).stdout
-    d = np.genfromtxt(io.StringIO(out), delimiter=",", names=True)
+    d = harness_reports(exe, base, int(tr["zoom_start_pt"]))
     v = d["valid"] > 0
     tru = np.array([truth_at(tr, x) for x in d["t_s"]])
     e_hr = np.abs(d["hr"] - tru[:, 0])[v]
