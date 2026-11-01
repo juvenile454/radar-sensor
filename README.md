@@ -12,20 +12,26 @@ Aktueller Fokus: den A121 vollständig ausreizen; Pico und SAR-Scanner zurückge
 - **Wichtig:** Alle ermittelten Puls-Werte sind Rhythmus-Kandidaten im Radarsignal; ohne Referenzmessung
   (Smartwatch/Pulsoximeter/EKG) keine Aussage über Puls-Genauigkeit (`docs/EXPERIMENTE.md`).
 
+**Status 2026-11-01:** Android-App (`android/`, Debug-Build) liest den ESP32-S3 per USB-C am Galaxy S26 Ultra:
+Live-Ansichten, Konsole, Aufnahme im PC-Format im Hintergrund (31,7 min bei ausgeschaltetem Bildschirm ohne
+Frameverlust), Neuverbinden nach Abziehen, DSP-Nachrechnung per NDK. ESP32-Firmware `2026-11-01-app1` (Protokoll
+`proto=1`, nur ergänzt). Stand und Ergebnisse: `docs/ANDROID_APP.md`.
+
 ## Dokumente
 
 - `docs/KONZEPT.md` — Ziele, Realitätscheck, Architektur, Phasen, Einkauf
 - `docs/EXPERIMENTE.md` — Fähigkeiten-Matrix (Phase 1), Ergebnisse nur nach Messung
 - `docs/HARDWARE.md` — Boards, Pinouts, Verdrahtung, Strom
+- `docs/ANDROID_APP.md` — Android-App: Entscheidungen, Datenquellen, Phasen A0–A5 mit Ergebnissen, Bedienung
 
 ## Geplante Struktur (Ordner erst anlegen, wenn die Phase beginnt)
 
 | Ordner | Inhalt |
 |---|---|
-| `host/` | Python: `a121_ultimate_vital.py`, `a121_zielmessung.py`, `a121_vitalaufnahme.py`, `a121_livemonitor.py`, `a121_anhalteanalyse.py`, `a121_esp_vital.py`, `a121_esp_auto.py` (Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
+| `host/` | Python: `a121_ultimate_vital.py`, `a121_zielmessung.py`, `a121_vitalaufnahme.py`, `a121_livemonitor.py`, `a121_anhalteanalyse.py`, `a121_esp_vital.py`, `a121_esp_auto.py`, `a121_esp_ultimate.py` (verify-cpp, plot, replay-cpp), `esp_record.py` (Aufnahme/Prüfung im App-Format), `esp_tcp_bridge.py` (ESP32 am PC → App über Tailscale); `dsp_replay/` (C++-Nachrechnung für PC und App) (Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
 | `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 (angelegt: Bring-up-Konsole mit I2C-Distanzbefehlen; `uv tool install platformio esptool`) |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
-| `android/` | Android-App (Kotlin/Compose) |
+| `android/` | Android-App (Kotlin/Compose, angelegt; `./gradlew :app:testDebugUnitTest :app:assembleDebug`) |
 | `hardware/` | Verdrahtung, Lochraster-Layout, später KiCad |
 
 Messdaten/Aufnahmen gehören **nicht** ins Projekt, sondern nach `~/Data/radar-sensor/`.

@@ -1,0 +1,392 @@
+package de.timo.radarsensor.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import de.timo.radarsensor.core.LinkStats
+import de.timo.radarsensor.core.RadarController
+import de.timo.radarsensor.live.EventKind
+import de.timo.radarsensor.live.LiveSnapshot
+import de.timo.radarsensor.record.Recorder
+import de.timo.radarsensor.transport.ReplayTransport
+import java.io.File
+
+private fun LiveSnapshot.markers(): List<Marker> =
+    events.mapNotNull {
+        when (it.kind) {
+            EventKind.REZOOM -> Marker(it.tS, Pal.warn)
+            EventKind.RECONNECT -> Marker(it.tS, Pal.bad)
+            EventKind.WARN, EventKind.ERROR -> Marker(it.tS, Pal.c4)
+            else -> null
+        }
+    }
+
+@Composable
+private fun Page(content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp)) { content() }
+}
+
+// ------------------------------------------------------------------------------------------------- Übersicht
+
+@Composable
+fun OverviewPage(
+    s: LiveSnapshot,
+    stats: LinkStats,
+) = Page {
+    val v = s.lastVital
+    val t = s.room?.targets?.firstOrNull()
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Stat("Atmung", f1(v?.breathingBpm?.takeIf { it > 0 }) + " /min", color = Pal.c1)
+        Stat(
+            "Puls-Kandidat",
+            f0(v?.hrFusedBpm?.takeIf { it > 0 }) + " /min",
+            color = Pal.c2,
+            sub = "Konfidenz ${f0(v?.confidencePct)} % · ohne Referenz",
+        )
+        Stat("Ziel", if (t != null) "%.2f m".format(t.distMm / 1000f) else "–", sub = t?.let { if (it.moving) "bewegt" else "ruhig" })
+        Stat("Atemtiefe", f0(v?.respDepthUm) + " µm")
+        Stat("Temperatur", s.lastIq3?.tempC?.let { "$it °C" } ?: s.lastDoppler?.tempC?.let { "$it °C" } ?: "–")
+        Stat("Modus", s.mode.label, sub = "%.1f kB/s".format(stats.bytesPerS / 1000f))
+        Stat(
+            "Frameverlust",
+            "${s.framesLost}",
+            color = if (s.framesLost == 0L) Pal.ok else Pal.bad,
+            sub = "${s.reconnects} × neu verbunden",
+        )
+    }
+    LineChart("Weg (Zoom-Phase)", listOf(Series(s.iqT, s.iqDisp, Pal.c1, "µm")), xWindow = 20f, unit = "µm", markers = s.markers())
+    LineChart(
+        "Atmung / Puls-Kandidat",
+        listOf(Series(s.vitalT, s.vitalBr, Pal.c1, "Atmung"), Series(s.vitalT, s.vitalHr, Pal.c2, "Puls-Kandidat")),
+        xWindow = 300f,
+        unit = "/min",
+        skipNonPositive = true,
+    )
+    val h = s.hello
+    Text(
+        if (h != null) "Firmware ${h.firmware} · Server ${h.server} · Protokoll ${h.proto} · ${h.mac}" else "kein @HELLO (alte Firmware oder noch nicht verbunden)",
+        fontSize = 11.sp,
+        color = Pal.axis,
+    )
+}
+
+// ------------------------------------------------------------------------------------------------- Signal
+
+@Composable
+fun SignalPage(s: LiveSnapshot) =
+    Page {
+        var window by rememberSaveable { mutableIntStateOf(20) }
+        Row { listOf(5, 20, 60).forEach { w -> Quick("$w s", if (window == w) Pal.c2 else Pal.c1) { window = w } } }
+        val m = s.markers()
+        LineChart("Weg aus Zoom-Phase", listOf(Series(s.iqT, s.iqDisp, Pal.c1, "Weg")), xWindow = window.toFloat(), unit = "µm", markers = m, height = 200)
+        LineChart("Zoom-Amplitude", listOf(Series(s.iqT, s.iqZoomAmp, Pal.c3, "Zoom")), xWindow = window.toFloat(), markers = m)
+        LineChart("Loopback-Amplitude", listOf(Series(s.iqT, s.iqLoopAmp, Pal.c5, "Loopback")), xWindow = window.toFloat(), markers = m)
+        LineChart("Sensortemperatur", listOf(Series(s.iqT, s.iqTemp, Pal.c2, "°C")), unit = "°C", height = 110)
+        Labeled("Gesättigte Frames", "${s.iqSaturatedFrames}")
+        Labeled("Zoom-Fenster", if (s.zoomStartMm.isNaN()) "–" else "%.0f–%.0f mm (%d × neu gewählt)".format(s.zoomStartMm, s.zoomEndMm, s.rezooms))
+        val raw = s.lastRaw
+        if (raw != null && raw.points >= 105) {
+            HorizontalDivider()
+            Labeled("Rohframes (@RAW)", "${s.rawFrames}, letzter Frame ${raw.frame}, ${raw.points} Punkte")
+            val zoomX = FloatArray(24) { s.zoomStartMm.takeIf { !it.isNaN() }?.plus(2.5f * it) ?: it.toFloat() }
+            ProfileChart("Rohframe: Zoom-Amplituden", zoomX, listOf(FloatArray(24) { raw.amplitude(1 + it) } to Pal.c3), listOf("|IQ|"), height = 130)
+            val rp = s.roomProfile
+            val roomX = FloatArray(80) { (rp?.startMm ?: 300f) + (rp?.stepMm ?: 30f) * it }
+            ProfileChart("Rohframe: Raum-Amplituden", roomX, listOf(FloatArray(80) { raw.amplitude(25 + it) } to Pal.c1), listOf("|IQ|"), height = 130)
+            Labeled("Loopback |IQ|", f0(raw.amplitude(0)))
+        } else {
+            Text("Rohdaten: mit „iq3 ∞ raw“ starten (≈ 35 kB/s)", fontSize = 12.sp, color = Pal.axis)
+        }
+    }
+
+// ------------------------------------------------------------------------------------------------- Raum
+
+@Composable
+fun RoomPage(s: LiveSnapshot) =
+    Page {
+        val rp = s.roomProfile
+        val targets = s.room?.targets ?: emptyList()
+        if (rp != null) {
+            val x = FloatArray(rp.amp.size) { rp.startMm + rp.stepMm * it }
+            Waterfall(
+                "Bewegung über Rauschen: blau 0 dB → rot ≥ 30 dB, neueste Zeile unten",
+                s.waterfall,
+                rp.startMm,
+                rp.stepMm,
+                markerMm = targets.map { it.distMm },
+            )
+            ProfileChart(
+                "Profil",
+                x,
+                listOf(rp.amp to Pal.c3, rp.motion to Pal.c2),
+                listOf("Amplitude", "Bewegung"),
+                markersMm = targets.mapIndexed { i, t -> t.distMm to if (i == 0) Pal.ok else Pal.axis },
+                band = if (s.zoomStartMm.isNaN()) null else s.zoomStartMm to s.zoomEndMm,
+                logY = true,
+            )
+        } else {
+            Text("keine Raumprofile (iq3 starten)", color = Pal.axis)
+        }
+        LineChart("Hauptziel-Abstand", listOf(Series(s.targetT, s.targetDist.map { it / 1000f }.toFloatArray(), Pal.ok, "m", dots = true)), unit = "m", height = 120, markers = s.markers())
+        s.room?.let { r ->
+            Labeled("Rauschen Amp / Bew.", "${f0(r.noiseAmp)} / ${f0(r.noiseMotion)}")
+            for ((i, t) in r.targets.withIndex()) {
+                Labeled("Ziel ${i + 1}", "%.2f m · Amp %.0f · Bew. %.0f%s".format(t.distMm / 1000f, t.amp, t.motion, if (t.moving) " · bewegt" else ""))
+            }
+        }
+    }
+
+// ------------------------------------------------------------------------------------------------- Vital
+
+@Composable
+fun VitalPage(s: LiveSnapshot) =
+    Page {
+        var window by rememberSaveable { mutableIntStateOf(300) }
+        Row { listOf(60, 300, 1800).forEach { w -> Quick(if (w < 600) "$w s" else "${w / 60} min", if (window == w) Pal.c2 else Pal.c1) { window = w } } }
+        val xw = window.toFloat()
+        val v = s.lastVital
+        Text(
+            "Puls nur als Rhythmus-Kandidat: keine Referenzmessung, keine Genauigkeitsaussage.",
+            fontSize = 11.sp,
+            color = Pal.warn,
+        )
+        LineChart("Atmung", listOf(Series(s.vitalT, s.vitalBr, Pal.c1, "/min")), xWindow = xw, unit = "/min", skipNonPositive = true)
+        LineChart(
+            "Puls-Kandidaten",
+            listOf(
+                Series(s.vitalT, s.vitalHr, Pal.c2, "fused"),
+                Series(s.vitalT, s.vitalHrSpec, Pal.c3, "Spektrum", dots = true),
+                Series(s.vitalT, s.vitalHrAcf, Pal.c4, "AKF", dots = true),
+                Series(s.vitalT, s.vitalHrIbi, Pal.c5, "IBI", dots = true),
+            ),
+            xWindow = xw,
+            unit = "/min",
+            skipNonPositive = true,
+            height = 200,
+        )
+        LineChart("Konfidenz", listOf(Series(s.vitalT, s.vitalConf, Pal.ok, "%")), xWindow = xw, yMin = 0f, yMax = 100f, unit = "%", height = 110)
+        LineChart(
+            "Amplituden",
+            listOf(Series(s.vitalT, s.vitalResp, Pal.c1, "Atemtiefe"), Series(s.vitalT, s.vitalHeart, Pal.c2, "Herz")),
+            xWindow = xw,
+            unit = "µm",
+            height = 130,
+        )
+        LineChart("Zoom-SNR", listOf(Series(s.vitalT, s.vitalSnr, Pal.c3, "dB")), xWindow = xw, unit = "dB", height = 110)
+        LineChart("RMSSD", listOf(Series(s.vitalT, s.vitalRmssd, Pal.c5, "ms")), xWindow = xw, unit = "ms", height = 110, skipNonPositive = true)
+        LineChart("DSP-Rechenzeit / Bewegungsanteil", listOf(Series(s.dspT, s.dspComputeMs, Pal.c4, "ms"), Series(s.dspT, s.dspMotion, Pal.c2, "% Bew.")), xWindow = xw, height = 120)
+        if (v != null) {
+            Labeled("IBI-Median", "${f0(v.ibiMedianMs)} ms")
+            Labeled("Loopback-Phasenrauschen", "${f1(v.loopbackPhaseStdMrad)} mrad")
+            Labeled("Zielabstand / Ziele", "%.2f m / %d".format(v.targetDistMm / 1000f, v.roomTargets))
+        }
+        s.lastDsp?.let { d ->
+            Labeled("DSP", "gültig ${if (d.valid) "ja" else "nein"} · Punkt ${d.hrBin} · Oberwelle ${if (d.hrOnHarmonic) "ja" else "nein"}")
+        }
+    }
+
+// ------------------------------------------------------------------------------------------------- Doppler
+
+@Composable
+fun DopplerPage(s: LiveSnapshot) =
+    Page {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Quick("doppler 15 s") { RadarController.send("doppler 15") }
+            Quick("doppler ∞") { RadarController.send("doppler 0") }
+            Quick("Stopp", Pal.bad) { RadarController.stopStream() }
+        }
+        s.dopplerStart?.let { Labeled("Einstellung", "%.0f mm · %.0f Hz · %d Sweeps".format(it.distMm, it.sweepRateHz, it.sweeps)) }
+        LineChart("v_rms", listOf(Series(s.dopT, s.dopV, Pal.c1, "mm/s")), xWindow = 30f, unit = "mm/s", height = 200, markers = s.markers())
+        LineChart("Amplitude", listOf(Series(s.dopT, s.dopAmp, Pal.c3, "Amp")), xWindow = 30f, height = 140)
+        s.lastDoppler?.let { Labeled("Letzter Wert", "%.2f mm/s · Amp %.0f · %d °C · Frame %s".format(it.vRmsMmS, it.amp, it.tempC, it.frame?.toString() ?: "–")) }
+    }
+
+// ------------------------------------------------------------------------------------------------- Experten
+
+@Composable
+fun ExpertPage(s: LiveSnapshot) =
+    Page {
+        var secs by rememberSaveable { mutableStateOf("10") }
+        Text("Sparse-IQ-Session wie mit „sess …“ in der Konsole einstellen; hier starten und auswerten.", fontSize = 12.sp, color = Pal.axis)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(secs, { secs = it.filter(Char::isDigit).take(4) }, Modifier.padding(end = 4.dp).fillMaxWidth(0.25f), label = { Text("Sek.") }, singleLine = true)
+            Quick("stat") { RadarController.send("sess run $secs stat") }
+            Quick("peak") { RadarController.send("sess run $secs peak") }
+            Quick("amp") { RadarController.send("sess run $secs amp") }
+            Quick("Stopp", Pal.bad) { RadarController.stopStream() }
+            Quick("sess (zeigen)") { RadarController.send("sess") }
+            Quick("sess check") { RadarController.send("sess check") }
+            Quick("sess default") { RadarController.send("sess default") }
+        }
+        s.sessMeta?.let {
+            Labeled("Frame", "${it.framePoints} Punkte · ${it.sweepPoints}/Sweep · %.1f kB".format(it.frameKb))
+            Labeled("max. Sweep-Rate", "%.0f Hz · High-Speed ${if (it.highSpeed) "ja" else "nein"} · Kal. ${it.calTempC} °C".format(it.maxSweepRateHz))
+        }
+        for (sub in s.sessSubs) Labeled("Subsweep ${sub.index}", "Offset ${sub.offset}, ${sub.length} Punkte, ab %.0f mm, Schritt %.1f mm".format(sub.startMm, sub.stepMm))
+        for ((i, a) in s.sessAmp.toSortedMap()) {
+            ProfileChart("Amplitude Subsweep $i", FloatArray(a.amp.size) { a.startMm + a.stepMm * it }, listOf(a.amp to Pal.c3), listOf("Amp"), height = 140)
+        }
+        if (s.sessPeakT.isNotEmpty()) {
+            LineChart("Stärkster Punkt (Subsweep 0)", listOf(Series(s.sessPeakT, s.sessPeakMm, Pal.c1, "mm")), xWindow = 30f, unit = "mm", height = 140)
+            LineChart("Peak-Amplitude", listOf(Series(s.sessPeakT, s.sessPeakAmp, Pal.c2, "Amp")), xWindow = 30f, height = 120)
+        }
+        s.sessStat?.let { st ->
+            Labeled("Stat", "%.1f fps · %d Frames · verzögert %d · gesättigt %d · %d °C · Rückstau %d".format(st.fps, st.frames, st.delayed, st.saturated, st.tempC, st.backlog))
+            for ((i, p) in st.peaks.withIndex()) Labeled("  Sub $i Peak", "%.0f mm · Amp %.0f".format(p.distMm, p.amp))
+        }
+        s.sessEnd?.let { Labeled("Ende", "${it.frames} Frames · %.1f s · %.1f fps · Zähler ${it.counters.joinToString(" ")}".format(it.durationS, it.fps)) }
+    }
+
+// ------------------------------------------------------------------------------------------------- Diagnose
+
+@Composable
+fun DiagPage(
+    s: LiveSnapshot,
+    stats: LinkStats,
+) = Page {
+    Labeled("Datenrate", "%.1f kB/s · %.0f Zeilen/s".format(stats.bytesPerS / 1000f, stats.linesPerS))
+    Labeled("Empfangen", "%.2f MB · %d Zeilen".format(stats.totalBytes / 1e6, s.lines))
+    Labeled("Frameverlust (Zähler)", "${s.framesLost} Frames in ${s.frameGaps} Lücken")
+    Labeled("Neu verbunden", "${s.reconnects} × · Frame-Timeouts ${s.frameTimeouts}")
+    Labeled("Unlesbare Zeilen", "${s.malformed}")
+    s.lastMalformed?.let { Text(it, fontSize = 11.sp, color = Pal.bad, fontFamily = FontFamily.Monospace) }
+    LineChart("DSP-Rechenzeit", listOf(Series(s.dspT, s.dspComputeMs, Pal.c4, "ms")), unit = "ms", height = 120)
+    LineChart("Temperatur", listOf(Series(s.iqT, s.iqTemp, Pal.c2, "°C")), unit = "°C", height = 110)
+    HorizontalDivider()
+    Text("Zeilen je Tag", fontSize = 13.sp)
+    for ((tag, n) in s.tagCounts.entries.sortedByDescending { it.value }) Labeled(tag, "$n")
+    HorizontalDivider()
+    Text("Ereignisse", fontSize = 13.sp)
+    for (e in s.events.takeLast(40).asReversed()) {
+        val c =
+            when (e.kind) {
+                EventKind.ERROR, EventKind.RECONNECT -> Pal.bad
+                EventKind.WARN, EventKind.REZOOM -> Pal.warn
+                else -> Pal.axis
+            }
+        Text("%7.1f s  %s".format(e.tS, e.text), fontSize = 11.sp, color = c, fontFamily = FontFamily.Monospace)
+    }
+}
+
+// ------------------------------------------------------------------------------------------------- Konsole
+
+@Composable
+fun ConsolePage(s: LiveSnapshot) {
+    var cmd by rememberSaveable { mutableStateOf("") }
+    val list = rememberLazyListState()
+    LaunchedEffect(s.console.size, s.lines) { if (s.console.isNotEmpty()) list.scrollToItem(s.console.size - 1) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (c in listOf("hello", "help", "info", "bus", "srv_info", "sess help")) Quick(c) { RadarController.send(c) }
+            Quick("Server-Neustart-Test", Pal.warn) { RadarController.testServerReset() }
+            Quick("leeren", Pal.axis) { RadarController.store.clear() }
+        }
+        Row {
+            OutlinedTextField(
+                cmd,
+                { cmd = it },
+                Modifier.weight(1f),
+                placeholder = { Text("Befehl an den ESP32") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions =
+                    KeyboardActions(onSend = {
+                        RadarController.send(cmd.trim())
+                        cmd = ""
+                    }),
+            )
+            Button(onClick = {
+                RadarController.send(cmd.trim())
+                cmd = ""
+            }, Modifier.padding(start = 6.dp)) { Text("Senden") }
+        }
+        LazyColumn(Modifier.fillMaxSize(), state = list) {
+            items(s.console) { line ->
+                Text(
+                    line,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color =
+                        when {
+                            line.startsWith("FEHLER") -> Pal.bad
+                            line.startsWith("@WARN") || line.startsWith("@RECONNECT") -> Pal.warn
+                            line.startsWith("»") -> Pal.c1
+                            line.startsWith("@") -> Pal.c3
+                            else -> Color.Unspecified
+                        },
+                )
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------------------- Aufnahmen
+
+@Composable
+fun RecordingsPage(recording: File?) =
+    Page {
+        val root = RadarController.recordingsDir
+        var refresh by remember { mutableIntStateOf(0) }
+        val dirs = remember(refresh, recording) { Recorder.list(root) }
+        Text("Ablage: ${root.absolutePath}", fontSize = 11.sp, color = Pal.axis)
+        Text("Holen: adb pull …/recordings ~/Data/radar-sensor/phone/", fontSize = 11.sp, color = Pal.axis)
+        Row { Quick("aktualisieren") { refresh++ } }
+        val dsp by RadarController.dspStatus.collectAsState()
+        dsp?.let { Text("DSP am Handy: $it", fontSize = 12.sp) }
+        if (dirs.isEmpty()) Text("keine Aufnahmen", color = Pal.axis)
+        for (d in dirs) {
+            val mb = (File(d, "stream.log").length() / 1e6)
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Text(d.name, fontSize = 13.sp, color = if (d == recording) Pal.bad else Color.Unspecified)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("%.2f MB".format(mb), fontSize = 12.sp, color = Pal.axis, modifier = Modifier.padding(top = 8.dp))
+                    if (d != recording) {
+                        Quick("▶ ×1") { play(d, 1f) }
+                        Quick("▶ ×4") { play(d, 4f) }
+                        Quick("▶ ×20") { play(d, 20f) }
+                        Quick("DSP neu") { RadarController.replayDsp(d) }
+                    }
+                }
+            }
+            HorizontalDivider()
+        }
+    }
+
+private fun play(
+    dir: File,
+    speed: Float,
+) {
+    RadarController.store.clear()
+    RadarController.connect(ReplayTransport(dir, speed))
+}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          Nur im Debug-Build: Steuerung per adb ohne Bildschirm (Aufnahme bei ausgeschaltetem Display).
+          android.permission.DUMP haben nur Shell (adb) und System, keine normalen Apps.
+        -->
+        <receiver
+            android:name=".debug.DebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="de.timo.radarsensor.DEBUG" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
