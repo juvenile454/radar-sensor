@@ -73,6 +73,50 @@ Datenrate grob: 40 Messpunkte × 4 Byte × 100 Hz ≈ 16 kB/s — passt in 921 6
   Motorsteuerung dann über ESP32-S3 oder Pico entscheiden. Motor nie aus dem Handy versorgen.
 - BLE statt Kabel, Akku, Gehäuse, eigene Platine (KiCad), zweiter Sensor (Bilateration).
 
+## Erweiterungsideen: Handy-Sensoren und WLAN
+
+Stand 2026-11-01: **nur Ideen**, nichts gebaut oder gemessen. Reihenfolge in der Tabelle = Empfehlung.
+
+**Grundlage für alle Ideen:** Die App zeichnet jede Datenquelle von Anfang an mit derselben Uhr auf
+(Android-Empfangszeit `elapsedRealtimeNanos` plus ESP32-Frame-Zähler bzw. Sensor-`tick`; für Radar-Analysen
+Frame-Zähler × Frame-Rate, s. `docs/EXPERIMENTE.md` M3, Aufnahme E). Eine Aufnahme = ein Ordner mit einer Datei
+je Quelle und Metadaten, Export nach `~/Data/radar-sensor/`. Später nachrüsten wäre mühsam.
+
+| # | Idee | Was die App zeigt | Nutzen | Grenzen | Aufwand |
+|---|---|---|---|---|---|
+| I1 | Puls über die Kamera: Finger auf Rückkamera + Licht (PPG) | Pulskurve und Einzelschläge neben dem Radar-Puls | Vergleich mit derselben Uhr, besser als Selbstzählen | Selbst kein Messgerät → keine Genauigkeitsaussage; dafür weiter Brustgurt, Oximeter oder EKG | klein–mittel |
+| I2 | Rundumblick: Handy fest am Sensor, langsam drehen; Gyroskop/Kompass liefern den Winkel | Raumkarte von oben (Winkel × Entfernung), wie ein grobes Lidar | Gleicht die fehlende Richtung des A121 aus | Schärfe hängt von der Strahlbreite ab (G6, Winkel noch nicht gemessen); mit hyperbolischer Linse schärfer | mittel |
+| I3 | Wandkarte: Handy + Sensor über eine Wand führen, Position aus Kamera-Tracking (ARCore) | Echostärke über der Wandfläche, z. B. hinter Gipskarton (U2) | Grobe Bildgebung ohne Linearachse | Tracking-Genauigkeit vermutlich cm (nicht geprüft) → kein echtes SAR-Bild, dafür wären < 1 mm nötig (Wellenlänge 5 mm) | mittel–groß |
+| I4 | Beschleunigungssensor des Handys | Markierung „Sensor bewegt“ auf der Zeitachse | Bewegungsfehler im mobilen Aufbau erkennen und aussortieren | Nur sinnvoll, wenn Handy und Sensor fest verbunden sind | klein |
+| I5 | WLAN-Sensing (CSI) am ESP32, ohne Router (s. u.) | Wasserfalldiagramm (Stärke von rund 50 Teilfrequenzen über die Zeit) + Bewegungsindex neben dem Radar | Dieselbe Bewegung bei 2,4 GHz (grob) und 60 GHz (mm-genau) vergleichen | Sieht vor allem Bewegung nahe an Handy und ESP32 | mittel–groß |
+| I6 | GPS | Ort der Aufnahme in den Metadaten | Nur für Messungen im Freien | Drinnen kaum Nutzen | klein |
+
+### I5: WLAN-Sensing zwischen ESP32 und Handy
+
+- **Aufbau:** Handy-Hotspot auf **2,4 GHz** (der ESP32-S3 kann nur 2,4 GHz). Der ESP32 verbindet sich und pingt
+  das Handy 50–100-mal pro Sekunde. An jeder Antwort liefert er die CSI (Amplitude und Phase je Teilfrequenz).
+  Die Werte gehen mit den Radardaten über das USB-Kabel in die App (roh etwa 13 kB/s bei 100 Hz).
+- **Rollen:** Messen kann nur der ESP32; Android gibt keine CSI heraus, nur eine grobe Signalstärke. Das Handy ist
+  der Sender. Umgekehrt (ESP32 als eigenes WLAN, Handy verbindet sich) geht auch, ist aber umständlicher:
+  Android meldet „kein Internet“, die App muss die Pakete selbst senden, und Stromsparen macht den Takt unregelmäßig.
+- **Werkzeug geprüft (2026-11-01, nicht am Gerät):** Im installierten Arduino-Core (`framework-arduinoespressif32`
+  3.20017, PlatformIO `espressif32@6.9.0`) ist `CONFIG_ESP32_WIFI_CSI_ENABLED=y`. Kein Wechsel auf ESP-IDF nötig.
+  Offizielle Beispiele: Espressif `esp-csi`.
+- **Grenze:** WLAN-Sensing spürt Bewegung vor allem auf und neben der Strecke Sender–Empfänger. Bei ~20 cm Abstand
+  überdeckt die direkte Verbindung fast alles. Erwartet: Hand am Gerät, Vorbeigehen, Aufstehen. Eher nicht: ganze
+  Wohnung, durch Wände, Atmung zuverlässig. Mit längerem USB-Kabel (1–2 m) und der Person zwischen Handy und ESP32
+  ist mehr zu sehen. Raumweit nur mit einem Sender an anderer Stelle (Router oder zweiter ESP32).
+- **Offen:** Bleibt der Hotspot ohne mobile Daten an? Wie viel Strom zieht der ESP32 mit WLAN zusätzlich aus dem
+  Handy (Senden: Spitzen von einigen 100 mA, Schätzung)? Reicht die Rechenzeit neben der DSP (heute schon Pausen
+  bis ~300 ms)?
+- **Regeln:** Nur das eigene Netz. Keine fremden Geräte, MAC-Adressen oder Inhalte mitschneiden. Hotspot-Zugangsdaten
+  nicht ins Repo, sondern über die Konsole eingeben. Das Funkmodul wird nur ausgelesen, nicht verändert.
+  WLAN (2,4 GHz) und Radar (60 GHz) stören sich nicht.
+- **Erster Test (vor der App):** Konsolenbefehl `csi` am ESP32 (mit Hotspot verbinden, pingen, Werte über USB ausgeben)
+  und ein PC-Skript für das Wasserfalldiagramm.
+- **Daneben möglich:** Der ESP32 scannt WLAN-Kanäle und Netze live (Android-Apps dürfen nur 4 Scans in 2 Minuten).
+  Später kann er die Daten auch kabellos ans Handy schicken (s. „Zurückgestellt“).
+
 ## Einkauf
 
 | Was | Wann | Preis |
