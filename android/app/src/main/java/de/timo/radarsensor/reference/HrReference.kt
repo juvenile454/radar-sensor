@@ -52,7 +52,8 @@ sealed interface RefState {
  * EKG-Gurt über BLE (V0.1), z. B. Polar H10: Suche nach Geräten mit Heart Rate Service (0x180D), Verbinden,
  * Benachrichtigungen der Heart Rate Measurement (0x2A37) einschalten, jede Benachrichtigung mit Empfangszeit
  * (elapsedRealtimeNanos, dieselbe Zeitachse wie rxtime.csv) an [onMeasurement]. Reißt die Verbindung ab, verbindet
- * Android von selbst wieder (autoConnect), bis [disconnect] gerufen wird. Die Berechtigungen BLUETOOTH_SCAN
+ * Android von selbst wieder (autoConnect), bis [disconnect] gerufen wird; ebenso nach einer fehlgeschlagenen
+ * Dienstsuche (höchstens [MAX_DISCOVERY_FAILURES] in Folge, [discoveryAction]). Die Berechtigungen BLUETOOTH_SCAN
  * (neverForLocation) und BLUETOOTH_CONNECT fragt die Activity an; fehlen sie, meldet [state] Failed.
  */
 @SuppressLint("MissingPermission")
@@ -80,6 +81,8 @@ class HrReference(
     @Volatile private var gatt: BluetoothGatt? = null
 
     @Volatile private var userClosed = false
+
+    @Volatile private var discoveryFailures = 0
     private var scanning = false
 
     private val scanCb =
@@ -149,6 +152,7 @@ class HrReference(
                 return
             }
         userClosed = false
+        discoveryFailures = 0
         _state.value = RefState.Connecting(dev.address)
         log("verbinde Gurt ${dev.address}")
         try {
@@ -207,14 +211,31 @@ class HrReference(
                 g: BluetoothGatt,
                 status: Int,
             ) {
-                val ch = g.getService(HR_SERVICE)?.getCharacteristic(HR_MEASUREMENT)
+                val ch = if (status == GATT_OK) g.getService(HR_SERVICE)?.getCharacteristic(HR_MEASUREMENT) else null
                 val cccd = ch?.getDescriptor(CCCD)
-                if (ch == null || cccd == null) {
-                    fail("Gerät hat keinen Heart Rate Service")
-                    userClosed = true
-                    g.disconnect()
-                    return
+                when (discoveryAction(status, ch != null && cccd != null, discoveryFailures)) {
+                    Discovery.Subscribe -> discoveryFailures = 0
+                    Discovery.NoHrService -> {
+                        fail("Gerät hat keinen Heart Rate Service")
+                        userClosed = true
+                        g.disconnect()
+                        return
+                    }
+                    Discovery.Reconnect -> {
+                        // trennen; onConnectionStateChange verbindet dann wie bei einem Abriss wieder
+                        discoveryFailures++
+                        log("Gurt-Dienstsuche fehlgeschlagen (Status $status), verbinde wieder")
+                        g.disconnect()
+                        return
+                    }
+                    Discovery.GiveUp -> {
+                        fail("Gurt-Dienstsuche $MAX_DISCOVERY_FAILURES-mal fehlgeschlagen (Status $status)")
+                        userClosed = true
+                        g.disconnect()
+                        return
+                    }
                 }
+                if (ch == null || cccd == null) return
                 g.setCharacteristicNotification(ch, true)
                 g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                 _state.value = RefState.Connected(g.device.address, g.device.name)
