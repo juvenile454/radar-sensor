@@ -15,10 +15,14 @@ data class PulseQuality(
 const val MIN_CONF_PCT = 50f
 const val MAX_MOTION_PCT = 30f
 
+/** @VITAL älter als der letzte @DSP um mehr als das: Wert stammt von einem früheren Report (Reports kommen 1/s). */
+const val STALE_MS = 1500L
+
 /**
- * Puls grau bei Konfidenz unter 50 %, Bewegung (Zustand BEWEGUNG oder > 30 % bewegte Blöcke) oder ohne gültige
- * Messung (keine Person, Suche, Erfassung). Zustandstext aus `@STATE` (V3.5), bei älterer Firmware aus der
- * Gültigkeit des Reports.
+ * Puls grau bei Konfidenz unter 50 %, Bewegung (Zustand BEWEGUNG oder > 30 % bewegte Blöcke), ohne gültige
+ * Messung (keine Person, Suche, Erfassung), bei ungültigem letztem Report (in jedem Zustand, auch Apnoe: dann gibt es
+ * kein neues @VITAL, angezeigt wäre der alte Wert) und wenn der Wert älter als der letzte Report ist. Zustandstext aus
+ * `@STATE` (V3.5), bei älterer Firmware aus der Gültigkeit des Reports.
  */
 fun pulseQuality(
     v: Vital?,
@@ -38,7 +42,8 @@ fun pulseQuality(
             v == null -> "kein Wert"
             st?.state == MeasState.MOTION || (d?.motionPct ?: 0f) > MAX_MOTION_PCT -> "Bewegung"
             st != null && st.state !in setOf(MeasState.VALID, MeasState.APNEA) -> MeasState.name(st.state)
-            st == null && d?.valid == false -> "ungültig"
+            d?.valid == false -> "ungültig"
+            d != null && d.tMs - v.tMs > STALE_MS -> "veraltet"
             v.confidencePct < MIN_CONF_PCT -> "Konfidenz ${"%.0f".format(java.util.Locale.ROOT, v.confidencePct)} %"
             else -> null
         }
