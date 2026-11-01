@@ -235,6 +235,13 @@ LIMITS = {
 }
 
 PERSON_FREE = ("leer", "niemand")
+# V2.4: erster gültiger Wert nach höchstens 6 s (wachsendes Fenster). base, harm4, brady, tachy6: Im 6-s-Fenster liegt
+# die stärkste Spitze dort auf 2 × Puls oder am Bandrand, Autokorrelation/Einzelschläge bestätigen sie nicht, der
+# vorläufige Wert wird verworfen; Grenze dort wie vor V2.4 (8 s).
+FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0}
+for _scen in LIMITS:
+    if _scen not in PERSON_FREE + ("alle",):
+        LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
 
 
 def check_limits(results: dict, limits: dict) -> list[str]:

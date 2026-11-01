@@ -100,7 +100,7 @@ class SensorFlagsReplayTest(unittest.TestCase):
     def test_recal_restarts_history(self):
         i = next(k for k, ln in enumerate(self.lines) if ln.startswith("@RECAL,"))
         dsp_after = [ln.split(",") for ln in self.lines[i:] if ln.startswith("@DSP,")]
-        self.assertEqual([f[2] for f in dsp_after[:7]], ["0"] * 7)   # < 8 s Daten nach dem Neubeginn
+        self.assertEqual([f[2] for f in dsp_after[:5]], ["0"] * 5)   # < 6 s Daten nach dem Neubeginn (V2.4)
         self.assertIn("1", [f[2] for f in dsp_after])
 
 

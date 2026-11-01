@@ -123,11 +123,11 @@ class SignalQualityTest(unittest.TestCase):
 
     def quality(self, **kw) -> float:
         q = dict(peak_db=15.0, on_harmonic="false", hr_spec=72.0, hr_acf=72.0, hr_ibi=72.0, hr_fused=72.0,
-                 hr_fused_5s_ago=72.0, motion_pct=0.0, sat_pct=0.0)
+                 hr_fused_5s_ago=72.0, motion_pct=0.0, sat_pct=0.0, win_frac=1.0)
         q.update(kw)
         init = ", ".join(str(q[k]) + ("f" if isinstance(q[k], float) else "") for k in
                          ("peak_db", "on_harmonic", "hr_spec", "hr_acf", "hr_ibi", "hr_fused", "hr_fused_5s_ago",
-                          "motion_pct", "sat_pct"))
+                          "motion_pct", "sat_pct", "win_frac"))
         return float(run_cpp(f"QualityInputs q = {{{init}}}; printf(\"%.3f\", signalQuality(q));"))
 
     def test_clear_peak_full_agreement(self):
@@ -149,6 +149,10 @@ class SignalQualityTest(unittest.TestCase):
         """V1.5: gesättigte Frames im Fenster ab 1 % → × 0,5"""
         self.assertAlmostEqual(self.quality(sat_pct=0.5), 100.0, places=2)
         self.assertAlmostEqual(self.quality(sat_pct=2.0), 50.0, places=2)
+
+    def test_short_window_scales(self):
+        """V2.4: wachsendes Fenster ab 6 s, Konfidenz × N/900"""
+        self.assertAlmostEqual(self.quality(win_frac=0.4), 40.0, places=2)
 
     def test_motion_and_jump(self):
         self.assertAlmostEqual(self.quality(motion_pct=50.0), 50.0, places=2)
@@ -608,6 +612,33 @@ class ZoomWidthTest(unittest.TestCase):
         printf(" ");
         for (bool b : sel) printf("%d", b);""")
         self.assertEqual(out, "00101010 11111111")   # 9, 9, 7; bei k = n alle
+
+
+class FastStartTest(unittest.TestCase):
+    """V2.4 (B14): erster Report mit Vitalwerten ab 6 s (wachsendes Fenster); beim Start nach 2 s auf ein Ziel außerhalb
+    des Zoom-Fensters zoomen (vorher 3 Reports), nach einem Rezoom weiter erst nach 3 Reports."""
+
+    GEN = RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0]
+
+    def test_valid_from_6_s(self):
+        out = run_cpp(self.GEN + """
+        push(359, 1.2f); d.computeVitalReport(r); printf("%d ", r.valid);
+        push(1, 1.2f); d.computeVitalReport(r); printf("%d %.1f %.1f", r.valid, r.hr_fused_bpm, r.confidence_pct);""")
+        v0, v1, hr, conf = out.split()
+        self.assertEqual((v0, v1), ("0", "1"))
+        self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
+        self.assertLessEqual(float(conf), 40.0 + 1e-6)
+
+    def test_start_rezoom_after_2_s(self):
+        # Person im Raum-Profil bei 0,9 m (Punkt 20), Zoom-Fenster 610–670 mm
+        out = run_cpp(self.GEN + """
+        uint32_t first = 0;
+        for (int i = 0; i < 6 && !first; i++) { push(60, 1.2f); d.computeVitalReport(r); if (r.needs_rezoom) first = d.frameCount(); }
+        d.setZoomStartPoint(244);
+        uint32_t again = 0;
+        for (int i = 0; i < 6 && !again; i++) { push(60, 1.2f); d.computeVitalReport(r); if (r.needs_rezoom) again = d.frameCount(); }
+        printf("%u %u", first, again);""")
+        self.assertEqual(out.split(), ["120", "180"])
 
 
 if __name__ == "__main__":

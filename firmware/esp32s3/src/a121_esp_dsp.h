@@ -25,7 +25,8 @@
  *      Einzelschlägen, Bewegung, Sprung. Die frühere Punkt-Einigkeit steht als point_agree_pct hinten in @DSP.
  *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
  *      Gültig nur mit Lebenszeichen: sauberes Echo und Atmung (≥ 100 µm) oder angehaltener Atem mit klarer Pulsspitze,
- *      höchstens 30 % Bewegung.
+ *      höchstens 30 % Bewegung. Start (V2.4): Fenster wächst ab 6 s bis 15 s, Konfidenz × N/900; unter 8 s ist der
+ *      Wert vorläufig (nicht verfolgt) und gilt nur, wenn Autokorrelation oder Einzelschläge ihn bestätigen.
  *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
  *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
  *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
@@ -81,7 +82,9 @@ static constexpr uint16_t kHistoryLen  = 1080U;  /* 18 s @ 60 Hz: 15-s-Fenster +
                                                      weiterschreiben darf (V2.1, ReportSnapshot) */
 static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
 static constexpr uint16_t kSnapMaxLag  = kHistoryLen - kHrWin;  /* höchstens so viele Frames nach dem Schnappschuss */
-static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
+static constexpr uint16_t kHrMinWin    = 360U;   /* ab 6 s Daten wird ein Puls berichtet, Fenster wächst bis 15 s (V2.4; vorher 8 s) */
+static constexpr uint16_t kHrStableWin = 480U;   /* Verfolgung erst ab 8 s Fenster; davor vorläufig (V2.4) */
+static constexpr uint16_t kStartZoomFrames = 120U;  /* Start: nach 2 s auf das Ziel zoomen (2 Reports statt 3, V2.4) */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
 /* Spektren (V2.2, B13): reelle FFT der auf 15 Hz dezimierten Folge (≤ 225 Werte, Hann, auf 1024 nullaufgefüllt) statt
  * Goertzel je Frequenz; Raster 15 Hz / 1024 = 0,0146 Hz (0,88 /min), Spitzen parabolisch verfeinert. Vorher Puls im
@@ -585,6 +588,7 @@ struct QualityInputs {
     float hr_spec, hr_acf, hr_ibi, hr_fused, hr_fused_5s_ago;
     float motion_pct;       /* Anteil der 1-s-Blöcke mit Bewegung im Fenster */
     float sat_pct = 0.0f;   /* Anteil gesättigter Frames im Fenster (V1.5) */
+    float win_frac = 1.0f;  /* Fensterlänge / 15 s, solange das Fenster noch wächst (V2.4) */
 };
 
 /**
@@ -605,6 +609,7 @@ inline float signalQuality(const QualityInputs &q) {
     c *= 1.0f - mot / 100.0f;
     if (q.hr_fused_5s_ago > 0.0f && fabsf(q.hr_fused - q.hr_fused_5s_ago) > 8.0f) c *= 0.7f;
     if (q.sat_pct >= kSatMaxPct) c *= 0.5f;
+    c *= std::max(0.0f, std::min(1.0f, q.win_frac));
     return 100.0f * c;
 }
 
@@ -746,6 +751,7 @@ public:
 
     /** Puls-Verfolgung neu (kein bisheriger Wert). */
     void resetTracking() {
+        prov_       = true;
         hr_prev_    = 0.0f;
         hr_miss_    = 0;
         alt_count_  = 0;
@@ -1085,6 +1091,9 @@ public:
          * bleibt fb = 0 (br_bpm = 0 heißt: keine Atemspitze). Vor der Pulssuche, weil die Oberwellen-Prüfung fb braucht. */
         float fb = 0.0f, br_q = 0.0f;
         int16_t kb = -1;
+        /* Schwelle für die Atemspitze wächst im kurzen Fenster mit (V2.4): Bei 6 s überdeckt die Hauptkeule fast das
+         * ganze Atemband, Spitze/Median lag im Prüfstand mit Person bei 1,5–1,7 (8 s: 2,0–4,3) */
+        const float br_min_q = kBrMinQ * std::min(1.0f, (float)N / (float)kHrStableWin);
         for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
             if (br_comb_[k] > br_comb_[k - 1] && br_comb_[k] >= br_comb_[k + 1] && (kb < 0 || br_comb_[k] > br_comb_[kb]))
                 kb = (int16_t)k;
@@ -1100,7 +1109,7 @@ public:
         }
         /* Atemzustand (V1.4) am Atem-Punkt; vor der Pulssuche, damit auch ein Report ohne Pulskandidat ihn trägt */
         const bool echo_ok = br_bin >= 0;
-        rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= kBrMinQ && fb > 0.0f,
+        rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= br_min_q && fb > 0.0f,
                                         rep.motion_pct);
         const bool breath_held = rep.br_state == kBrStateApnea;
         /* Atem-Oberwellen (m = 2..8) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
@@ -1111,7 +1120,7 @@ public:
          * Puls darin ist spektral nicht zu trennen, und im ersten Report (8-s-Fenster) ist f_Atem bis 8 % ungenau
          * (Prüfstand base/step/beweg: 3 × Atmung 4 s lang gemeldet). */
         auto harmOrder = [&](float f) -> uint8_t {
-            if (br_q < kBrMinQ || fb <= 0.0f) return 0;
+            if (br_q < br_min_q || fb <= 0.0f) return 0;
             for (uint8_t m = 2; m <= kHarmMMax; m++)
                 if (fabsf(f - (float)m * fb) <= (m <= kHarmLowMax ? kLowLobeHz : kHarmTolHz)) return m;
             return 0;
@@ -1218,7 +1227,12 @@ public:
          * auf 2 × / 3 × Atmung und gibt es 3 Reports lang einen Kandidaten ohne Oberwelle mit ≥ 0,5 × dem Wert dort,
          * wird gewechselt. Ein Abbruch der Haltezeit über die Punkt-Zustimmung wurde 2026-11-01 verworfen (rhythmische
          * Bewegung stützen alle Punkte). */
-        if (hr_prev_ <= 0.0f) {
+        /* Vorläufig (V2.4): Beginnt die Verfolgung in einem Fenster unter 8 s, gilt nur der rohe Wert dieses Reports; er
+         * wird nicht festgeschrieben (Prüfstand: im 6-s-Fenster lag die stärkste Spitze oft am Bandrand oder auf einer
+         * Atem-Oberwelle, und die Haltezeit hielt den Fehlwert bis zu 10 Reports). */
+        const bool prov = prov_ && N < kHrStableWin;
+        if (!prov) prov_ = false;
+        if (hr_prev_ <= 0.0f || prov) {
             hr_prev_   = raw_bpm;
             hr_miss_   = 0;
             alt_count_ = 0;
@@ -1269,7 +1283,7 @@ public:
         float hr_rms = 0.0f;
         for (uint16_t n = 0; n < N; n++) hr_rms += best_h_[n] * best_h_[n];
         rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)N);
-        removeBreathHarmonics(best_h_, N, kFsHz, (br_q >= kBrMinQ) ? fb : 0.0f, hr_prev_ / 60.0f);
+        removeBreathHarmonics(best_h_, N, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
         float acf_bpm = 0.0f, acf_peak = 0.0f;
         cardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
         rep.hr_acf_bpm = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
@@ -1302,17 +1316,26 @@ public:
             for (uint16_t n = 0; n < N; n++) n_sat_win += hist_sat_[(start + n) % kHistoryLen];
             qi.sat_pct = 100.0f * (float)n_sat_win / (float)N;
         }
+        qi.win_frac = (float)N / (float)kHrWin;
         rep.confidence_pct = signalQuality(qi);
-        hr_hist_[hr_hist_n_ % 5] = hr_prev_;
-        if (hr_hist_n_ < 250) hr_hist_n_++;
-        else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
+        if (!prov) {
+            hr_hist_[hr_hist_n_ % 5] = hr_prev_;
+            if (hr_hist_n_ < 250) hr_hist_n_++;
+            else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
+        }
 
         /* Lebenszeichen (B19): gültig nur mit sauberem Echo im Zoom-Fenster und Atmung (Atemspitze/Median ≥ kBrMinQ und
          * ≥ 100 µm Hub am Atem-Punkt) oder bei angehaltenem Atem mit deutlicher Pulsspitze; dazu höchstens 30 %
          * Bewegung im Fenster. Die Atemspitze allein reicht nicht: Rausch-Punkte erzeugen auch ohne Person Spitzen. */
-        const bool breath_ok  = echo_ok && br_q >= kBrMinQ && rep.resp_depth_um >= kBreathMinUm;
+        const bool breath_ok  = echo_ok && br_q >= br_min_q && rep.resp_depth_um >= kBreathMinUm;
         const bool held_pulse = echo_ok && breath_held && qi.peak_db >= kPulseHeldDb;
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
+        if (prov) {  /* vorläufig nur, wenn Autokorrelation oder Einzelschläge den Spektralwert bestätigen (±5 /min) */
+            const bool acf_ok = qi.hr_acf > 0.0f && fabsf(qi.hr_acf - raw_bpm) <= 5.0f;
+            const bool ibi_ok = qi.hr_ibi > 0.0f && fabsf(qi.hr_ibi - raw_bpm) <= 5.0f;
+            rep.valid = rep.valid && (acf_ok || ibi_ok);
+            hr_prev_  = 0.0f;
+        }
         if (rep.valid) {
             have_valid_     = true;
             last_valid_tot_ = s.tot_frames;
@@ -1615,7 +1638,9 @@ private:
             out_of_window_frames_ = 0;
             return;
         }
-        const uint16_t needed = (s.frame_count < 600U) ? 3U : 5U;
+        /* Start (noch kein Neubeginn seit begin()): nach 2 s zoomen, also beim 2. Report (V2.4); sonst 3 bzw. 5 */
+        const bool start = s.tot_frames == s.frame_count && s.frame_count <= kStartZoomFrames;
+        const uint16_t needed = start ? 2U : ((s.frame_count < 600U) ? 3U : 5U);
         if (++out_of_window_frames_ >= needed) {
             int32_t new_start = (int32_t)roundf(best_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
             if (new_start < 80) new_start = 80; /* ≥ 0,20 m */
@@ -1652,6 +1677,7 @@ private:
     uint32_t tot_frames_ = 0;                                      /* Frames seit begin() (V2.3) */
     uint32_t last_valid_tot_ = 0;                                  /* tot_frames des letzten gültigen Reports */
     bool     have_valid_ = false;
+    bool     prov_ = true;                                         /* Verfolgung noch vorläufig (Fenster < 8 s, V2.4) */
     ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
     a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
     float    hann_[kHrWin / kDecim + 1U] = {};
