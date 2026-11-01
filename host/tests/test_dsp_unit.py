@@ -653,5 +653,44 @@ class WindowLengthTest(unittest.TestCase):
         self.assertEqual(out.split(), ["600", "780", "180"])
 
 
+class MeasurementStateTest(unittest.TestCase):
+    """V3.5: Zustand der Messung (0 KEINE_PERSON, 1 SUCHE, 2 ERFASSUNG, 3 GÜLTIG, 4 BEWEGUNG, 5 APNOE) und Zeile
+    @STATE,t_ms,zustand,seit_ms."""
+
+    def state(self, person=1, echo=1, breath=1, valid=0, motion=0.0, br_state=0) -> int:
+        return int(run_cpp(f"printf(\"%u\", measurementState({person}, {echo}, {breath}, {valid}, {motion}f, {br_state}));"))
+
+    def test_priorities(self):
+        self.assertEqual(self.state(person=0, echo=0, breath=0), 0)
+        self.assertEqual(self.state(person=0, echo=1, breath=0), 0)   # ruhendes Echo ohne Atmung
+        self.assertEqual(self.state(person=1, echo=0, breath=0), 1)   # Person im Raum, kein Echo im Zoom
+        self.assertEqual(self.state(person=1, echo=1, breath=0), 2)   # Echo im Zoom, gerade keine Atemspitze
+        self.assertEqual(self.state(), 2)                              # Echo und Atmung, noch kein gültiger Wert
+        self.assertEqual(self.state(valid=1), 3)
+        self.assertEqual(self.state(valid=1, motion=40.0), 4)
+        self.assertEqual(self.state(valid=0, br_state=3), 4)
+        self.assertEqual(self.state(person=1, echo=0, breath=0, motion=60.0), 1)   # Bewegung nur mit Echo im Zoom
+        self.assertEqual(self.state(valid=1, br_state=2), 5)
+        self.assertEqual(self.state(person=0, echo=1, breath=0, br_state=2), 5)   # angehalten: keine Atemspitze
+        self.assertEqual(self.state(person=0, echo=1, breath=0, motion=60.0), 0)   # ruhendes Echo, Rauschen im Herzband
+
+    def test_state_line(self):
+        out = run_cpp('VitalReport r = {}; r.state = 3; r.state_since_ms = 4500; char b[64];'
+                      'formatStateLine(b, sizeof(b), 12000, r); printf("%s", b);')
+        self.assertEqual(out, "@STATE,12000,3,4500")
+
+    def test_report_sequence(self):
+        """Ziel im Raum außerhalb des Zoom-Fensters: nach 2 Reports mit Ziel SUCHE (davor KEINE_PERSON); mit sauberem,
+        atmendem Echo im Zoom ab 6 s ERFASSUNG bzw. GÜLTIG; seit_ms zählt ab dem Wechsel."""
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0] + """
+        for (int i = 0; i < 12; i++) { push(60, 1.2f); d.computeVitalReport(r); printf("%u:%lu ", r.state, (unsigned long)r.state_since_ms); }""")
+        seq = [tuple(int(v) for v in x.split(":")) for x in out.split()]
+        self.assertEqual(seq[0], (0, 0))
+        self.assertEqual(seq[1], (1, 0))
+        self.assertEqual(seq[-1][0], 3)
+        first_valid = next(i for i, (st, _) in enumerate(seq) if st == 3)
+        self.assertEqual(seq[-1][1], (len(seq) - 1 - first_valid) * 1000)
+
+
 if __name__ == "__main__":
     unittest.main()

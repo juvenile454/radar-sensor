@@ -119,5 +119,27 @@ class WindowLengthBenchTest(unittest.TestCase):
         self.assertIn("Reaktion", r.stdout)
 
 
+class DefineOptionTest(unittest.TestCase):
+    """V3: A/B-Varianten im Prüfstand über --define NAME[=WERT] (Header mit -D übersetzt)."""
+
+    def test_define_reaches_header(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--define", "A121_HR_WIN=720",
+                            "--scen", "base"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+        self.assertIn("Pulsfenster 12 s", r.stdout)
+        self.assertIn("Schalter: A121_HR_WIN=720", r.stdout)
+
+
+class StateBenchTest(unittest.TestCase):
+    """V3.5: Prüfstand meldet den Zustand BEWEGUNG im Szenario beweg (50–60 s), sonst nicht."""
+
+    def test_motion_state(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "beweg", "base"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+        self.assertIn("Zustand BEWEGUNG", r.stdout)
+        self.assertIn(("beweg", "zustand_beweg_n", ">=", 5.0), [(k, *x) for k, v in vital_sim.LIMITS.items() for x in v])
+
+
 if __name__ == "__main__":
     unittest.main()

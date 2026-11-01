@@ -716,6 +716,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
     Serial.println(roomLine);
     if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
+    printLine(repLine, a121_dsp::formatStateLine(repLine, sizeof(repLine), millis() - tStart, rep));  // V3.5
 
     // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
     if (mayRezoom && rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {

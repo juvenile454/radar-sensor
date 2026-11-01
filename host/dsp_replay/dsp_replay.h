@@ -97,6 +97,7 @@ public:
         else if (starts(c, "@DSP,")) onDsp(c);
         else if (starts(c, "@ROOM,")) onRoom(c);
         else if (starts(c, "@VITAL,")) onVital(c);
+        else if (starts(c, "@STATE,")) onState(c);
         else if (starts(c, "@REZOOM,")) onRezoom(c);
         else if (starts(c, "@RECAL,")) onRecal(c);
         else if (starts(c, "@RECONNECT,")) onReconnect(c);
@@ -145,7 +146,7 @@ public:
     }
 
 private:
-    enum { IQ3, ROOMPROF, DSP, ROOM, VITAL, REZOOM, NTAGS };
+    enum { IQ3, ROOMPROF, DSP, ROOM, VITAL, REZOOM, STATE, NTAGS };
 
     static bool starts(const char *s, const char *p) { return strncmp(s, p, strlen(p)) == 0; }
 
@@ -245,9 +246,28 @@ private:
         pend_vital_ = false;
     }
 
+#ifdef A121_DSP_STATE
+    /** Eigenes @STATE ausgeben, wenn der ESP32 zu diesem Report keines hatte (vor V3.5; Zeit = @DSP-Zeile). */
+    void flushState() {
+        if (!pend_state_) return;
+        missing("@STATE neu gerechnet, beim ESP32 fehlt sie");
+        formatStateLine(buf_, sizeof(buf_), dsp_t_ms_, rep_);
+        emit(buf_);
+        pend_state_ = false;
+    }
+#else
+    void flushState() {}
+#endif
+
+    /** Vitalwerte und Zustand des letzten Reports ausgeben, falls der ESP32 sie nicht hatte. */
+    void flushReport() {
+        flushVital();
+        flushState();
+    }
+
     /** Erwartete, aber vom ESP32 nicht ausgegebene Zeilen des letzten Reports melden. */
     void closePending() {
-        flushVital();
+        flushReport();
         if (pend_rezoom_) missing("@REZOOM neu gerechnet, beim ESP32 fehlt er");
         pend_rezoom_ = false;
     }
@@ -398,6 +418,9 @@ private:
         compare(DSP, c, buf_);
         emit(buf_);
         pend_vital_ = vital_ok_;
+#ifdef A121_DSP_STATE
+        pend_state_ = true;
+#endif
         pend_rezoom_ = rep_.needs_rezoom && rep_.recommended_zoom_start_pt != zoom_pt_;
     }
 
@@ -421,8 +444,27 @@ private:
         emit(buf_);
     }
 
-    void onRezoom(const char *c) {
+    /** @STATE vom ESP32 (V3.5): mit dem eigenen vergleichen; davor fehlende @VITAL ausgeben. */
+    void onState(const char *c) {
+#ifdef A121_DSP_STATE
+        if (!have_rep_) return;
         flushVital();
+        if (!pend_state_) {
+            missing("@STATE beim ESP32 ohne Report");
+            stats_[STATE].compared++;
+            return;
+        }
+        pend_state_ = false;
+        formatStateLine(buf_, sizeof(buf_), (uint32_t)ufield(c, 1), rep_);
+        compare(STATE, c, buf_);
+        emit(buf_);
+#else
+        emit(c);
+#endif
+    }
+
+    void onRezoom(const char *c) {
+        flushReport();
         const int32_t esp_pt = mmToPt(lfield(c, 1));
         if (pend_rezoom_) {
             formatRezoomLine(buf_, sizeof(buf_), rep_.recommended_zoom_start_pt);
@@ -442,7 +484,7 @@ private:
 
     /** Neu-Kalibrierung (V1.5): gleiches Zoom-Fenster, Historie neu wie beim Rezoom. */
     void onRecal(const char *c) {
-        flushVital();
+        flushReport();
         dsp_.setZoomStartPoint(zoom_pt_);
         clearSnaps();
         recals_++;
@@ -473,7 +515,7 @@ private:
     UltimateEspDsp &dsp_;
     VitalReport rep_ = {};
     bool running_ = false, have_iq3_ = false, have_rep_ = false, vital_ok_ = false;
-    bool pend_vital_ = false, pend_rezoom_ = false;
+    bool pend_vital_ = false, pend_rezoom_ = false, pend_state_ = false;
     int32_t zoom_pt_ = 0;
     uint32_t dsp_t_ms_ = 0;
     long last_frame_ = -1;
@@ -489,7 +531,7 @@ private:
 #endif
     std::vector<bool> snap_ok_ = std::vector<bool>(kSnapRing, false);
     char buf_[kRoomLineMax];
-    TagStat stats_[NTAGS] = {{"@IQ3"}, {"@ROOMPROF"}, {"@DSP"}, {"@ROOM"}, {"@VITAL"}, {"@REZOOM"}};
+    TagStat stats_[NTAGS] = {{"@IQ3"}, {"@ROOMPROF"}, {"@DSP"}, {"@ROOM"}, {"@VITAL"}, {"@REZOOM"}, {"@STATE"}};
 };
 
 }  // namespace dsp_replay

@@ -44,6 +44,7 @@ FS = 60.0
 STEP_M = 0.0025
 ZOOM_N, ROOM_N, ROOM_START_PT, ROOM_STEP = 24, 80, 120, 12
 HR_WIN = 900  # Pulsfenster in Frames (A121_HR_WIN, V2.5)
+DEFINES: list[str] = []  # weitere Schalter für den Header (--define, V3-Varianten)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -243,6 +244,11 @@ FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0}
 for _scen in LIMITS:
     if _scen not in PERSON_FREE + ("alle",):
         LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
+# V3.5: Zustand BEWEGUNG im Bewegungsabschnitt (beweg), sonst nirgends
+LIMITS["beweg"].append(("zustand_beweg_n", ">=", 5.0))
+for _scen in LIMITS:
+    if _scen != "alle":
+        LIMITS[_scen].append(("zustand_beweg_fehl", "<=", 0))
 
 
 def check_limits(results: dict, limits: dict) -> list[str]:
@@ -287,6 +293,10 @@ int main(int argc, char **argv) {
             formatVitalLine(line, sizeof(line), t_ms, r);
             puts(line);
         }
+#ifdef A121_DSP_STATE
+        formatStateLine(line, sizeof(line), t_ms, r);
+        puts(line);
+#endif
     }
     return 0;
 }
@@ -321,6 +331,7 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> dict[str, pat
         exe = tmp / f"harness_{name}"
         # Shim zuerst (chrono-micros), dann Header-Ordner, Firmware-Ordner als Rückfall, dsp_replay für die Formate
         subprocess.run(["g++", "-O2", "-std=c++17", f"-DA121_ZOOM_POINTS={ZOOM_N}", f"-DA121_HR_WIN={HR_WIN}",
+                        *(f"-D{x}" for x in DEFINES),
                         f"-I{tmp / 'inc'}", f"-I{d}",
                         f"-I{header.parent}",
                         f"-I{DSP_HEADER.parent}", f"-I{REPLAY_DIR}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"],
@@ -488,6 +499,8 @@ def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -
         d[k] = np.array([vd[k][pos[t]] if t in pos else np.nan for t in dd["t_ms"]])
     # Namen wie früher im Prüfstand
     d["hr"], d["rmssd"], d["us"] = d["hr_fused"], d["rmssd_ms"], d["compute_us"]
+    st = {int(p[1]): int(p[2]) for p in (ln.split(",") for ln in lines if ln.startswith("@STATE,")) if len(p) >= 3}
+    d["state"] = np.array([st.get(int(t), -1) for t in dd["t_ms"]], float)  # -1: Header ohne @STATE (vor V3.5)
     return d
 
 
@@ -519,6 +532,11 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         "us": float(np.median(d["us"])),
     }
     res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
+    # Zustand BEWEGUNG (V3.5): Reports im Bewegungsabschnitt (bis 15 s danach, so lange liegt er im Fenster) und außerhalb
+    mot = SCENARIOS[name][1].get("motion")
+    in_mot = (d["t_s"] > mot[0]) & (d["t_s"] <= mot[1] + 15.0) if mot else np.zeros(len(d["t_s"]), bool)
+    res["zustand_beweg_n"] = int(np.sum((d["state"] == 4) & in_mot))
+    res["zustand_beweg_fehl"] = int(np.sum((d["state"] == 4) & ~in_mot))
     if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
         ok = (d["t_s"] >= 70) & v & (np.abs(d["hr"] - 90) <= 5)
         res["reaktion_s"] = float(d["t_s"][ok][0] - 70.0) if ok.any() else np.nan
@@ -550,6 +568,10 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
         print("Konfidenz = Median aller gültigen Reports, 'bei Fehler' = Median der Reports mit > 10 /min Abweichung.")
         print("Szenarien 'leer'/'niemand': Puls-Werte sind bedeutungslos, dort zählt nur die Zahl gültiger Reports (Soll 0).")
         print(f"{ZOOM_N} Zoom-Punkte je Frame ({ZOOM_N * 2.5:.0f} mm), Pulsfenster {HR_WIN // 60} s.")
+        sw = [f"A121_HR_WIN={HR_WIN}"] if HR_WIN != 900 else []
+        sw += [f"A121_ZOOM_POINTS={ZOOM_N}"] if ZOOM_N != 24 else []
+        if sw + DEFINES:
+            print("Schalter:", " ".join(sw + DEFINES))
         for var, exe in exes.items():
             print(f"\n=== DSP-Header {var}")
             print(f"{'Szenario':8s} {'Beschreibung':32s} {'gültig':>7s} {'erst':>5s} {'Puls-MAE':>9s} {'≤5/min':>7s}"
@@ -563,6 +585,11 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                     extra = f"Reaktion {r['reaktion_s']:.0f} s"
                 if "atem_beim_anhalten" in r:
                     extra = f"Atem beim Anhalten {r['atem_beim_anhalten']}, angehalten erkannt nach {r['apnoe_verzug_s']:.0f} s"
+                if mot_scen := SCENARIOS[nm][1].get("motion"):
+                    extra += (f"Zustand BEWEGUNG in {r['zustand_beweg_n']} Reports ({mot_scen[0]:.0f}–"
+                              f"{mot_scen[1] + 15:.0f} s), außerhalb {r['zustand_beweg_fehl']}")
+                elif r["zustand_beweg_fehl"]:
+                    extra += f" Zustand BEWEGUNG ohne Bewegung: {r['zustand_beweg_fehl']}"
                 if r.get("apnoe_fehl"):
                     extra += f" Apnoe-Fehlalarme {r['apnoe_fehl']}"
                 kf = f"{r['konf_falsch']:7.0f}" if r["n_falsch"] else "      –"
@@ -585,7 +612,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
 
 
 def main() -> int:
-    global ZOOM_N, HR_WIN
+    global ZOOM_N, HR_WIN, DEFINES
     ap = argparse.ArgumentParser(description="Synthetischer Prüfstand für die Vital-DSP (nur Simulation)")
     ap.add_argument("mode", choices=["demod", "bench", "record"])
     ap.add_argument("--out", type=pathlib.Path, default=None, help="bench: Ordner für die erzeugten Frames")
@@ -596,9 +623,19 @@ def main() -> int:
                     help="bench/record: Zoom-Punkte je Frame (Header mit A121_ZOOM_POINTS übersetzt, V2.3)")
     ap.add_argument("--hr-win", type=int, default=HR_WIN, choices=[600, 720, 900],
                     help="bench: Pulsfenster in Frames (A121_HR_WIN, Vergleich 10 / 12 / 15 s, V2.5)")
+    ap.add_argument("--define", action="append", default=[], metavar="NAME[=WERT]",
+                    help="bench: Schalter für den Header, z. B. A121_DSP_VITERBI (mehrfach möglich, V3-Varianten)")
     a = ap.parse_args()
     ZOOM_N = a.zoom
     HR_WIN = a.hr_win
+    for x in a.define:  # Fensterlänge und Zoom-Breite auch über --define, dann passen Frames und Ausgabe dazu
+        name, _, val = x.partition("=")
+        if name == "A121_HR_WIN" and val:
+            HR_WIN = int(val)
+        elif name == "A121_ZOOM_POINTS" and val:
+            ZOOM_N = int(val)
+        else:
+            DEFINES.append(x)
     if a.mode == "demod":
         return run_demod()
     if a.mode == "record":

@@ -93,8 +93,9 @@ def beats_from_ref(rx_ms: np.ndarray, rr_ms: np.ndarray) -> tuple[np.ndarray, np
 
 
 def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[float]]:
-    """@VITAL und @DSP mit Empfangszeit; Zeitpunkte, an denen die Historie neu beginnt."""
-    vital, dsp, starts = [], [], []
+    """@VITAL und @DSP mit Empfangszeit; Zeitpunkte, an denen die Historie neu beginnt. dsp["state"]: Zustand aus der
+    @STATE-Zeile mit derselben Zeit (V3.5; ohne @STATE NaN)."""
+    vital, dsp, starts, states = [], [], [], {}
     for i, ln in enumerate(lines):
         t_rx = rx[i] if i < rx.size else math.nan
         tag = ln.split(",", 1)[0]
@@ -105,12 +106,17 @@ def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[floa
         elif tag == "@DSP":
             v = [_num(x) for x in ln.split(",")[1:]][:len(DSP_FIELDS)]
             dsp.append([t_rx] + v + [math.nan] * (len(DSP_FIELDS) - len(v)))
+        elif tag == "@STATE":
+            v = [_num(x) for x in ln.split(",")[1:3]]
+            if len(v) == 2:
+                states[v[0]] = v[1]
         elif tag in START_TAGS:
             starts.append(float(t_rx))
     va = np.array(vital, float).reshape(-1, len(VITAL_FIELDS) + 1)
     da = np.array(dsp, float).reshape(-1, len(DSP_FIELDS) + 1)
     vd = {k: va[:, i] for i, k in enumerate(["rx_ms"] + VITAL_FIELDS)}
     dd = {k: da[:, i] for i, k in enumerate(["rx_ms"] + DSP_FIELDS)}
+    dd["state"] = np.array([states.get(t, math.nan) for t in dd["t_ms"]], float)
     return vd, dd, starts
 
 
@@ -323,6 +329,14 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
             res["apnea"] = apnea_eval(t, d["br_state"], holds)
         else:
             res["apnea"] = "kein br_state in @DSP (Firmware vor V1.4)"
+    moves = intervals(rec.events, "bewegung", rec.end_ms)
+    if moves and np.isfinite(d["state"]).any():  # V3.5: Bewegungsabschnitte als BEWEGUNG (bis 15 s danach im Fenster)
+        in_mot = np.zeros(t.size, bool)
+        for a, b in moves:
+            in_mot |= (t > a) & (t <= b + win_s * 1000.0)
+        st4 = d["state"] == 4
+        res["motion_state"] = {"reports_in": int(in_mot.sum()), "motion_in": int((st4 & in_mot).sum()),
+                               "motion_out": int((st4 & ~in_mot).sum())}
     res["first_s"] = first_value_delays(rec.starts_ms, rec.vital["rx_ms"])
     # Sensor-Flags (V1.5): Summen der Zähler je Report; ältere Firmware ohne die Felder → None
     if any(np.isfinite(d[k]).any() for k in ("n_delayed", "n_sat", "n_tickgap")):
@@ -371,6 +385,10 @@ def format_report(name: str, r: dict) -> str:
         else:
             d = ", ".join(_f(x) for x in a["delays_s"]) or "–"
             w(f"Atem anhalten: {a['detected']} von {a['episodes']} erkannt, Verzug {d} s, Fehlalarme {a['false_alarms']}.\n\n")
+    if "motion_state" in r:
+        m = r["motion_state"]
+        w(f"Zustand BEWEGUNG: {m['motion_in']} von {m['reports_in']} Reports in Bewegungsabschnitten (bis 15 s danach), "
+          f"{m['motion_out']} außerhalb.\n\n")
     if "sensor" in r:
         sn = r["sensor"]
         w(f"Sensor-Flags: verspätete Frames {sn['n_delayed']}, gesättigt {sn['n_sat']}, tick-Lücken {sn['n_tickgap']}, "

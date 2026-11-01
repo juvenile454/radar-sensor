@@ -218,5 +218,27 @@ class SyntheticRecordingTest(unittest.TestCase):
         self.assertAlmostEqual(again["br"]["mae"], live["br"]["mae"], places=6)
 
 
+class MotionStateEvalTest(unittest.TestCase):
+    def test_motion_markers_vs_state(self):
+        """V3.5 (Abnahme R5): Anteil der Reports mit Zustand BEWEGUNG in den Bewegungsabschnitten (bis 15 s danach) und
+        Reports mit BEWEGUNG außerhalb."""
+        lines, rx = ["@IQ3_START,610,670,60.0,1"], [0]
+        for k in range(1, 41):  # 40 Reports, Bewegung 10–20 s laut Marker
+            st = 4 if 12 <= k <= 24 else (4 if k == 35 else 3)
+            lines += [f"@DSP,{k * 1000},1,5,80.0,1000,0,0,0,0,0,0,0", f"@STATE,{k * 1000},{st},0"]
+            rx += [k * 1000, k * 1000]
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text("\n".join(lines) + "\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n" + "".join(f"{i},{t}\n" for i, t in enumerate(rx)))
+            (p / "events.csv").write_text("rx_ms,text\n10000,bewegung_start\n20000,bewegung_ende\n")
+            r = ve.evaluate(ve.load_recording(p))
+        m = r["motion_state"]
+        self.assertEqual(m["reports_in"], 25)            # 11..35 s (Ende + 15 s)
+        self.assertEqual(m["motion_in"], 14)             # 12..24 und 35
+        self.assertEqual(m["motion_out"], 0)
+        self.assertIn("Zustand BEWEGUNG", ve.format_report("x", r))
+
+
 if __name__ == "__main__":
     unittest.main()

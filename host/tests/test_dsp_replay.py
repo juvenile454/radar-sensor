@@ -207,5 +207,35 @@ class ZoomWidthReplayTest(unittest.TestCase):
         self.assertIn("105", rep)
 
 
+class StateReplayTest(unittest.TestCase):
+    """V3.5: Die Nachrechnung schreibt je Report eine @STATE-Zeile (eigene, wenn der ESP32 keine hatte; sonst
+    verglichen)."""
+
+    def test_state_line_per_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            vital_sim.make_frames(d / "base", seed=1, T=12.0)
+            skel, out = d / "skel.log", d / "out.log"
+            vital_sim.write_skeleton(pathlib.Path(f"{d / 'base'}.iq"), 244, skel, vital_placeholders=False)
+            vital_sim.replay_skeleton(skel, out)
+            lines = out.read_text().splitlines()
+            dsp = [i for i, ln in enumerate(lines) if ln.startswith("@DSP,")]
+            st = [ln for ln in lines if ln.startswith("@STATE,")]
+            self.assertEqual(len(st), len(dsp))
+            self.assertEqual(st[0].split(",")[1], lines[dsp[0]].split(",")[1])   # Zeit der @DSP-Zeile
+            # mit @STATE vom ESP32 (gleicher Inhalt) keine Abweichung in dieser Zeile
+            skel2, out2 = d / "skel2.log", d / "out2.log"
+            src = skel.read_text().splitlines()
+            withst, k = [], 0
+            for ln in src:
+                withst.append(ln)
+                if ln.startswith("@ROOM,"):
+                    withst.append(st[k])
+                    k += 1
+            skel2.write_text("\n".join(withst) + "\n")
+            rep = vital_sim.replay_skeleton(skel2, out2)
+        self.assertRegex(rep, r"@STATE\s+verglichen\s+12, gleich\s+12")
+
+
 if __name__ == "__main__":
     unittest.main()

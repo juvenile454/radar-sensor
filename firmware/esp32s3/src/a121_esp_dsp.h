@@ -136,6 +136,9 @@ static constexpr uint32_t kTickGapMs   = 25U;    /* tick-Abstand > 25 ms gilt al
 static constexpr float    kSatMaxPct   = 1.0f;   /* ab 1 % gesättigter Frames im Fenster: Konfidenz × 0,5 (V1.5) */
 static constexpr uint8_t  kBrStateNormal = 0U, kBrStateNoPeak = 1U, kBrStateApnea = 2U, kBrStateMotion = 3U,
                           kBrStateShallow = 4U;
+/* Zustand der Messung (V3.5, Zeile @STATE) */
+static constexpr uint8_t  kStNoPerson = 0U, kStSearch = 1U, kStAcquire = 2U, kStValid = 3U, kStMotion = 4U,
+                          kStApnea = 5U;
 static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
 static constexpr uint16_t kGateBlk     = 60U;    /* Bewegungsdämpfung: 1-s-Blöcke im Herzband */
 static constexpr float    kGateK       = 1.25f;  /* Grenze = 1,25 × Effektivwert des ruhigen Viertels der Blöcke */
@@ -616,6 +619,20 @@ inline float signalQuality(const QualityInputs &q) {
     return 100.0f * c;
 }
 
+/**
+ * Zustand der Messung (V3.5) aus Raumprofil (bewegtes Ziel = Person im Raum), Zoom-Echo, Atmung, Gültigkeit,
+ * Bewegungsanteil und Atemzustand. Vorrang: BEWEGUNG (nur mit sauberem Echo im Zoom: ohne Echo ist der Bewegungsanteil
+ * Rauschen) > APNOE > GÜLTIG > ERFASSUNG (sauberes Echo im Zoom mit Atmung oder Person im Raum, Wert noch nicht
+ * gültig) > SUCHE (Person im Raum, im Zoom kein sauberes Echo) > KEINE_PERSON.
+ */
+inline uint8_t measurementState(bool person, bool echo_ok, bool breath, bool valid, float motion_pct, uint8_t br_state) {
+    if (echo_ok && (breath || person) && (motion_pct > kMaxMotionPct || br_state == kBrStateMotion)) return kStMotion;
+    if (br_state == kBrStateApnea) return kStApnea;
+    if (valid) return kStValid;
+    if (echo_ok && (breath || person)) return kStAcquire;
+    return person ? kStSearch : kStNoPerson;
+}
+
 struct VitalReport {
     bool     valid;
     uint32_t frame_count;
@@ -651,6 +668,10 @@ struct VitalReport {
     float    room_noise_motion;                /* Rauschpegel Bewegung */
     bool     needs_rezoom;
     int32_t  recommended_zoom_start_pt;
+    bool     person_in_room;   /* bewegtes Ziel im geglätteten Raumprofil (Zoom-Ziel, V3.5) */
+    bool     target_in_zoom;   /* … und es liegt im Zoom-Fenster */
+    uint8_t  state;            /* Zustand der Messung kSt* (V3.5) */
+    uint32_t state_since_ms;   /* … seit (Frames × 1000 / 60) */
 };
 
 /**
@@ -684,6 +705,8 @@ public:
         room_start_pt_ = room_start_pt;
         room_step_     = room_step;
         tot_delayed_ = tot_sat_ = tot_tickgap_ = tot_frames_ = 0;  /* neuer Stream */
+        state_ = 0xFFU;
+        state_since_tot_ = 0;
         prev_delayed_ = prev_sat_ = prev_tickgap_ = 0;
 
         if (!allocated_) {
@@ -736,6 +759,7 @@ public:
         best_zoom_bin_        = kZoomPoints / 2U;
         out_of_window_frames_ = 0;
         last_temp_c_          = 0;
+        person_run_           = 0;  /* Raumprofil beginnt neu */
         br_track_.reset();
         have_last_tick_       = false;  /* Rezoom/Neubeginn: der nächste tick-Abstand zählt nicht als Lücke */
         memset(hist_sat_, 0, sizeof(hist_sat_));
@@ -968,8 +992,13 @@ public:
         rep.target_dist_m = (float)(zoom_start_pt_ + (int32_t)s.best_zoom_bin) * kPointStepM;
         extractRoomTargets(s, rep);
 
+        /* Person im Raum: Zoom-Ziel im geglätteten Profil in 2 Reports hintereinander (ohne Person flackerte es im
+         * Prüfstand von Report zu Report) */
+        person_run_ = rep.person_in_room ? (uint8_t)std::min(person_run_ + 1, 255) : 0U;
+        const bool person = person_run_ >= 2U;
         if (s.count < kHrMinWin) {
             rep.valid = false;
+            setState(s, rep, person ? (rep.target_in_zoom ? kStAcquire : kStSearch) : kStNoPerson);
             rep.compute_us = micros() - t0;
             return false;
         }
@@ -1160,6 +1189,8 @@ public:
         }
         if (n_cand == 0) {
             rep.valid = false;
+            setState(s, rep, measurementState(person, echo_ok, echo_ok && br_q >= br_min_q && fb > 0.0f, false,
+                                              rep.motion_pct, rep.br_state));
             rep.compute_us = micros() - t0;
             return false;
         }
@@ -1343,12 +1374,23 @@ public:
             have_valid_     = true;
             last_valid_tot_ = s.tot_frames;
         }
+        setState(s, rep, measurementState(person, echo_ok, breath_ok, rep.valid, rep.motion_pct, rep.br_state));
         rep.compute_us = micros() - t0;
         return rep.valid;
     }
 
 private:
     static uint16_t sat16(uint32_t v) { return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v; }
+
+    /** Zustand der Messung eintragen; seit_ms zählt ab dem letzten Wechsel, über Rezooms hinweg (V3.5). */
+    void setState(const ReportSnapshot &s, VitalReport &rep, uint8_t st) {
+        if (st != state_) {
+            state_           = st;
+            state_since_tot_ = s.tot_frames;
+        }
+        rep.state          = st;
+        rep.state_since_ms = (uint32_t)lroundf((float)(s.tot_frames - state_since_tot_) * 1000.0f / kFsHz);
+    }
 
     /** Hann-Fenster der Länge M (dezimierte Folge); neu gerechnet nur, wenn sich M ändert (Fensteraufbau), V2.2. */
     const float *hannWindow(uint16_t M) {
@@ -1637,6 +1679,8 @@ private:
         const float zoom_max_m = (float)(zoom_start_pt_ + (int32_t)kZoomPoints - 4) * kPointStepM + 0.06f;
         rep.needs_rezoom              = false;
         rep.recommended_zoom_start_pt = zoom_start_pt_;
+        rep.person_in_room = best_m >= 0.0f;
+        rep.target_in_zoom = best_m >= 0.0f && best_m >= zoom_min_m && best_m <= zoom_max_m;
         if (best_m < 0.0f || (best_m >= zoom_min_m && best_m <= zoom_max_m)) {
             out_of_window_frames_ = 0;
             return;
@@ -1681,6 +1725,9 @@ private:
     uint32_t last_valid_tot_ = 0;                                  /* tot_frames des letzten gültigen Reports */
     bool     have_valid_ = false;
     bool     prov_ = true;                                         /* Verfolgung noch vorläufig (Fenster < 8 s, V2.4) */
+    uint8_t  state_ = 0xFFU;                                       /* letzter Zustand der Messung (V3.5) */
+    uint8_t  person_run_ = 0;                                      /* Reports in Folge mit Zoom-Ziel im Raumprofil */
+    uint32_t state_since_tot_ = 0;
     ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
     a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
     float    hann_[kHrWin / kDecim + 1U] = {};
@@ -1778,6 +1825,14 @@ inline size_t formatVitalLine(char *buf, size_t cap, uint32_t t_ms, const VitalR
                              r.ibi_median_ms, r.rmssd_ms, r.confidence_pct, r.resp_depth_um, r.heart_amp_um,
                              r.zoom_snr_db, r.loopback_phase_std_mrad, r.target_dist_m * 1000.0f,
                              (unsigned)r.num_room_targets),
+                    cap);
+}
+
+#define A121_DSP_STATE 1
+/** @STATE,t_ms,zustand,seit_ms (V3.5): je Report nach @VITAL bzw. @ROOM. */
+inline size_t formatStateLine(char *buf, size_t cap, uint32_t t_ms, const VitalReport &r) {
+    return clampLen(snprintf(buf, cap, "@STATE,%lu,%u,%lu", (unsigned long)t_ms, (unsigned)r.state,
+                             (unsigned long)r.state_since_ms),
                     cap);
 }
 
