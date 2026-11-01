@@ -609,6 +609,12 @@ static bool handleFrameTimeout(ReconnectState &rs, const a121_srv::SessionSpec &
   return ok;
 }
 
+// Zeile mit genau einem '\n' ausgeben (wie Serial.printf("...\n"); println hängt "\r\n" an)
+static void printLine(const char *buf, size_t len) {
+  Serial.write((const uint8_t *)buf, len);
+  Serial.write('\n');
+}
+
 // 3-Subsweep Sparse-IQ Session (Sub 0 Loopback + Sub 1 2.5-mm Vital-Zoom + Sub 2 Raum-Scan)
 // mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom.
 // raw = true: zusätzlich je Frame '@RAW,frame,tick,n,<Base64>' mit den unveränderten Punkten vom Server
@@ -648,6 +654,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   // Frames gebündelt, ein Zeittakt würde dann Profile überspringen.
   static const uint32_t kRoomProfEvery = 12;
   static char roomLine[a121_dsp::kRoomLineMax];
+  static char repLine[a121_dsp::kReportLineMax];
   static char rawB64[((a121_dsp::kTotal3SubPts * sizeof(a121_dsp::Complex16) + 2) / 3) * 4 + 1];
   uint32_t nFrames = 0;
   ReconnectState rs;
@@ -715,32 +722,11 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       lastReportMs = millis();
       a121_dsp::VitalReport rep;
       const bool vitalOk = g_dsp.computeVitalReport(rep);
-      // Zusatzzeile (Format von @VITAL bleibt unverändert): Punkt mit klarstem Puls, Konfidenz, Rechenzeit,
-      // Bewegungsanteil im Pulsfenster (%), stärkste Pulsspitze auf einer Atem-Oberwelle (0/1)
-      Serial.printf("@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u\n", (unsigned long)(millis() - tStart), (unsigned)vitalOk,
-                    (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)rep.compute_us, rep.motion_pct,
-                    (unsigned)rep.hr_harm);
-      // Raum-Ziele kommen auch ohne gültigen Puls (Format s. a121_esp_dsp.h)
+      // @DSP (Zusatzwerte; @VITAL behält sein Format), @ROOM (auch ohne gültigen Puls), @VITAL: Formate im DSP-Header
+      printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), millis() - tStart, vitalOk, rep, rep.compute_us));
       a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
       Serial.println(roomLine);
-      if (vitalOk) {
-        Serial.printf("@VITAL,%lu,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.2f,%.0f,%u\n",
-                      (unsigned long)(millis() - tStart),
-                      rep.br_bpm,
-                      rep.hr_fused_bpm,
-                      rep.hr_spec_bpm,
-                      rep.hr_acf_bpm,
-                      rep.hr_ibi_bpm,
-                      rep.ibi_median_ms,
-                      rep.rmssd_ms,
-                      rep.confidence_pct,
-                      rep.resp_depth_um,
-                      rep.heart_amp_um,
-                      rep.zoom_snr_db,
-                      rep.loopback_phase_std_mrad,
-                      rep.target_dist_m * 1000.0f,
-                      (unsigned)rep.num_room_targets);
-      }
+      if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
 
       // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
       {
@@ -750,9 +736,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
           spec = a121_srv::ExplorationServerClient::make3SubsweepPreset(zoomStartPt, 60.0f);
           if (g_srv.setupSession(spec) && g_srv.startStreaming()) {
             g_dsp.setZoomStartPoint(zoomStartPt);
-            Serial.printf("@REZOOM,%ld,%ld\n",
-                          (long)(zoomStartPt * 25 / 10),
-                          (long)((zoomStartPt + a121_dsp::kZoomPoints) * 25 / 10));
+            printLine(repLine, a121_dsp::formatRezoomLine(repLine, sizeof(repLine), zoomStartPt));
           }
         }
       }

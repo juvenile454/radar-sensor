@@ -969,6 +969,41 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
     return (len < 0) ? 0U : std::min((size_t)len, cap - 1U);
 }
 
+/*
+ * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
+ * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
+ *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm
+ *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
+ *          target_mm,n_room
+ *   @REZOOM,zoom_start_mm,zoom_end_mm
+ * compute_us getrennt, weil die Nachrechnung die Rechenzeit des ESP32 übernimmt.
+ */
+static constexpr size_t kReportLineMax = 256U;
+
+inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
+
+inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u", (unsigned long)t_ms, (unsigned)ok,
+                             (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us, rep.motion_pct,
+                             (unsigned)rep.hr_harm),
+                    cap);
+}
+
+inline size_t formatVitalLine(char *buf, size_t cap, uint32_t t_ms, const VitalReport &r) {
+    return clampLen(snprintf(buf, cap, "@VITAL,%lu,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.2f,%.0f,%u",
+                             (unsigned long)t_ms, r.br_bpm, r.hr_fused_bpm, r.hr_spec_bpm, r.hr_acf_bpm, r.hr_ibi_bpm,
+                             r.ibi_median_ms, r.rmssd_ms, r.confidence_pct, r.resp_depth_um, r.heart_amp_um,
+                             r.zoom_snr_db, r.loopback_phase_std_mrad, r.target_dist_m * 1000.0f,
+                             (unsigned)r.num_room_targets),
+                    cap);
+}
+
+inline size_t formatRezoomLine(char *buf, size_t cap, int32_t zoom_start_pt) {
+    return clampLen(snprintf(buf, cap, "@REZOOM,%ld,%ld", (long)(zoom_start_pt * 25 / 10),
+                             (long)((zoom_start_pt + (int32_t)kZoomPoints) * 25 / 10)),
+                    cap);
+}
+
 } /* namespace a121_dsp */
 
 #endif /* A121_ESP_DSP_H */

@@ -15,6 +15,7 @@ Modi:
   .venv/bin/python host/vital_sim.py demod
   .venv/bin/python host/vital_sim.py bench [--out <ordner>] [--scen base harm4 ...] [--header <a121_esp_dsp.h>]
   .venv/bin/python host/vital_sim.py bench --check     # Regressionstest: Exit 1, wenn ein Grenzwert verletzt ist
+  .venv/bin/python host/vital_sim.py record --out <ordner> [--scen anhalt]   # synthetische Aufnahme im App-Format
 
 --check prüft nur den angegebenen Header (Standard: Firmware) gegen LIMITS. Jede DSP-Änderung verschärft die Grenzwerte,
 die sie verbessert (docs/AUDIT_VITAL.md, V0.5).
@@ -322,6 +323,116 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER, with_variants: b
     return exes
 
 
+# ---------------------------------------------------------------------------------------------------------
+# Modus record: synthetische Aufnahme im App-Format (stream.log, rxtime.csv, ref_hr.csv, events.csv, meta.json)
+# ---------------------------------------------------------------------------------------------------------
+
+REPLAY_DIR = REPO_ROOT / "host" / "dsp_replay"
+
+
+def write_skeleton(iq_path: pathlib.Path, zoom_start_pt: int, out: pathlib.Path, vital_placeholders: bool = True) -> None:
+    """Log wie `iq3 … raw` vom ESP32, aber nur mit Platzhaltern für alles, was die DSP rechnet: @IQ3 (Zähler, tick,
+    Temperatur), @RAW, je 12 Frames @ROOMPROF und je 60 Frames @DSP/@ROOM/@VITAL. host/dsp_replay füllt sie mit dem
+    Header aus (ungültige Reports bekommen keine @VITAL-Zeile)."""
+    import base64
+
+    raw = np.fromfile(iq_path, "<i2").reshape(-1, 1 + ZOOM_N + ROOM_N, 2)
+    zs_mm, ze_mm = zoom_start_pt * 25 // 10, (zoom_start_pt + ZOOM_N) * 25 // 10
+    with open(out, "w") as f:
+        f.write(f"@IQ3_START,{zs_mm},{ze_mm},60.0,1\n")
+        for i, fr in enumerate(raw):
+            t_ms = round(i * 1000 / FS)
+            f.write(f"@IQ3,{t_ms},20,0.0,0.00,0.0,0,{i},{t_ms}\n")
+            f.write(f"@RAW,{i},{t_ms},{1 + ZOOM_N + ROOM_N},{base64.b64encode(fr.tobytes()).decode()}\n")
+            if (i + 1) % 12 == 0:
+                f.write(f"@ROOMPROF,{t_ms},{t_ms}\n")
+            if (i + 1) % 60 == 0:
+                f.write(f"@DSP,{t_ms},0,0,0.0,0,0,0\n@ROOM,{t_ms},{t_ms}\n")
+                if vital_placeholders:
+                    f.write(f"@VITAL,{t_ms}\n")
+        f.write("@END\n")
+
+
+def replay_skeleton(skeleton: pathlib.Path, out_log: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> None:
+    """Platzhalter-Log mit host/dsp_replay und dem Header durchrechnen; out_log = Zeilen wie live."""
+    with tempfile.TemporaryDirectory() as d:
+        exe = pathlib.Path(d) / "dsp_replay"
+        subprocess.run(["g++", "-O2", "-std=c++17", "-ffp-contract=off", f"-I{REPLAY_DIR}", f"-I{header.parent}",
+                        f"-I{DSP_HEADER.parent}", str(REPLAY_DIR / "dsp_replay_main.cpp"), "-o", str(exe), "-lm"],
+                       check=True)
+        subprocess.run([str(exe), str(skeleton), str(out_log)], capture_output=True, text=True)
+
+
+def polar_notifications(rng, beats_s: np.ndarray, T: float) -> list[tuple[float, int, list[float]]]:
+    """Wie ein EKG-Gurt (BLE Heart Rate Service): etwa jede Sekunde eine Benachrichtigung mit den RR-Werten der
+    Schläge seit der letzten (1/1024 s aufgelöst), Latenz 20–80 ms nach dem letzten Schlag."""
+    out, last = [], 0
+    rr_all = np.diff(beats_s)
+    for k in range(1, int(T)):
+        t_n = k + rng.uniform(0.02, 0.08)
+        idx = np.nonzero((beats_s[1:] <= t_n - 0.02) & (np.arange(1, beats_s.size) > last))[0] + 1
+        rr = [round(rr_all[j - 1] * 1024) * 1000.0 / 1024 for j in idx]
+        if idx.size:
+            last = int(idx[-1])
+        hr = round(60000.0 / np.mean(rr)) if rr else (out[-1][1] if out else 0)
+        out.append((t_n * 1000.0, int(hr), rr))
+    return out
+
+
+def record_scenario(name: str, folder: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> pathlib.Path:
+    """Synthetische Aufnahme eines Szenarios im App-Format, NUR SIMULATION. Gurt-Referenz aus den wahren Schlägen,
+    Einatem-Marker „ein" je Atemzug (wie Metronom-Atmung), Anhalte-Marker beim Szenario anhalt."""
+    import json
+
+    folder.mkdir(parents=True, exist_ok=True)
+    kw = dict(SCENARIOS[name][1])
+    seed = list(SCENARIOS).index(name) + 1
+    with tempfile.TemporaryDirectory() as d:
+        base = pathlib.Path(d) / name
+        make_frames(base, seed=seed, **kw)
+        tr = np.load(f"{base}_truth.npz")
+        skel = pathlib.Path(d) / "skeleton.log"
+        write_skeleton(pathlib.Path(f"{base}.iq"), int(tr["zoom_start_pt"]), skel)
+        computed = pathlib.Path(d) / "computed.log"
+        replay_skeleton(skel, computed, header)
+        raw = {int(ln.split(",", 2)[1]): ln for ln in skel.read_text().splitlines() if ln.startswith("@RAW,")}
+        lines = []
+        for ln in computed.read_text().splitlines():  # @RAW wie live direkt hinter das @IQ3 desselben Frames
+            lines.append(ln)
+            if ln.startswith("@IQ3,"):
+                lines.append(raw[int(ln.split(",")[7])])
+    (folder / "stream.log").write_text("\n".join(lines) + "\n")
+    with open(folder / "rxtime.csv", "w") as f:  # Empfang 3 ms nach der ESP32-Zeit der Zeile
+        f.write("line,rx_ms\n")
+        t_ms = 0.0
+        for i, ln in enumerate(lines):
+            p = ln.split(",")
+            if p[0] in ("@IQ3", "@DSP", "@ROOM", "@VITAL", "@ROOMPROF") and len(p) > 1:
+                t_ms = float(p[1])
+            f.write(f"{i},{t_ms + 3.0:.1f}\n")
+    T = float(tr["t"][-1]) + 1.0 / FS
+    rng = np.random.default_rng(seed + 100)
+    with open(folder / "ref_hr.csv", "w") as f:
+        f.write("rx_ms,hr_bpm,rr_ms,contact\n")
+        for rx, hr, rr in polar_notifications(rng, tr["beats"], T):
+            for v in rr or [None]:
+                f.write(f"{rx:.1f},{hr},{'' if v is None else f'{v:.1f}'},1\n")
+    hold = kw.get("hold")
+    ph = 2 * np.pi * np.cumsum(tr["rr"] / 60.0) / FS
+    onsets = tr["t"][1:][np.diff(np.floor(ph / (2 * np.pi))) > 0]
+    events = [(t * 1000.0, "ein") for t in onsets if not (hold and hold[0] <= t <= hold[1])]
+    if hold:
+        events += [(hold[0] * 1000.0, "anhalten_start"), (hold[1] * 1000.0, "anhalten_ende")]
+    with open(folder / "events.csv", "w") as f:
+        f.write("rx_ms,text\n")
+        for t, text in sorted(events):
+            f.write(f"{t:.1f},{text}\n")
+    meta = {"source": "sim", "command": "iq3 0 raw (synthetisch)", "scenario": name, "description": SCENARIOS[name][0],
+            "note": "NUR SIMULATION (host/vital_sim.py record)", "lines": len(lines), "duration_s": T}
+    (folder / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    return folder
+
+
 def truth_at(tr, t_end, win=15.0):
     """Wahre Werte im 15-s-Fenster vor dem Report (wie das Pulsfenster der DSP)."""
     b = tr["beats"]
@@ -404,7 +515,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Synthetischer Prüfstand für die Vital-DSP (nur Simulation)")
-    ap.add_argument("mode", choices=["demod", "bench"])
+    ap.add_argument("mode", choices=["demod", "bench", "record"])
     ap.add_argument("--out", type=pathlib.Path, default=None, help="bench: Ordner für die erzeugten Frames")
     ap.add_argument("--scen", nargs="*", default=list(SCENARIOS), choices=list(SCENARIOS))
     ap.add_argument("--header", type=pathlib.Path, default=DSP_HEADER, help="bench: zu prüfender DSP-Header")
@@ -412,6 +523,12 @@ def main() -> int:
     a = ap.parse_args()
     if a.mode == "demod":
         return run_demod()
+    if a.mode == "record":
+        if a.out is None:
+            ap.error("record braucht --out <ordner>; je Szenario entsteht <ordner>/sim_<szenario>")
+        for nm in a.scen:
+            print("Aufnahme:", record_scenario(nm, a.out / f"sim_{nm}", a.header.resolve()))
+        return 0
     return run_bench(a.out, a.scen, a.header.resolve(), a.check)
 
 

@@ -19,7 +19,7 @@ Modi:
      Entfernungs-Zeit-Bild der Bewegung (0,30–2,67 m) mit Raum-Zielen und Zoom-Fenster,
      festes Echo-Profil des Raums und Atem-/Puls-Verlauf.
 
-  4. `--mode replay-cpp --log <stream.log> [--out <neu>]`: rechnet eine `iq3 … raw`-Aufnahme (Live-Log mit
+  4. `--mode replay-cpp --log <stream.log> [--out <neu>] [--header-dir <ordner>]`: rechnet eine `iq3 … raw`-Aufnahme (Live-Log mit
      `@RAW`) mit `host/dsp_replay/` im Takt des ESP32 neu (Reports, Rezooms, Neuverbindungen wie im Log) und
      vergleicht jede Zeile mit der ESP32-Ausgabe. Dieselbe Quelle rechnet in der Android-App (NDK, „DSP neu“).
 
@@ -162,18 +162,20 @@ def run_verify_cpp_dsp(npz_path: pathlib.Path, zoom_start_mm: int | None, out: p
     return 0
 
 
-def run_replay_cpp(log: pathlib.Path, out: pathlib.Path | None) -> int:
+def run_replay_cpp(log: pathlib.Path, out: pathlib.Path | None, header_dir: pathlib.Path | None = None) -> int:
     """iq3-raw-Log mit dem DSP-Header neu rechnen und Zeile für Zeile mit der ESP32-Ausgabe vergleichen.
 
     Dieselbe Quelle (host/dsp_replay/dsp_replay.h) läuft in der Android-App; deren Ergebnis (dsp_phone.log) muss
     mit dem hier geschriebenen Log übereinstimmen. Exit 0 = alle Zeilen gleich der ESP32-Ausgabe.
+    header_dir: Ordner mit einer Variante von a121_esp_dsp.h (Standard: Firmware), für Vergleiche mit vital_eval.py.
     """
     if not log.is_file():
         print(f"FEHLER: Log nicht gefunden: {log}", file=sys.stderr)
         return 2
     with tempfile.TemporaryDirectory() as tmpdir:
         exe = pathlib.Path(tmpdir) / "dsp_replay"
-        subprocess.run(["g++", "-O2", "-std=c++17", "-Wall", "-ffp-contract=off", f"-I{REPLAY_DIR}",
+        inc = [f"-I{header_dir}"] if header_dir else []
+        subprocess.run(["g++", "-O2", "-std=c++17", "-Wall", "-ffp-contract=off", f"-I{REPLAY_DIR}", *inc,
                         f"-I{DSP_HEADER.parent}", str(REPLAY_DIR / "dsp_replay_main.cpp"), "-o", str(exe), "-lm"],
                        check=True)
         args = [str(exe), str(log)] + ([str(out.with_suffix(".log"))] if out else [])
@@ -392,6 +394,8 @@ def main() -> int:
     parser.add_argument("--log", type=pathlib.Path, default=None,
                         help="Log für --mode plot bzw. iq3-raw-Log (stream.log) für --mode replay-cpp")
     parser.add_argument("--out", type=pathlib.Path, default=None, help="Ausgabe ohne Endung (.log/.npz/.png)")
+    parser.add_argument("--header-dir", type=pathlib.Path, default=None,
+                        help="replay-cpp: Ordner mit einer Variante von a121_esp_dsp.h (Standard: Firmware)")
     args = parser.parse_args()
     out = args.out.with_suffix("") if args.out else None
 
@@ -400,7 +404,7 @@ def main() -> int:
     if args.mode == "replay-cpp":
         if args.log is None:
             parser.error("--mode replay-cpp braucht --log")
-        return run_replay_cpp(args.log, out)
+        return run_replay_cpp(args.log, out, args.header_dir)
     if args.mode == "plot":
         if args.log is None:
             parser.error("--mode plot braucht --log")

@@ -7,7 +7,10 @@
  * Ablauf wie `cmdIq3()` in `firmware/esp32s3/src/main.cpp`, aber vom Log gesteuert: Frames kommen aus `@RAW`, Reports
  * werden dort gerechnet, wo der ESP32 `@DSP` ausgegeben hat, das Zoom-Fenster wechselt bei `@REZOOM` bzw. nach
  * erfolgreichem `@RECONNECT`. Zeitstempel (`t_ms`) und die Rechenzeit in `@DSP` übernimmt der Replayer vom ESP32, alle
- * anderen Felder rechnet er selbst. Die neuen Zeilen haben dasselbe Format wie live (auswertbar mit `--mode plot`).
+ * anderen Felder rechnet er selbst. Die neuen Zeilen haben dasselbe Format wie live (auswertbar mit `--mode plot`,
+ * Formatfunktionen aus a121_esp_dsp.h). Ist ein eigener Report gültig, beim ESP32 aber kein `@VITAL` da, schreibt der
+ * Replayer sein `@VITAL` trotzdem (mit der Zeit der `@DSP`-Zeile) und zählt die Zeile als fehlend; so lassen sich
+ * Header-Varianten mit anderer Verfügbarkeit auswerten (host/vital_eval.py --replay).
  *
  * Braucht vor dem Einbinden ein `Arduino.h` (hier: Shim im selben Ordner) und den Include-Pfad zu
  * `firmware/esp32s3/src`. Für bitgleiche Ergebnisse ohne `-ffast-math` und mit `-ffp-contract=off` übersetzen.
@@ -200,11 +203,20 @@ private:
         if (extra_ <= 5) report("Zeile %lu: %s\n", line_no_, what);
     }
 
+    /** Eigenes @VITAL ausgeben, wenn der ESP32 zu diesem Report keines hatte (Zeit = @DSP-Zeile). */
+    void flushVital() {
+        if (!pend_vital_) return;
+        missing("@VITAL neu gerechnet, beim ESP32 fehlt sie");
+        formatVitalLine(buf_, sizeof(buf_), dsp_t_ms_, rep_);
+        emit(buf_);
+        pend_vital_ = false;
+    }
+
     /** Erwartete, aber vom ESP32 nicht ausgegebene Zeilen des letzten Reports melden. */
     void closePending() {
-        if (pend_vital_) missing("@VITAL neu gerechnet, beim ESP32 fehlt sie");
+        flushVital();
         if (pend_rezoom_) missing("@REZOOM neu gerechnet, beim ESP32 fehlt er");
-        pend_vital_ = pend_rezoom_ = false;
+        pend_rezoom_ = false;
     }
 
     static int32_t mmToPt(long mm) { return (int32_t)lroundf((float)mm / 2.5f); }
@@ -309,9 +321,8 @@ private:
         closePending();
         vital_ok_ = dsp_.computeVitalReport(rep_);
         have_rep_ = true;
-        snprintf(buf_, sizeof(buf_), "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u", ufield(c, 1), (unsigned)vital_ok_,
-                 (unsigned)rep_.hr_bin, rep_.confidence_pct, ufield(c, 5) /* Rechenzeit vom ESP32 */, rep_.motion_pct,
-                 (unsigned)rep_.hr_harm);
+        dsp_t_ms_ = (uint32_t)ufield(c, 1);
+        formatDspLine(buf_, sizeof(buf_), dsp_t_ms_, vital_ok_, rep_, (uint32_t)ufield(c, 5) /* Rechenzeit vom ESP32 */);
         compare(DSP, c, buf_);
         emit(buf_);
         pend_vital_ = vital_ok_;
@@ -333,20 +344,16 @@ private:
             return;
         }
         pend_vital_ = false;
-        const VitalReport &r = rep_;
-        snprintf(buf_, sizeof(buf_), "@VITAL,%lu,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.2f,%.0f,%u",
-                 ufield(c, 1), r.br_bpm, r.hr_fused_bpm, r.hr_spec_bpm, r.hr_acf_bpm, r.hr_ibi_bpm, r.ibi_median_ms,
-                 r.rmssd_ms, r.confidence_pct, r.resp_depth_um, r.heart_amp_um, r.zoom_snr_db,
-                 r.loopback_phase_std_mrad, r.target_dist_m * 1000.0f, (unsigned)r.num_room_targets);
+        formatVitalLine(buf_, sizeof(buf_), (uint32_t)ufield(c, 1), rep_);
         compare(VITAL, c, buf_);
         emit(buf_);
     }
 
     void onRezoom(const char *c) {
+        flushVital();
         const int32_t esp_pt = mmToPt(lfield(c, 1));
         if (pend_rezoom_) {
-            const int32_t pt = rep_.recommended_zoom_start_pt;
-            snprintf(buf_, sizeof(buf_), "@REZOOM,%ld,%ld", (long)(pt * 25 / 10), (long)((pt + kZoomPoints) * 25 / 10));
+            formatRezoomLine(buf_, sizeof(buf_), rep_.recommended_zoom_start_pt);
             compare(REZOOM, c, buf_);
             pend_rezoom_ = false;
         } else {
@@ -382,6 +389,7 @@ private:
     bool running_ = false, have_iq3_ = false, have_rep_ = false, vital_ok_ = false;
     bool pend_vital_ = false, pend_rezoom_ = false;
     int32_t zoom_pt_ = 0;
+    uint32_t dsp_t_ms_ = 0;
     long last_frame_ = -1;
     unsigned long last_tick_ = 0, line_no_ = 0, frames_ = 0, gaps_ = 0, rezooms_ = 0, reconnects_ = 0, extra_ = 0;
     unsigned streams_ = 0;
