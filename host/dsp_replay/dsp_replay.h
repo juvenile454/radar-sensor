@@ -306,8 +306,15 @@ private:
         const unsigned long tick = ufield(c, 2);
         const long n_pts = lfield(c, 3);
         const char *b64 = field(c, 4);
-        if (!b64 || n_pts <= 0 || n_pts > (long)kTotal3SubPts) {
+        if (!b64 || n_pts <= 0) {
             missing("@RAW unlesbar");
+            return;
+        }
+        if (n_pts != (long)kTotal3SubPts) {  /* andere Zoom-Breite als der Header (A121_ZOOM_POINTS, V2.3) */
+            char msg[96];
+            snprintf(msg, sizeof(msg), "@RAW: Punktzahl %ld passt nicht zum Header (%u), Frame übersprungen", n_pts,
+                     (unsigned)kTotal3SubPts);
+            missing(msg);
             return;
         }
         uint8_t bytes[kTotal3SubPts * sizeof(Complex16)];

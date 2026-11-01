@@ -98,5 +98,15 @@ class CheckCommandTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout[-3000:] + r.stderr[-2000:])
 
 
+class ZoomWidthBenchTest(unittest.TestCase):
+    """V2.3 Schritt 3: Prüfstand mit 48 Zoom-Punkten (Frames und Header mit A121_ZOOM_POINTS=48) in den Grenzwerten."""
+
+    def test_bench_48_points(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--zoom", "48",
+                            "--scen", "base", "flach", "leer"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+        self.assertIn("48 Zoom-Punkte", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

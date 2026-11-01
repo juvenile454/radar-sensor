@@ -119,14 +119,15 @@ fun SignalPage(s: LiveSnapshot) =
         Labeled("Verspätete Frames (Server)", "${s.iqDelayedFrames}")
         Labeled("Zoom-Fenster", if (s.zoomStartMm.isNaN()) "–" else "%.0f–%.0f mm (%d × neu gewählt)".format(s.zoomStartMm, s.zoomEndMm, s.rezooms))
         val raw = s.lastRaw
-        if (raw != null && raw.points >= 105) {
+        if (raw != null && raw.points >= 1 + 24 + 80) {
+            val zoomN = raw.points - 1 - 80  // 24, mit A121_ZOOM_POINTS=48 auch 48 (V2.3)
             HorizontalDivider()
             Labeled("Rohframes (@RAW)", "${s.rawFrames}, letzter Frame ${raw.frame}, ${raw.points} Punkte")
-            val zoomX = FloatArray(24) { s.zoomStartMm.takeIf { !it.isNaN() }?.plus(2.5f * it) ?: it.toFloat() }
-            ProfileChart("Rohframe: Zoom-Amplituden", zoomX, listOf(FloatArray(24) { raw.amplitude(1 + it) } to Pal.c3), listOf("|IQ|"), height = 130)
+            val zoomX = FloatArray(zoomN) { s.zoomStartMm.takeIf { !it.isNaN() }?.plus(2.5f * it) ?: it.toFloat() }
+            ProfileChart("Rohframe: Zoom-Amplituden", zoomX, listOf(FloatArray(zoomN) { raw.amplitude(1 + it) } to Pal.c3), listOf("|IQ|"), height = 130)
             val rp = s.roomProfile
             val roomX = FloatArray(80) { (rp?.startMm ?: 300f) + (rp?.stepMm ?: 30f) * it }
-            ProfileChart("Rohframe: Raum-Amplituden", roomX, listOf(FloatArray(80) { raw.amplitude(25 + it) } to Pal.c1), listOf("|IQ|"), height = 130)
+            ProfileChart("Rohframe: Raum-Amplituden", roomX, listOf(FloatArray(80) { raw.amplitude(1 + zoomN + it) } to Pal.c1), listOf("|IQ|"), height = 130)
             Labeled("Loopback |IQ|", f0(raw.amplitude(0)))
         } else {
             Text("Rohdaten: mit „iq3 ∞ raw“ starten (≈ 35 kB/s)", fontSize = 12.sp, color = Pal.axis)

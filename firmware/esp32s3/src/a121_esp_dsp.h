@@ -65,7 +65,13 @@ static constexpr float kWavelengthM  = kSpeedOfLight / kRadarFreqHz;            
 static constexpr float kRadToUm      = (kWavelengthM / (4.0f * (float)M_PI)) * 1.0e6f;  /* ~394.37 µm/rad */
 static constexpr float kPointStepM   = 0.0025f;                                         /* 2.5 mm pro A121 Step */
 
-static constexpr uint16_t kZoomPoints   = 24U;  /* Subsweep 1: 24 Punkte * 2.5 mm = 60 mm Fokusfenster */
+#ifndef A121_ZOOM_POINTS
+#define A121_ZOOM_POINTS 24  /* 48 = 120 mm (V2.3 Schritt 3), vorbereitet; Wahl nach Messung V4.4 */
+#endif
+static constexpr uint16_t kZoomPoints   = A121_ZOOM_POINTS;  /* Subsweep 1: 24 Punkte * 2.5 mm = 60 mm Fokusfenster */
+static_assert(kZoomPoints >= 8 && kZoomPoints <= 64, "A121_ZOOM_POINTS: 8 .. 64");
+/* Spektren nur für die Punkte mit der stärksten Atmung, wenn das Fenster breiter als 24 Punkte ist (Rechenzeit) */
+static constexpr uint16_t kSpecPoints   = (kZoomPoints > 24U) ? 16U : kZoomPoints;
 static constexpr uint16_t kRoomStep     = 12U;  /* RSS: step_length muss Teiler oder Vielfaches von 24 sein */
 static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 Punkte * 30 mm = 2.40 m Raumfenster */
 static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
@@ -109,6 +115,7 @@ static constexpr float    kPulseHeldDb = 8.0f;   /* Atem angehalten: Pulsspitze 
 static constexpr float    kEchoSpreadMax = 0.4f; /* sauberes Echo: Abstand zum Kreismittelpunkt streut < 40 % (Rauschen ≈ 52 %) */
 static constexpr float    kBreathMinUm = 100.0f; /* Lebenszeichen: Atemhub ≥ 100 µm Spitze-Spitze am Atem-Punkt */
 static constexpr uint8_t  kHoldHarm    = 10U;    /* Sprung auf eine Oberwelle erst nach 10 Reports (sonst 3) */
+static constexpr float    kKeepTrackS  = 30.0f;  /* Rezoom: Verfolgung bleibt, wenn der letzte gültige Wert < 30 s alt ist */
 /* Atemzustand (V1.4, B9): Amplitude je Report = Spitze-Spitze des 1-s-Mittels über die letzten 10 s am Atem-Punkt
  * (Trend entfernt), Bezug = Median der letzten 60 Werte. Ein 1-s-Effektivwert (Plan) hängt bei 4–10 s Atemperiode von
  * der Phase ab; 10 s enthalten eine ganze Periode bis 6 /min (5 s verloren bei 6 /min bis zur Hälfte). */
@@ -177,6 +184,17 @@ inline void removeLinearTrend(float *x, uint16_t N) {
     const float sum_tt = (float)N * ((float)N * (float)N - 1.0f) / 12.0f;
     const float mean = x0 + sum_y / (float)N, slope = sum_ty / sum_tt;
     for (uint16_t n = 0; n < N; n++) x[n] -= mean + slope * ((float)n - half);
+}
+
+/** sel[i] = true für die k größten Werte von v[0 .. n) (bei Gleichstand der frühere Index). */
+inline void selectStrongest(const float *v, uint16_t n, uint16_t k, bool *sel) {
+    for (uint16_t i = 0; i < n; i++) sel[i] = false;
+    for (uint16_t j = 0; j < k && j < n; j++) {
+        int16_t best = -1;
+        for (uint16_t i = 0; i < n; i++)
+            if (!sel[i] && (best < 0 || v[i] > v[best])) best = (int16_t)i;
+        sel[best] = true;
+    }
 }
 
 /**
@@ -641,6 +659,7 @@ struct ReportSnapshot {
     int16_t  temp_c;
     float    lb_amp;
     uint32_t tot_delayed, tot_sat, tot_tickgap;
+    uint32_t tot_frames;  /* Frames seit begin(), über Rezooms hinweg (V2.3) */
     float    room_amp[kRoomPoints], room_mot[kRoomPoints], room_amp_slow[kRoomPoints], room_mot_slow[kRoomPoints];
 };
 
@@ -656,7 +675,7 @@ public:
         zoom_start_pt_ = zoom_start_pt;
         room_start_pt_ = room_start_pt;
         room_step_     = room_step;
-        tot_delayed_ = tot_sat_ = tot_tickgap_ = 0;  /* neuer Stream */
+        tot_delayed_ = tot_sat_ = tot_tickgap_ = tot_frames_ = 0;  /* neuer Stream */
         prev_delayed_ = prev_sat_ = prev_tickgap_ = 0;
 
         if (!allocated_) {
@@ -681,7 +700,22 @@ public:
         return allocated_;
     }
 
+    /** Neubeginn ganz: Historie und Verfolgung (begin()). */
     void resetState() {
+        resetHistory();
+        resetTracking();
+    }
+
+    /**
+     * Neubeginn der Historie (Rezoom, Neu-Kalibrierung, Neuverbinden; V2.3, B11): Ring, Filter- und Raumzustand,
+     * Kreismittelpunkte und Atemzustand neu. Die Puls-Verfolgung bleibt, wenn der letzte gültige Report weniger als
+     * kKeepTrackS zurückliegt; der erste Report danach glättet dann gegen den bisherigen Wert statt neu zu beginnen.
+     * Nur aufrufen, während kein Report rechnet.
+     */
+    void resetHistory() {
+        if (!(have_valid_ && tot_frames_ - last_valid_tot_ < (uint32_t)(kKeepTrackS * kFsHz))) resetTracking();
+        hr_miss_   = 0;
+        alt_count_ = 0;
         frame_count_          = 0;
         hist_write_idx_       = 0;
         hist_count_           = 0;
@@ -694,10 +728,6 @@ public:
         best_zoom_bin_        = kZoomPoints / 2U;
         out_of_window_frames_ = 0;
         last_temp_c_          = 0;
-        hr_prev_              = 0.0f;
-        hr_miss_              = 0;
-        alt_count_            = 0;
-        hr_hist_n_            = 0;
         br_track_.reset();
         have_last_tick_       = false;  /* Rezoom/Neubeginn: der nächste tick-Abstand zählt nicht als Lücke */
         memset(hist_sat_, 0, sizeof(hist_sat_));
@@ -714,9 +744,18 @@ public:
         memset(have_good_, 0, sizeof(have_good_));
     }
 
+    /** Puls-Verfolgung neu (kein bisheriger Wert). */
+    void resetTracking() {
+        hr_prev_    = 0.0f;
+        hr_miss_    = 0;
+        alt_count_  = 0;
+        hr_hist_n_  = 0;
+        have_valid_ = false;
+    }
+
     void setZoomStartPoint(int32_t zoom_start_pt) {
         zoom_start_pt_ = zoom_start_pt;
-        resetState();
+        resetHistory();
     }
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
@@ -867,6 +906,7 @@ public:
             }
         }
         frame_count_++;
+        tot_frames_++;
     }
 
     /** Stand für einen Report festhalten (im Frame-Takt nach pushFrame(), V2.1). */
@@ -880,6 +920,7 @@ public:
         s.tot_delayed   = tot_delayed_;
         s.tot_sat       = tot_sat_;
         s.tot_tickgap   = tot_tickgap_;
+        s.tot_frames    = tot_frames_;
         memcpy(s.room_amp, room_amp_ema_, sizeof(s.room_amp));
         memcpy(s.room_mot, room_var_ema_, sizeof(s.room_mot));
         memcpy(s.room_amp_slow, room_amp_slow_, sizeof(s.room_amp_slow));
@@ -947,8 +988,37 @@ public:
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] = 0.0f;
         for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
         const float *hann = hannWindow(M);
+        /* Breites Zoom-Fenster (V2.3): Atem-Stärke vorab als Streuung der IQ-Werte im Fenster (≈ Amplitude² ×
+         * Phasenhub², dieselbe Größe wie das Gewicht des Atem-Spektrums), nur die kSpecPoints stärksten rechnen. */
+        bool use[kZoomPoints];
+        if (kSpecPoints < kZoomPoints) {
+            float strength[kZoomPoints];
+            for (uint8_t b = 0; b < kZoomPoints; b++) {
+                const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
+                const float *z0 = base + (size_t)start * 2U;  /* um den ersten Wert verschoben (Auslöschung) */
+                float mi = 0.0f, mq = 0.0f, p2 = 0.0f;
+                for (uint16_t n = 0; n < N; n++) {
+                    const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
+                    const float di = z[0] - z0[0], dq = z[1] - z0[1];
+                    mi += di;
+                    mq += dq;
+                    p2 += di * di + dq * dq;
+                }
+                mi /= (float)N;
+                mq /= (float)N;
+                strength[b] = p2 / (float)N - (mi * mi + mq * mq);
+            }
+            selectStrongest(strength, kZoomPoints, kSpecPoints, use);
+        } else {
+            for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = true;
+        }
 
         for (uint8_t b = 0; b < kZoomPoints; b++) {
+            if (!use[b]) {
+                weight[b]  = 0.0f;
+                peak_hz[b] = 0.0f;
+                continue;
+            }
             bool short_arc = false;
             float spread = 0.0f;
             const float amp_c = binDisplacement(b, start, N, work_x_, short_arc, spread);
@@ -1243,6 +1313,10 @@ public:
         const bool breath_ok  = echo_ok && br_q >= kBrMinQ && rep.resp_depth_um >= kBreathMinUm;
         const bool held_pulse = echo_ok && breath_held && qi.peak_db >= kPulseHeldDb;
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
+        if (rep.valid) {
+            have_valid_     = true;
+            last_valid_tot_ = s.tot_frames;
+        }
         rep.compute_us = micros() - t0;
         return rep.valid;
     }
@@ -1575,6 +1649,9 @@ private:
     BreathStateTracker br_track_;           /* Atemzustand (V1.4) */
     uint32_t tot_delayed_ = 0, tot_sat_ = 0, tot_tickgap_ = 0;    /* Sensor-Zähler seit begin() (V1.5, Summen seit V2.1) */
     uint32_t prev_delayed_ = 0, prev_sat_ = 0, prev_tickgap_ = 0; /* … beim zuletzt gerechneten Report */
+    uint32_t tot_frames_ = 0;                                      /* Frames seit begin() (V2.3) */
+    uint32_t last_valid_tot_ = 0;                                  /* tot_frames des letzten gültigen Reports */
+    bool     have_valid_ = false;
     ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
     a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
     float    hann_[kHrWin / kDecim + 1U] = {};

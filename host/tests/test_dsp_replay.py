@@ -190,5 +190,22 @@ class SnapshotReplayTest(unittest.TestCase):
         self.assertEqual(self.tail(lagged, "@VITAL,"), self.tail(self.sync, "@VITAL,")[-late:])
 
 
+class ZoomWidthReplayTest(unittest.TestCase):
+    """V2.3 Schritt 3: Passt die Punktzahl in @RAW nicht zum Header (24-Punkte-Aufnahme, Header mit 48), rechnet die
+    Nachrechnung nicht mit falsch zugeordneten Punkten, sondern meldet es."""
+
+    def test_mismatch_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            vital_sim.make_frames(d / "base", seed=1, T=12.0)
+            skel, out = d / "skel.log", d / "out.log"
+            vital_sim.write_skeleton(pathlib.Path(f"{d / 'base'}.iq"), 244, skel, vital_placeholders=False)
+            rep = vital_sim.replay_skeleton(skel, out, defines=("-DA121_ZOOM_POINTS=48",))
+            lines = out.read_text().splitlines()
+        self.assertEqual([ln for ln in lines if ln.startswith("@VITAL,")], [])
+        self.assertIn("Punktzahl", rep)
+        self.assertIn("105", rep)
+
+
 if __name__ == "__main__":
     unittest.main()

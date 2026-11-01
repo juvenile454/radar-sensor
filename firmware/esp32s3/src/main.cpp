@@ -649,7 +649,8 @@ static bool startDspTask() {
 // 3-Subsweep Sparse-IQ Session (Sub 0 Loopback + Sub 1 2.5-mm Vital-Zoom + Sub 2 Raum-Scan)
 // mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom.
 // raw = true: zusätzlich je Frame '@RAW,frame,tick,n,<Base64>' mit den unveränderten Punkten vom Server
-// (n komplexe int16-Paare real, imag, Little Endian; Reihenfolge Loopback, 24 Zoom-Punkte, 80 Raum-Punkte).
+// (n komplexe int16-Paare real, imag, Little Endian; Reihenfolge Loopback, kZoomPoints Zoom-Punkte (24, mit
+// A121_ZOOM_POINTS=48 auch 48), 80 Raum-Punkte).
 static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   if (!ensureServerConnected()) return;
 
@@ -1029,7 +1030,7 @@ static void help() {
       "  iq3 [sek] [start_mm] [raw]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
       "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm; 0 s = endlos)\n"
       "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL 1/s,\n"
-      "                        mit 'raw' zusätzlich @RAW je Frame (105 IQ-Punkte, Base64, ≈ 35 kB/s)\n"
+      "                        mit 'raw' zusätzlich @RAW je Frame (1 + Zoom + 80 IQ-Punkte, Base64, ≈ 35 kB/s)\n"
       "  doppler [sek] [mm] [hz] Continuous Sweep Mode (CSM) + Double Buffering Mikro-Doppler (Standard: 15 s, 500 mm, 2000 Hz)\n"
       "                        Streams: beliebiges Zeichen beendet; Strg+R (0x12) startet den Server zum Test neu\n"
       "                        (Neuverbinden, @RECONNECT)\n"

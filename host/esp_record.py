@@ -31,9 +31,8 @@ import numpy as np
 DATA_DIR = pathlib.Path("~/Data/radar-sensor").expanduser()
 FIXTURE_DIR = DATA_DIR / "app-fixtures"
 BY_ID = pathlib.Path("/dev/serial/by-id")
-ZOOM_POINTS = 24
-TOTAL_3SUB = 105
-ZOOM_CENTER = 1 + ZOOM_POINTS // 2  # wie b0 in cmdIq3()
+ROOM_POINTS = 80
+ZOOM_WIDTHS = (24, 48)  # Zoom-Punkte je Frame (A121_ZOOM_POINTS; 48 vorbereitet, V2.3), aus @RAW abgelesen
 
 
 def find_port() -> str:
@@ -174,17 +173,19 @@ def check(folder: pathlib.Path, npz: pathlib.Path | None) -> int:
         ok &= gaps == 0 and back == 0
     if raw_X:
         X = np.stack(raw_X)
+        zoom_points = X.shape[1] - 1 - ROOM_POINTS
+        zoom_center = 1 + zoom_points // 2  # wie b0 in cmdIq3()
         diffs = []
         for fno, x in zip(raw_frames, raw_X):
             if fno in iq3_amp:
                 lb, za = iq3_amp[fno]
-                diffs.append(max(abs(abs(x[0]) - lb), abs(abs(x[ZOOM_CENTER]) - za)))
+                diffs.append(max(abs(abs(x[0]) - lb), abs(abs(x[zoom_center]) - za)))
         maxdiff = max(diffs) if diffs else float("nan")
         same_tick = all(t == ticks["@IQ3"][frames["@IQ3"].index(f)] for f, t in zip(raw_frames[:50], raw_ticks[:50])
                         if f in frames["@IQ3"])
-        print(f"  @RAW: {X.shape[0]} Frames × {X.shape[1]} Punkte; |IQ| vs. @IQ3 (Loopback/Zoom) max. Abweichung "
+        print(f"  @RAW: {X.shape[0]} Frames × {X.shape[1]} Punkte ({zoom_points} Zoom); |IQ| vs. @IQ3 (Loopback/Zoom) max. Abweichung "
               f"{maxdiff:.3f} (Rundung %.1f → ≤ 0,05); Tick gleich: {same_tick}")
-        ok &= X.shape[1] == TOTAL_3SUB and maxdiff <= 0.051 and same_tick
+        ok &= zoom_points in ZOOM_WIDTHS and maxdiff <= 0.051 and same_tick
         if npz is not None:
             zoom_pt = int(round((zoom_start_mm or 500) / 2.5))
             np.savez_compressed(npz, X=X.astype(np.complex64), tick=np.array(raw_ticks, dtype=np.uint32),

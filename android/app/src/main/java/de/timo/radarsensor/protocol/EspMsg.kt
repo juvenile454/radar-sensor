@@ -41,7 +41,7 @@ data class Iq3(
 
 /**
  * `@RAW,frame,tick,n,<Base64>`: n komplexe int16-Punkte (real, imag, Little Endian) unverändert vom Server.
- * Reihenfolge bei `iq3`: 1 Loopback, 24 Zoom-Punkte (2,5 mm), 80 Raum-Punkte.
+ * Reihenfolge bei `iq3`: 1 Loopback, 24 Zoom-Punkte (2,5 mm; mit A121_ZOOM_POINTS=48 in der Firmware 48), 80 Raum-Punkte.
  */
 class Raw(
     val frame: Long,

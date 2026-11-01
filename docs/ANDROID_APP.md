@@ -41,7 +41,7 @@ Tabs: Übersicht, Signal, Raum, Vital, Doppler, Experten, Diagnose, Konsole, Auf
 | Quelle (Befehl) | Zeilen | Rate | Ansicht |
 |---|---|---|---|
 | `iq3` | `@IQ3` (Zeit, Temperatur, Loopback-Amplitude, Weg µm, Zoom-Amplitude, Sättigung, Frame, tick, verspätet) | 60 Hz | Signal: Weg-Kurve, Amplituden, Sättigung, verspätete Frames |
-| `iq3 … raw` | zusätzlich `@RAW` (105 komplexe int16 je Frame, Base64) | 60 Hz | nur Aufnahme (Nachrechnen, PC) |
+| `iq3 … raw` | zusätzlich `@RAW` (105 komplexe int16 je Frame, Base64; mit `A121_ZOOM_POINTS=48` 129) | 60 Hz | nur Aufnahme (Nachrechnen, PC) |
 | `iq3` | `@ROOMPROF` (80 Amplituden + 80 Bewegungswerte, 0,30–2,67 m) | 5 Hz | Raum: Profil + Wasserfall |
 | `iq3` | `@ROOM` (Rauschen, Ziele: Abstand, Stärke, Bewegung, bewegt) | 1 Hz | Raum: Zielmarker; Übersicht: Hauptziel |
 | `iq3` | `@VITAL` (Atmung, Puls fused/Spektrum/AKF/IBI, IBI-Median, RMSSD, Konfidenz, Atemtiefe, Herz-Amplitude, SNR, Loopback-Phasenrauschen, Zielabstand, Anzahl Ziele) | 1 Hz | Übersicht/Vital; Puls **immer als „Kandidat“** mit Konfidenz |

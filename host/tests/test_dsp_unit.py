@@ -14,15 +14,16 @@ FW = HOST.parent / "firmware" / "esp32s3" / "src"
 SHIM = HOST / "dsp_replay"
 
 
-def run_cpp(body: str) -> str:
-    """Übersetzt ein kleines Programm gegen a121_esp_dsp.h und gibt seine Ausgabe zurück."""
+def run_cpp(body: str, flags: tuple[str, ...] = ()) -> str:
+    """Übersetzt ein kleines Programm gegen a121_esp_dsp.h und gibt seine Ausgabe zurück (flags: z. B. -D…)."""
     src = ('#include <Arduino.h>\n#include <vector>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n'
            + body + "\nreturn 0; }\n")
     with tempfile.TemporaryDirectory() as d:
         c = pathlib.Path(d) / "t.cpp"
         exe = pathlib.Path(d) / "t"
         c.write_text(src)
-        cc = subprocess.run(["g++", "-O1", "-std=c++17", "-Wall", f"-I{SHIM}", f"-I{FW}", str(c), "-o", str(exe), "-lm"],
+        cc = subprocess.run(["g++", "-O1", "-std=c++17", "-Wall", *flags, f"-I{SHIM}", f"-I{FW}", str(c), "-o", str(exe),
+                             "-lm"],
                             capture_output=True, text=True)
         if cc.returncode != 0:
             raise AssertionError("Übersetzen fehlgeschlagen:\n" + cc.stderr[-3000:])
@@ -531,6 +532,82 @@ class RefinedPeakTest(unittest.TestCase):
         valid, bpm = out.split()
         self.assertEqual(valid, "1")
         self.assertAlmostEqual(float(bpm), 1.2067 * 60, delta=0.1)
+
+
+class RezoomTrackingTest(unittest.TestCase):
+    """V2.3 Schritt 2 (B11): Ein Rezoom beginnt nur die Historie neu; die Puls-Verfolgung bleibt, wenn der letzte
+    gültige Report weniger als 30 s zurückliegt. Erster Report danach: naher Kandidat geglättet (0,7 · alt + 0,3 · neu)
+    statt Neustart auf dem rohen Wert."""
+
+    GEN = """
+    static Complex16 pts[kTotal3SubPts];
+    static UltimateEspDsp d; d.begin(244, 120, kRoomStep);
+    float um; VitalReport r = {};
+    uint32_t k = 0;
+    auto push = [&](uint32_t n, float f_hr) {
+        for (uint32_t e = k + n; k < e; k++) {
+            const float t = k / 60.0f;
+            const float ph = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * f_hr * t);
+            pts[0].real = 2000; pts[0].imag = 0;
+            for (int b = 0; b < kZoomPoints; b++) {
+                const float a = ph * (1.0f - 0.02f * b) + 0.1f * b;
+                pts[1 + b].real = (int16_t)(1500 * cosf(a) + 3 * sinf(k * 1.7f + b));
+                pts[1 + b].imag = (int16_t)(1500 * sinf(a) + 3 * cosf(k * 2.3f + b));
+            }
+            for (int q = 0; q < kRoomPoints; q++) {
+                pts[1 + kZoomPoints + q].real = (int16_t)((q == 20 ? 900 : 60) * cosf(0.3f * q + (q == 20 ? ph : 0)));
+                pts[1 + kZoomPoints + q].imag = (int16_t)((q == 20 ? 900 : 60) * sinf(0.3f * q + (q == 20 ? ph : 0)));
+            }
+            d.pushFrame(pts, kTotal3SubPts, 20, 0, um);
+        }
+    };
+    push(900, 1.2f);
+    d.computeVitalReport(r);
+    printf("%d %.2f ", r.valid, r.hr_fused_bpm);
+    push(GAP, 1.2f);
+    d.setZoomStartPoint(244);
+    push(480, 80.0f / 60.0f);
+    d.computeVitalReport(r);
+    printf("%d %.2f", r.valid, r.hr_fused_bpm);
+    """
+
+    def run_gap(self, gap: int) -> list[float]:
+        return [float(v) for v in run_cpp(self.GEN.replace("GAP", str(gap))).split()]
+
+    def test_recent_valid_keeps_tracking(self):
+        v0, hr0, v1, hr1 = self.run_gap(0)
+        self.assertEqual((v0, v1), (1, 1))
+        self.assertAlmostEqual(hr0, 72.0, delta=0.5)
+        self.assertAlmostEqual(hr1, 0.7 * hr0 + 0.3 * 80.0, delta=0.6)
+
+    def test_old_valid_restarts_tracking(self):
+        v0, hr0, v1, hr1 = self.run_gap(1860)   # 31 s ohne Report
+        self.assertEqual((v0, v1), (1, 1))
+        self.assertAlmostEqual(hr1, 80.0, delta=0.6)
+
+
+class ZoomWidthTest(unittest.TestCase):
+    """V2.3 Schritt 3: Zoom-Breite per A121_ZOOM_POINTS (24 Standard, 48 vorbereitet bis Messung V4.4); bei mehr als
+    24 Punkten Spektren nur für die kSpecPoints = 16 Punkte mit der stärksten Atmung."""
+
+    def test_default_24(self):
+        self.assertEqual(run_cpp('printf("%u %u %u", kZoomPoints, kTotal3SubPts, kSpecPoints);').split(),
+                         ["24", "105", "24"])
+
+    def test_switch_48(self):
+        out = run_cpp('printf("%u %u %u", kZoomPoints, kTotal3SubPts, kSpecPoints);', ("-DA121_ZOOM_POINTS=48",))
+        self.assertEqual(out.split(), ["48", "129", "16"])
+
+    def test_select_strongest(self):
+        out = run_cpp("""
+        const float v[8] = {5, 1, 9, 3, 9, 0, 7, 2};
+        bool sel[8];
+        selectStrongest(v, 8, 3, sel);
+        for (bool b : sel) printf("%d", b);
+        selectStrongest(v, 8, 8, sel);
+        printf(" ");
+        for (bool b : sel) printf("%d", b);""")
+        self.assertEqual(out, "00101010 11111111")   # 9, 9, 7; bei k = n alle
 
 
 if __name__ == "__main__":

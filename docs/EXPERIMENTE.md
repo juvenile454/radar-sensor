@@ -89,6 +89,15 @@ mkdir -p /tmp/dsp_basis && git show 0e2d836:firmware/esp32s3/src/a121_esp_dsp.h 
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag>_* --replay /tmp/dsp_basis
 ```
 
+**Rezoom-Stetigkeit (V2.3 Schritt 1, offen):** Bleibt die Phase an gleichen Entfernungen über den Session-Neustart
+beim Rezoom stetig (roh und mit Loopback-Derotation)? An T1 (31,7 min, 38 Rezooms, `@RAW`) prüfen; Ergebnis hier
+eintragen. Nur wenn die Sprünge klein sind (oder eine gemeinsame Drehung, Streuung klein), lohnt Schritt 4
+(überlappende Zoom-Punkte übernehmen, Lücke füllen).
+
+```bash
+.venv/bin/python host/rezoom_check.py ~/Data/radar-sensor/<T1-ordner>
+```
+
 — offen (braucht Gurt und Aufnahmen)
 
 | Sitzung | Tag | Puls-MAE | ±5 /min | Verfügbarkeit | Konfidenz ≥ 70 %: ±5 | Atmung-MAE | Apnoe erkannt / Verzug |

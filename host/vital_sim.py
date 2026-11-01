@@ -312,7 +312,8 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> dict[str, pat
         (d / "a121_esp_dsp.h").write_text(text)
         exe = tmp / f"harness_{name}"
         # Shim zuerst (chrono-micros), dann Header-Ordner, Firmware-Ordner als Rückfall, dsp_replay für die Formate
-        subprocess.run(["g++", "-O2", "-std=c++17", f"-I{tmp / 'inc'}", f"-I{d}", f"-I{header.parent}",
+        subprocess.run(["g++", "-O2", "-std=c++17", f"-DA121_ZOOM_POINTS={ZOOM_N}", f"-I{tmp / 'inc'}", f"-I{d}",
+                        f"-I{header.parent}",
                         f"-I{DSP_HEADER.parent}", f"-I{REPLAY_DIR}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"],
                        check=True)
         exes[name] = exe
@@ -349,14 +350,19 @@ def write_skeleton(iq_path: pathlib.Path, zoom_start_pt: int, out: pathlib.Path,
         f.write("@END\n")
 
 
-def replay_skeleton(skeleton: pathlib.Path, out_log: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> None:
-    """Platzhalter-Log mit host/dsp_replay und dem Header durchrechnen; out_log = Zeilen wie live."""
+def replay_skeleton(skeleton: pathlib.Path, out_log: pathlib.Path, header: pathlib.Path = DSP_HEADER,
+                    defines: tuple[str, ...] | None = None) -> str:
+    """Platzhalter-Log mit host/dsp_replay und dem Header durchrechnen; out_log = Zeilen wie live. Rückgabe: Bericht
+    der Nachrechnung. defines: z. B. ("-DA121_ZOOM_POINTS=48",); ohne Angabe die Zoom-Breite von ZOOM_N."""
+    if defines is None:
+        defines = (f"-DA121_ZOOM_POINTS={ZOOM_N}",)
     with tempfile.TemporaryDirectory() as d:
         exe = pathlib.Path(d) / "dsp_replay"
-        subprocess.run(["g++", "-O2", "-std=c++17", "-ffp-contract=off", f"-I{REPLAY_DIR}", f"-I{header.parent}",
-                        f"-I{DSP_HEADER.parent}", str(REPLAY_DIR / "dsp_replay_main.cpp"), "-o", str(exe), "-lm"],
-                       check=True)
-        subprocess.run([str(exe), str(skeleton), str(out_log)], capture_output=True, text=True)
+        subprocess.run(["g++", "-O2", "-std=c++17", "-ffp-contract=off", *defines, f"-I{REPLAY_DIR}",
+                        f"-I{header.parent}", f"-I{DSP_HEADER.parent}", str(REPLAY_DIR / "dsp_replay_main.cpp"), "-o",
+                        str(exe), "-lm"], check=True)
+        r = subprocess.run([str(exe), str(skeleton), str(out_log)], capture_output=True, text=True)
+        return r.stdout + r.stderr
 
 
 def polar_notifications(rng, beats_s: np.ndarray, T: float) -> list[tuple[float, int, list[float]]]:
@@ -534,6 +540,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
         print("NUR SIMULATION. Puls-MAE und Anteil ≤ 5 /min gegen die wahre mittlere Herzfrequenz im 15-s-Fenster;")
         print("Konfidenz = Median aller gültigen Reports, 'bei Fehler' = Median der Reports mit > 10 /min Abweichung.")
         print("Szenarien 'leer'/'niemand': Puls-Werte sind bedeutungslos, dort zählt nur die Zahl gültiger Reports (Soll 0).")
+        print(f"{ZOOM_N} Zoom-Punkte je Frame ({ZOOM_N * 2.5:.0f} mm).")
         for var, exe in exes.items():
             print(f"\n=== DSP-Header {var}")
             print(f"{'Szenario':8s} {'Beschreibung':32s} {'gültig':>7s} {'erst':>5s} {'Puls-MAE':>9s} {'≤5/min':>7s}"
@@ -569,13 +576,17 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
 
 
 def main() -> int:
+    global ZOOM_N
     ap = argparse.ArgumentParser(description="Synthetischer Prüfstand für die Vital-DSP (nur Simulation)")
     ap.add_argument("mode", choices=["demod", "bench", "record"])
     ap.add_argument("--out", type=pathlib.Path, default=None, help="bench: Ordner für die erzeugten Frames")
     ap.add_argument("--scen", nargs="*", default=list(SCENARIOS), choices=list(SCENARIOS))
     ap.add_argument("--header", type=pathlib.Path, default=DSP_HEADER, help="bench: zu prüfender DSP-Header")
     ap.add_argument("--check", action="store_true", help="bench: gegen LIMITS prüfen, Exit 1 bei Verschlechterung")
+    ap.add_argument("--zoom", type=int, default=ZOOM_N, choices=[24, 48],
+                    help="bench/record: Zoom-Punkte je Frame (Header mit A121_ZOOM_POINTS übersetzt, V2.3)")
     a = ap.parse_args()
+    ZOOM_N = a.zoom
     if a.mode == "demod":
         return run_demod()
     if a.mode == "record":
