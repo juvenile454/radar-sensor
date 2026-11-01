@@ -393,6 +393,106 @@ private:
     uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, state_ = kBrStateNormal;
 };
 
+/** Ergebnis der Einzelschläge (V1.6). */
+struct IbiResult {
+    float   bpm      = 0.0f;  /* 60000 / Median der gültigen IBI; 0 = kein Ergebnis (< 3 gültige IBI) */
+    float   ibi_ms   = 0.0f;
+    float   rmssd_ms = 0.0f;  /* 0 = nicht berechnet (< 90 % der erwarteten IBI gültig) */
+    uint8_t n_beats  = 0;
+    uint8_t n_valid  = 0;     /* gültige IBI */
+};
+
+/**
+ * Einzelschläge im Herzsignal (V1.6, B7): Spitzen über 0,35 × Effektivwert, Sperrzeit 0,6 × 60 / hr_bpm (vorher fest
+ * 360 ms), Lage parabolisch zwischen den Abtastwerten verfeinert (vorher auf 16,7 ms gerastert). Ein IBI gilt, wenn es
+ * im Bereich 40–180 /min liegt und höchstens 20 % vom Median der 5 vorigen IBI abweicht (am Fensteranfang: Median
+ * aller IBI im Bereich). RMSSD nur aus direkt aufeinanderfolgenden gültigen IBI und nur, wenn ≥ 90 % der erwarteten
+ * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, AUDIT_VITAL.md 5.1); 15 s sind für HRV ohnehin kurz.
+ */
+inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_bpm) {
+    IbiResult res;
+    constexpr uint8_t kMaxPk = 48;
+    hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
+    float rms = 0.0f;
+    for (uint16_t n = 0; n < N; n++) rms += hr[n] * hr[n];
+    rms = sqrtf(rms / (float)(N ? N : 1U));
+    const float thresh = 0.35f * rms;
+    const uint16_t refractory = (uint16_t)roundf(0.6f * (60.0f / hr_bpm) * fs);
+
+    uint16_t pk[kMaxPk];
+    uint8_t  n_pk = 0;
+    for (uint16_t n = 2; n + 2 < N; n++) {
+        if (hr[n] > thresh && hr[n] > hr[n - 1] && hr[n] >= hr[n + 1] && hr[n] > hr[n - 2] && hr[n] >= hr[n + 2]) {
+            if (n_pk == 0 || (uint16_t)(n - pk[n_pk - 1]) >= refractory) {
+                pk[n_pk++] = n;
+                if (n_pk >= kMaxPk) break;
+            } else if (hr[n] > hr[pk[n_pk - 1]]) {
+                pk[n_pk - 1] = n;
+            }
+        }
+    }
+    res.n_beats = n_pk;
+    if (n_pk < 4) return res;
+
+    float t[kMaxPk];
+    for (uint8_t k = 0; k < n_pk; k++) {
+        const uint16_t i = pk[k];
+        const float a = hr[i - 1], b = hr[i], c = hr[i + 1], den = a - 2.0f * b + c;
+        float d = (den < 0.0f) ? 0.5f * (a - c) / den : 0.0f;
+        d = d < -0.5f ? -0.5f : (d > 0.5f ? 0.5f : d);
+        t[k] = (float)i + d;
+    }
+    const uint8_t n_ibi = (uint8_t)(n_pk - 1U);
+    float ibi[kMaxPk], tmp[kMaxPk];
+    bool  in_range[kMaxPk], valid[kMaxPk];
+    uint8_t n_in = 0;
+    for (uint8_t k = 0; k < n_ibi; k++) {
+        ibi[k] = (t[k + 1] - t[k]) * 1000.0f / fs;
+        in_range[k] = ibi[k] >= 60000.0f / 180.0f && ibi[k] <= 60000.0f / 40.0f;
+        if (in_range[k]) tmp[n_in++] = ibi[k];
+    }
+    if (n_in < 3) return res;
+    auto median = [](float *v, uint8_t n) {
+        std::nth_element(v, v + n / 2, v + n);
+        return v[n / 2];
+    };
+    const float win_med = median(tmp, n_in);
+    float prev[5];
+    uint8_t n_prev = 0, n_valid = 0;
+    for (uint8_t k = 0; k < n_ibi; k++) {
+        float ref = win_med;
+        if (n_prev >= 3) {
+            float p5[5];
+            memcpy(p5, prev, n_prev * sizeof(float));
+            ref = median(p5, n_prev);
+        }
+        valid[k] = in_range[k] && fabsf(ibi[k] - ref) <= 0.2f * ref;
+        if (valid[k]) tmp[n_valid++] = ibi[k];
+        if (in_range[k]) {  /* die 5 vorigen IBI im Bereich (gleitend) */
+            if (n_prev < 5) prev[n_prev++] = ibi[k];
+            else { memmove(prev, prev + 1, 4 * sizeof(float)); prev[4] = ibi[k]; }
+        }
+    }
+    res.n_valid = n_valid;
+    if (n_valid < 3) return res;
+    res.ibi_ms = median(tmp, n_valid);
+    res.bpm    = 60000.0f / res.ibi_ms;
+
+    const float expected = (float)N / fs * hr_bpm / 60.0f - 1.0f;
+    if ((float)n_valid >= 0.9f * expected) {
+        float ss = 0.0f;
+        uint8_t nd = 0;
+        for (uint8_t k = 1; k < n_ibi; k++)
+            if (valid[k] && valid[k - 1]) {
+                const float dd = ibi[k] - ibi[k - 1];
+                ss += dd * dd;
+                nd++;
+            }
+        res.rmssd_ms = nd > 0 ? sqrtf(ss / (float)nd) : 0.0f;
+    }
+    return res;
+}
+
 #define A121_DSP_FRAME_FLAGS 1  /* pushFrame nimmt FrameFlags (für host/dsp_replay mit älteren Headern) */
 
 /** Sensor-Flags eines Frames aus dem Server-Kopf (V1.5, B15, B16). */
@@ -1004,12 +1104,11 @@ public:
         float acf_bpm = 0.0f, acf_peak = 0.0f;
         cardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
         rep.hr_acf_bpm = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
-        float ibi_bpm = 0.0f, ibi_ms = 60000.0f / hr_prev_, rmssd_ms = 0.0f;
-        uint8_t n_beats = 0;
-        computeTimeDomainIbi(best_h_, N, kFsHz, ibi_bpm, ibi_ms, rmssd_ms, n_beats);
+        const IbiResult ibi = timeDomainIbi(best_h_, N, kFsHz, hr_prev_);
+        const float ibi_bpm = ibi.bpm;
         rep.hr_ibi_bpm    = (ibi_bpm > 0.0f) ? ibi_bpm : hr_prev_;
-        rep.ibi_median_ms = ibi_ms;
-        rep.rmssd_ms      = rmssd_ms;
+        rep.ibi_median_ms = (ibi_bpm > 0.0f) ? ibi.ibi_ms : 60000.0f / hr_prev_;
+        rep.rmssd_ms      = ibi.rmssd_ms;
 
         /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
          * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19) */
@@ -1263,59 +1362,6 @@ private:
         }
         const float power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
         return power > 0.0f ? power : 0.0f;
-    }
-
-    static void computeTimeDomainIbi(const float *hr, uint16_t N, float fs,
-                                     float &out_bpm, float &out_ibi_ms, float &out_rmssd_ms, uint8_t &out_beats) {
-        float rms = 0.0f;
-        for (uint16_t n = 0; n < N; n++) rms += hr[n] * hr[n];
-        rms = sqrtf(rms / (float)N);
-        const float thresh = 0.35f * rms;
-        const uint16_t refractory = (uint16_t)roundf(0.36f * fs); /* ≥ 360 ms (≤ 166 /min) */
-
-        uint16_t peak_idx[48];
-        uint8_t  n_peaks = 0;
-        uint16_t last_pk = 0;
-        for (uint16_t n = 2; n + 2 < N; n++) {
-            if (hr[n] > thresh && hr[n] > hr[n - 1] && hr[n] >= hr[n + 1] && hr[n] > hr[n - 2] && hr[n] >= hr[n + 2]) {
-                if (n_peaks == 0 || (n - last_pk) >= refractory) {
-                    peak_idx[n_peaks++] = n;
-                    last_pk = n;
-                    if (n_peaks >= 48) break;
-                } else if (hr[n] > hr[last_pk]) {
-                    peak_idx[n_peaks - 1] = n;
-                    last_pk = n;
-                }
-            }
-        }
-        out_beats = n_peaks;
-        if (n_peaks < 4) return;
-
-        float ibis_ms[47];
-        uint8_t n_ibi = 0;
-        for (uint8_t k = 1; k < n_peaks; k++) {
-            const float dt_ms = ((float)(peak_idx[k] - peak_idx[k - 1]) / fs) * 1000.0f;
-            if (dt_ms >= 350.0f && dt_ms <= 1250.0f) ibis_ms[n_ibi++] = dt_ms;
-        }
-        if (n_ibi < 3) return;
-
-        float sorted[47];
-        memcpy(sorted, ibis_ms, n_ibi * sizeof(float));
-        std::sort(sorted, sorted + n_ibi);
-        const float median_ms = sorted[n_ibi / 2];
-        out_ibi_ms = median_ms;
-        out_bpm    = 60000.0f / median_ms;
-
-        float sum_sq_diff = 0.0f;
-        uint8_t n_diff = 0;
-        for (uint8_t k = 1; k < n_ibi; k++) {
-            if (fabsf(ibis_ms[k] - median_ms) < 0.25f * median_ms && fabsf(ibis_ms[k - 1] - median_ms) < 0.25f * median_ms) {
-                const float d = ibis_ms[k] - ibis_ms[k - 1];
-                sum_sq_diff += d * d;
-                n_diff++;
-            }
-        }
-        out_rmssd_ms = (n_diff > 0) ? sqrtf(sum_sq_diff / (float)n_diff) : 0.0f;
     }
 
     /** Unteres Viertel von 80 Werten (Rauschpegel; robust, solange weniger als drei Viertel des Raums Echos enthalten). */

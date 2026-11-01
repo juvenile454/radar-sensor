@@ -16,7 +16,8 @@ SHIM = HOST / "dsp_replay"
 
 def run_cpp(body: str) -> str:
     """Übersetzt ein kleines Programm gegen a121_esp_dsp.h und gibt seine Ausgabe zurück."""
-    src = '#include <Arduino.h>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n' + body + "\nreturn 0; }\n"
+    src = ('#include <Arduino.h>\n#include <vector>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n'
+           + body + "\nreturn 0; }\n")
     with tempfile.TemporaryDirectory() as d:
         c = pathlib.Path(d) / "t.cpp"
         exe = pathlib.Path(d) / "t"
@@ -321,6 +322,51 @@ class FrameFlagsTest(unittest.TestCase):
         d.computeVitalReport(r); printf("%u", r.n_tickgap);""")
         self.assertEqual(out, ["0"])
 
+
+
+class TimeDomainIbiTest(unittest.TestCase):
+    """Einzelschläge (V1.6, B7): Spitzen parabolisch verfeinert, Sperrzeit 0,6 × 60 / Puls, IBI 40–180 /min, IBI
+    > 20 % vom Median der 5 vorigen verworfen, RMSSD nur bei ≥ 90 % gültigen erwarteten Schlägen."""
+
+    def ibi(self, beats: str, hr_bpm: float, extra: str = "0.0f") -> dict:
+        out = run_cpp(f"""
+        static float x[900];
+        std::vector<float> tb; {{ {beats} }}
+        double mean = 0;
+        for (int n = 0; n < 900; n++) {{
+            const float t = n / 60.0f; float v = 0;
+            for (float b : tb) {{ const float u = (t - b) / 0.05f; v += expf(-0.5f * u * u); }}
+            x[n] = v + {extra}; mean += x[n];
+        }}
+        for (int n = 0; n < 900; n++) x[n] -= (float)(mean / 900);
+        IbiResult r = timeDomainIbi(x, 900, 60.0f, {hr_bpm}f);
+        printf("%.3f %.3f %.3f %u %u", r.bpm, r.ibi_ms, r.rmssd_ms, r.n_beats, r.n_valid);""")
+        k = ("bpm", "ibi_ms", "rmssd_ms", "n_beats", "n_valid")
+        return dict(zip(k, (float(v) for v in out.split())))
+
+    def test_rmssd_from_refined_peaks(self):
+        # IBI abwechselnd 800 / 850 ms, Schlagzeiten zwischen den Abtastwerten: RMSSD genau 50 ms
+        r = self.ibi("float t = 0.31f; for (int k = 0; t < 15.0f; k++) { tb.push_back(t); t += (k % 2) ? 0.85f : 0.80f; }",
+                     72.7)
+        self.assertAlmostEqual(r["rmssd_ms"], 50.0, delta=4.0)
+        self.assertTrue(70.0 <= r["bpm"] <= 75.5, r["bpm"])  # Median der IBI: 800 oder 850 ms
+
+    def test_refractory_follows_pulse(self):
+        # Puls 60 mit Nebenspitze 400 ms nach jedem Schlag (70 % Höhe): Sperrzeit 600 ms lässt sie aus
+        r = self.ibi("for (float t = 0.4f; t < 15.0f; t += 1.0f) tb.push_back(t);", 60.0,
+                     extra="0.0f; for (float b : tb) { const float u = (t - b - 0.4f) / 0.05f; x[n] += 0.7f * expf(-0.5f * u * u); }")
+        self.assertAlmostEqual(r["bpm"], 60.0, delta=1.0)
+
+    def test_artifact_rejected_and_no_rmssd(self):
+        # ein Schlag 250 ms zu spät: beide IBI (1250, 750) > 20 % daneben; 12 von 14 gültig < 90 % → kein RMSSD
+        r = self.ibi("for (int k = 0; k < 15; k++) tb.push_back(0.4f + k + (k == 7 ? 0.25f : 0.0f));", 60.0)
+        self.assertEqual(r["n_valid"], 12)
+        self.assertEqual(r["rmssd_ms"], 0.0)
+        self.assertAlmostEqual(r["bpm"], 60.0, delta=1.0)
+
+    def test_slow_pulse_40(self):
+        r = self.ibi("for (float t = 0.5f; t < 15.0f; t += 1.48f) tb.push_back(t);", 40.5)
+        self.assertAlmostEqual(r["bpm"], 40.5, delta=1.0)
 
 
 if __name__ == "__main__":

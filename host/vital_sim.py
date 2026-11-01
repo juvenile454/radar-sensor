@@ -213,14 +213,17 @@ SCENARIOS = {
 # Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
 # Spielraum (Anteil −3 Prozentpunkte, MAE +0,5 /min, Reaktion +1 s). Jede DSP-Aufgabe verschärft, was sie verbessert.
 LIMITS = {
-    "base":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0)],  # V1.4
+    "base":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0),
+                ("rmssd_ratio", ">=", 0.7), ("rmssd_ratio", "<=", 1.3)],                                       # V1.6
     "harm4":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("konf", "<=", 60.0)],  # V1.3
     "step":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.2), ("reaktion_s", "<=", 10.0), ("br_mae", "<=", 0.5),
-                ("apnoe_fehl", "<=", 0)],                                                                 # V1.4
+                ("apnoe_fehl", "<=", 0), ("rmssd_ratio", ">=", 0.7), ("rmssd_ratio", "<=", 1.3)],              # V1.6
     "brady":   [("hr_p5", ">=", 91.0), ("hr_mae", "<=", 3.7), ("br_mae", "<=", 0.6)],                  # V1.2/V1.3
     "tachy":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.4), ("br_mae", "<=", 0.5)],                  # V1.3
-    "flach":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.6), ("apnoe_fehl", "<=", 0)],  # V1.4
-    "tief":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0)],  # V1.4
+    "flach":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.6), ("apnoe_fehl", "<=", 0),
+                ("rmssd_ratio", ">=", 0.7), ("rmssd_ratio", "<=", 1.3)],                                       # V1.6
+    "tief":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0),
+                ("rmssd_ratio", ">=", 0.7), ("rmssd_ratio", "<=", 1.3)],                                       # V1.6
     "beweg":   [("hr_p5", ">=", 95.0), ("hr_mae", "<=", 1.3), ("br_mae", "<=", 0.7)],                  # V1.3
     "anhalt":  [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 1.3), ("apnoe_verzug_s", "<=", 12.0),
                 ("apnoe_fehl", "<=", 0)],                                                                 # V1.4
@@ -491,12 +494,16 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         "erst_s": float(d["t_s"][v][0]) if v.any() else np.nan,
         "hr_mae": float(np.nanmean(e_hr)), "hr_p5": float(100 * np.nanmean(e_hr <= 5)),
         "br_mae": float(np.nanmean(e_br)),
-        "rmssd": float(np.nanmedian(d["rmssd"][v])), "rmssd_wahr": float(np.nanmedian(tru[v, 2])),
+        # RMSSD nur aus Reports mit Wert (V1.6: 0 = nicht berechnet, < 90 % gültige Schläge)
+        "rmssd": float(np.nanmedian(d["rmssd"][v][d["rmssd"][v] > 0])) if (d["rmssd"][v] > 0).any() else np.nan,
+        "rmssd_wahr": float(np.nanmedian(tru[v, 2])),
+        "rmssd_anteil": float(100 * np.mean(d["rmssd"][v] > 0)) if v.any() else np.nan,
         "konf": float(np.nanmedian(d["conf"][v])),
         **{k: x for k, x in conf_stats(d["conf"][v], e_hr).items() if k != "konf_richtig"},
         "_err": e_hr, "_conf": d["conf"][v],
         "us": float(np.median(d["us"])),
     }
+    res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
     if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
         ok = (d["t_s"] >= 70) & v & (np.abs(d["hr"] - 90) <= 5)
         res["reaktion_s"] = float(d["t_s"][ok][0] - 70.0) if ok.any() else np.nan
@@ -530,7 +537,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
         for var, exe in exes.items():
             print(f"\n=== DSP-Header {var}")
             print(f"{'Szenario':8s} {'Beschreibung':32s} {'gültig':>7s} {'erst':>5s} {'Puls-MAE':>9s} {'≤5/min':>7s}"
-                  f" {'Atem-MAE':>9s} {'RMSSD/wahr':>11s} {'Konf':>5s} {'b.Fehler':>8s}  Zusatz")
+                  f" {'Atem-MAE':>9s} {'RMSSD/wahr (Anteil)':>19s} {'Konf':>5s} {'b.Fehler':>8s}  Zusatz")
             for nm in names:
                 r = evaluate(exe, data / nm, nm)
                 if var == "original":
@@ -544,7 +551,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                     extra += f" Apnoe-Fehlalarme {r['apnoe_fehl']}"
                 kf = f"{r['konf_falsch']:7.0f}" if r["n_falsch"] else "      –"
                 print(f"{nm:8s} {SCENARIOS[nm][0]:32s} {r['gueltig']:>7s} {r['erst_s']:4.0f}s {r['hr_mae']:7.1f}   {r['hr_p5']:5.0f} %"
-                      f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms {r['konf']:4.0f}"
+                      f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms ({r['rmssd_anteil']:3.0f} %) {r['konf']:4.0f}"
                       f" {kf}  {extra}")
             print(f"Rechenzeit je Report am PC (Median): {r['us'] / 1000:.1f} ms (ESP32 live: ≈ 270–320 ms)")
         results["alle"] = pooled(results)

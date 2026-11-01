@@ -207,7 +207,8 @@ fun VitalPage(s: LiveSnapshot) =
             height = 130,
         )
         LineChart("Zoom-SNR", listOf(Series(s.vitalT, s.vitalSnr, Pal.c3, "dB")), xWindow = xw, unit = "dB", height = 110)
-        LineChart("RMSSD", listOf(Series(s.vitalT, s.vitalRmssd, Pal.c5, "ms")), xWindow = xw, unit = "ms", height = 110, skipNonPositive = true)
+        // RMSSD aus 15 s, nur bei ≥ 90 % gültigen Schlägen (sonst 0, nicht gezeichnet); gegen den Gurt nicht geprüft (V1.6)
+        LineChart("RMSSD (experimentell, nicht validiert)", listOf(Series(s.vitalT, s.vitalRmssd, Pal.c5, "ms")), xWindow = xw, unit = "ms", height = 110, skipNonPositive = true)
         LineChart("DSP-Rechenzeit / Bewegungsanteil", listOf(Series(s.dspT, s.dspComputeMs, Pal.c4, "ms"), Series(s.dspT, s.dspMotion, Pal.c2, "% Bew.")), xWindow = xw, height = 120)
         if (v != null) {
             Labeled("IBI-Median", "${f0(v.ibiMedianMs)} ms")
