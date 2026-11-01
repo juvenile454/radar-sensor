@@ -19,6 +19,10 @@ Modi:
      Entfernungs-Zeit-Bild der Bewegung (0,30–2,67 m) mit Raum-Zielen und Zoom-Fenster,
      festes Echo-Profil des Raums und Atem-/Puls-Verlauf.
 
+  4. `--mode replay-cpp --log <stream.log> [--out <neu>]`: rechnet eine `iq3 … raw`-Aufnahme (Live-Log mit
+     `@RAW`) mit `host/dsp_replay/` im Takt des ESP32 neu (Reports, Rezooms, Neuverbindungen wie im Log) und
+     vergleicht jede Zeile mit der ESP32-Ausgabe. Dieselbe Quelle rechnet in der Android-App (NDK, „DSP neu“).
+
 Zeitachse: `tick` (Sensor-Zeitstempel in ms) aus `@ROOMPROF`/`@ROOM`; er läuft auch über Rechenpausen
 lückenlos. `@VITAL` bekommt die Zeit der `@ROOM`-Zeile desselben Reports.
 Puls-Werte sind Rhythmus-Kandidaten; ohne Referenzmessung keine Aussage über Genauigkeit.
@@ -42,6 +46,7 @@ DATA_DIR = pathlib.Path("~/Data/radar-sensor").expanduser()
 DEFAULT_NPZ = DATA_DIR / "iq3raw_normal_120s_2026-11-01.npz"
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DSP_HEADER = REPO_ROOT / "firmware" / "esp32s3" / "src" / "a121_esp_dsp.h"
+REPLAY_DIR = REPO_ROOT / "host" / "dsp_replay"  # gemeinsame Nachrechnung für PC und Android-App (NDK)
 
 VITAL_FIELDS = ["t_ms", "br", "hr_fused", "hr_spec", "hr_acf", "hr_ibi", "ibi_ms", "rmssd_ms", "conf",
                 "resp_um", "heart_um", "snr_db", "lb_std_mrad", "target_mm", "n_room"]
@@ -157,6 +162,28 @@ def run_verify_cpp_dsp(npz_path: pathlib.Path, zoom_start_mm: int | None, out: p
     return 0
 
 
+def run_replay_cpp(log: pathlib.Path, out: pathlib.Path | None) -> int:
+    """iq3-raw-Log mit dem DSP-Header neu rechnen und Zeile für Zeile mit der ESP32-Ausgabe vergleichen.
+
+    Dieselbe Quelle (host/dsp_replay/dsp_replay.h) läuft in der Android-App; deren Ergebnis (dsp_phone.log) muss
+    mit dem hier geschriebenen Log übereinstimmen. Exit 0 = alle Zeilen gleich der ESP32-Ausgabe.
+    """
+    if not log.is_file():
+        print(f"FEHLER: Log nicht gefunden: {log}", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory() as tmpdir:
+        exe = pathlib.Path(tmpdir) / "dsp_replay"
+        subprocess.run(["g++", "-O2", "-std=c++17", "-Wall", "-ffp-contract=off", f"-I{REPLAY_DIR}",
+                        f"-I{DSP_HEADER.parent}", str(REPLAY_DIR / "dsp_replay_main.cpp"), "-o", str(exe), "-lm"],
+                       check=True)
+        args = [str(exe), str(log)] + ([str(out.with_suffix(".log"))] if out else [])
+        res = subprocess.run(args, text=True, capture_output=True)
+    print(res.stdout, end="")
+    if out:
+        print(f"Neu gerechnet: {out.with_suffix('.log')}")
+    return res.returncode
+
+
 # ---------------------------------------------------------------------------------------------------------
 # Live-Aufnahme
 # ---------------------------------------------------------------------------------------------------------
@@ -199,17 +226,36 @@ def parse_log(path: pathlib.Path) -> dict:
     vital_rows = []
     zoom_events = []        # (t_s, start_mm, end_mm, art)
     tick0 = None
+    tick_last = None
     t_last = 0.0
+    t_offset = 0.0
+    lines = path.read_text(errors="replace").splitlines()
+    # Empfangszeit je Zeile (esp_record.py / Android-App), nur für Pausen zwischen zwei Streams
+    rx_ms = None
+    rx_path = path.parent / "rxtime.csv"
+    if path.name == "stream.log" and rx_path.exists():
+        rx = np.loadtxt(rx_path, delimiter=",", skiprows=1, ndmin=2)
+        if len(rx) == len(lines):
+            rx_ms = rx[:, 1]
+    i_last = None
 
     def tick_time(t_ms: int, tick: int) -> float:
-        nonlocal tick0
-        if tick0 is None:
+        # Nach @RECONNECT (Server neu gestartet) beginnt tick neu: dann ab dort an der ESP32-Zeit t_ms anschließen
+        nonlocal tick0, tick_last, i_last
+        if tick0 is None or (tick_last is not None and tick < tick_last):
             tick0 = (tick, t_ms)
-        return (tick - tick0[0] + tick0[1]) / 1000.0
+        tick_last = tick
+        i_last = i
+        return t_offset + (tick - tick0[0] + tick0[1]) / 1000.0
 
-    for raw in path.read_text(errors="replace").splitlines():
+    for i, raw in enumerate(lines):
         p = raw.strip().split(",")
         tag = p[0]
+        if tag in ("@IQ3_START", "@DOPPLER_START") and i_last is not None:
+            # neuer Stream (z. B. ESP32 nach Abziehen neu gebootet): t_ms und tick beginnen bei 0 → hinten anhängen,
+            # Pause aus der Empfangszeit, sonst 1 s
+            gap = (rx_ms[i] - rx_ms[i_last]) / 1000.0 if rx_ms is not None else 1.0
+            t_offset, tick0, tick_last = t_last + max(gap, 0.1), None, None
         try:
             if tag == "@ROOMPROF":
                 t = tick_time(int(p[1]), int(p[2]))
@@ -336,20 +382,25 @@ def analyze_log(log: pathlib.Path, out: pathlib.Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="iq3 am ESP32-S3: Live-Aufnahme, PC-Prüfung des DSP-Headers, Raumbild")
-    parser.add_argument("--mode", choices=["iq3", "verify-cpp", "plot"], default="verify-cpp")
+    parser.add_argument("--mode", choices=["iq3", "verify-cpp", "plot", "replay-cpp"], default="verify-cpp")
     parser.add_argument("--port", default=None, help="Serieller Port des ESP32-S3 (Standard: /dev/serial/by-id)")
     parser.add_argument("--duration", type=int, default=30, help="Messdauer in s für --mode iq3 (Standard 30)")
     parser.add_argument("--start-mm", type=int, default=500, help="Start des Zoom-Fensters in mm für --mode iq3")
     parser.add_argument("--npz", type=pathlib.Path, default=DEFAULT_NPZ, help="iq3raw-Aufnahme für --mode verify-cpp")
     parser.add_argument("--zoom-start-mm", type=int, default=None,
                         help="verify-cpp: Zoom-Fenster absichtlich hierhin setzen (prüft die Zielsuche)")
-    parser.add_argument("--log", type=pathlib.Path, default=None, help="Log für --mode plot")
+    parser.add_argument("--log", type=pathlib.Path, default=None,
+                        help="Log für --mode plot bzw. iq3-raw-Log (stream.log) für --mode replay-cpp")
     parser.add_argument("--out", type=pathlib.Path, default=None, help="Ausgabe ohne Endung (.log/.npz/.png)")
     args = parser.parse_args()
     out = args.out.with_suffix("") if args.out else None
 
     if args.mode == "verify-cpp":
         return run_verify_cpp_dsp(args.npz, args.zoom_start_mm, out)
+    if args.mode == "replay-cpp":
+        if args.log is None:
+            parser.error("--mode replay-cpp braucht --log")
+        return run_replay_cpp(args.log, out)
     if args.mode == "plot":
         if args.log is None:
             parser.error("--mode plot braucht --log")
