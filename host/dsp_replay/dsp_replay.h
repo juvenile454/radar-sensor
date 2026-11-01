@@ -13,7 +13,8 @@
  * Header-Varianten mit anderer Verfügbarkeit auswerten (host/vital_eval.py --replay).
  * Seit V2.1 rechnet der ESP32 den Report aus einem Schnappschuss auf Kern 0; `@DSP` kommt dann einige Frames später und
  * trägt in Feld 13 den Frame-Stand des Schnappschusses. Der Replayer hält dafür die Schnappschüsse der letzten
- * kSnapRing Frames und rechnet an diesem Stand (ohne Feld 13: am aktuellen Stand wie früher).
+ * kSnapRing Frames und rechnet an diesem Stand (ohne Feld 13: am aktuellen Stand wie früher). Liegt Feld 13 vor dem
+ * eigenen Frame-Stand (Handy-DSP mitten im Stream eingeschaltet, Frames fehlen), rechnet er am aktuellen Stand.
  *
  * Braucht vor dem Einbinden ein `Arduino.h` (hier: Shim im selben Ordner) und den Include-Pfad zu
  * `firmware/esp32s3/src`. Für bitgleiche Ergebnisse ohne `-ffast-math` und mit `-ffp-contract=off` übersetzen.
@@ -432,7 +433,12 @@ private:
         closePending();
         const long snap = lfield(c, 13, -1);  /* Frame-Stand des Schnappschusses (V2.1) */
 #ifdef A121_DSP_SNAPSHOT
-        if (snap >= 0) {
+        if (snap > (long)dsp_.frameCount()) {
+            /* Frame-Stand des ESP32 vor dem eigenen: später eingestiegen (Handy-DSP mitten im Stream eingeschaltet) oder
+             * Frames fehlen im Log. Am aktuellen Stand rechnen, ohne Veraltet-Prüfung (sie verglich zwei Zähler). */
+            missing("@DSP: Frame-Stand des ESP32 voraus (später eingestiegen?), am aktuellen Stand gerechnet");
+            vital_ok_ = dsp_.computeVitalReport(rep_);
+        } else if (snap >= 0) {
             const ReportSnapshot &s = snaps_[(size_t)snap % kSnapRing];
             if (s.frame_count == (uint32_t)snap && snap_ok_[(size_t)snap % kSnapRing]) {
                 vital_ok_ = dsp_.computeVitalReport(s, rep_);
