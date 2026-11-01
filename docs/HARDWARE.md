@@ -271,6 +271,14 @@ Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-
      - `iq3 [sek] [start_mm]`: Startet die **3-Subsweep Sparse-IQ Session @ 60 Hz** (Subsweep 0 On-Chip Loopback + Subsweep 1 2,5-mm Vital-Zoom + Subsweep 2 Raum-Scan 0,30–2,67 m, 80 × 30 mm) und berechnet direkt auf dem ESP32-S3 (im 8 MB Octal-PSRAM) Loopback-Phasenderotation, 5-Bin Beamforming, Kåsa-Kreisfit + DACM-Mikrometer-Demodulation, gleitende 7-s Hann-Hilbert Atem-Oberwellen-Projektion ($m=1\dots 6$), Tri-Modale Herzfrequenz (Spektral/HPS + Autokorrelation + Zeitbereichs-IBI/RMSSD) sowie automatischen Schnell-Rezoom (`@REZOOM`).
      - `doppler [sek] [mm] [hz]`: Aktiviert `continuous_sweep_mode=true` + `double_buffering=true` (64 Sweeps/Frame @ bis zu 4 000 Hz) für kohärente Mikro-Doppler-/Vibrationsmessungen.
      - `bridge`: Transparente USB-CDC ↔ Server-UART Bridge (inkl. automatischer Baudraten-Synchronisation), sodass PC-Skripte wie `host/a121_ultimate_vital.py` auch direkt durch den ESP32-S3 streamen können.
+     - `sess …` (seit 2026-11-01, `a121_session_console.h`): beliebige Sparse-IQ-Session ohne PC. Die Konfiguration liegt im RAM
+       und wird feldweise gesetzt: `fr`, `sr`, `spf`, `csm`, `dbuf`, `fidle`/`sidle`, `subs 1..4`, je Subsweep `range a b` (mm),
+       `start`, `n`, `step`, `profile`, `hwaas`, `gain`, `prf`, `tx`, `loop`, `phase`, `iqimb`.
+       `sess` zeigt die Konfiguration mit mm-Bereich und erwarteter Datenrate (inkl. ~150 B Kopfzeile pro Frame) und warnt über der
+       Link-Grenze. `sess check` schickt sie nur an den Server und zeigt Metadaten bzw. den Fehlergrund aus dem Server-Log.
+       `sess run [s] [stat|peak|amp]` streamt und wertet aus: Amplitude über alle Sweeps gemittelt, stärkster Punkt je Subsweep.
+       Jede Sekunde `@SESS_STAT`, am Ende `@SESS_END` mit UART-Fehlern und Rückstau. Die Ausgabe ist gedrosselt
+       (`peak` ≤ 100/s, `amp` ≤ 10/s), damit der ESP32 nie hinter den Datenstrom fällt. Höchstens 4096 Punkte pro Frame.
      - `gpio [0|1|z] [0|1|z]`: Liest oder schaltet `MISC_GPIO0` (`GPIO6` ↔ `PB1`, braun) und `MISC_GPIO1` (`GPIO7` ↔ `PA4`, grau).
 
 **Am Gerät geprüft (2026-10-31, nur PC über CH342 Kanal B, ESP32 nicht angeschlossen):**
@@ -390,6 +398,26 @@ startet jetzt bei **jedem** Fehler der Server-UART neu (`ErrorCode != HAL_UART_E
   standardmäßig nur einen 256-Byte-Sendepuffer und verwirft Daten, wenn der PC 100 ms lang nicht abholt.
   Fix: `Serial.setTxBufferSize(16384)`, `setTxTimeoutMs(500)`, und die Bridge sendet den Rest nach einem unvollständigen Write erneut.
 - Nicht geprüft: Stromaufnahme im roten Draht, Dauerbetrieb über Stunden, Betrieb am Handy statt am PC.
+
+**`sess` am Gerät 2026-11-01 (mobiler Aufbau):**
+- Standard (40 Punkte, 10 Hz): 10,00 Hz. Zwei Subsweeps 0,3–1,5 m (Profil 2, 10 mm) + 1,5–7,0 m (Profil 5, 30 mm, PRF 6,5 MHz):
+  20,00 Hz, stabile Reflexion bei ≈ 650 mm. Großer Frame 4 × 1000 Punkte (16 kB) bei 5 Hz: sauber.
+- Überlast 32 × 100 bei 30 Hz (384 kB/s): Der ESP32 nimmt 15,2 Hz auf (≈ 195 kB/s, Link-Grenze), der Server meldet `frame_delayed`.
+  Kein UART-Fehler, kein Rückstau.
+- Fehlerfälle: `step 16` → „Invalid step_length“, Start 12,5 m → „Start point or range too far“. Mehr als 4096 Punkte
+  lehnt der ESP32 vor dem Setup ab. CSM ohne `sr` → „Invalid settings for continuous_sweep_mode“.
+- **Continuous Sweep Mode, 1 Punkt, Profil 1, HWAAS 1** (`max_sweep_rate` laut Metadaten 24 673 Hz):
+  | sweep_rate | spf | erreicht | delayed |
+  |---|---|---|---|
+  | 2 000 Hz, ohne `dbuf` | 64 | 30,36 Hz | alle |
+  | 2 000–21 000 Hz, mit `dbuf` | 64 | 31,2 … 323,8 Hz (Soll −0,1 … −1,4 %) | 0 |
+  | 22 000–24 000 Hz, mit `dbuf` | 64 / 256 | effektiv ≈ 21,7–23,6 kHz Sweeps | alle |
+  Folgen: CSM braucht Double Buffering, und lückenlos geht es bis **21 kHz Sweep-Rate**, unabhängig von der Frame-Größe.
+  Der Engpass liegt im Sensor/STM32-Pfad, nicht im Link (≈ 150 kB/s) und nicht im ESP32 (Rückstau 0). Bei 5 Punkten
+  begrenzt der Link: 137 Hz × (1280 B + ~150 B Kopfzeile) ≈ 196 kB/s.
+- **Bug 4, behoben (ESP32): Der Client las jedes Byte der Frame-Kopfzeile einzeln aus dem UART-Treiber.** Bei 375 Frames/s
+  lief der 32-KB-Puffer über (4873 FIFO-Overflows, Rate brach auf 12 Hz ein). Fix: 1-KB-Zwischenpuffer im Client, gefüllt in
+  Blöcken. Danach 369 Frames/s mit Rückstau 0. `iq3` (58,5 Hz), `doppler` (31,2 Hz) und Bridge (≈ 195 kB/s) danach erneut geprüft.
 
 Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`

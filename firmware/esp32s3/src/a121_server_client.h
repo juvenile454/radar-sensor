@@ -2,19 +2,20 @@
  * @file a121_server_client.h
  * @brief Voller A121 Exploration Server UART-Client & High-Speed Bridge für den ESP32-S3.
  *
- * UART und Pins übergibt main.cpp. Geplant (2026-10-31): Serial2 über die I2C-Adern des Steckers,
+ * UART und Pins übergibt main.cpp. Seit 2026-11-01 am Gerät geprüft: Serial2 über die I2C-Adern des Steckers,
  * ESP32 GPIO15 RX <- STM32 PB11 (LPUART1_TX, SDA-Ader) und GPIO16 TX -> PB10 (LPUART1_RX, SCL-Ader),
  * für eine aus dem Acconeer-SDK gebaute Server-Firmware (firmware/stm32l431/README.md).
  * Grund: PA10 (USART1_RX) wird zusätzlich vom CH342 (TXD1 über R9 = 22 Ω) getrieben.
  *
- * Erschließt dem ESP32-S3 100 % der A121-Chipfunktionen:
+ * Stellt dem ESP32-S3 die Sparse-IQ-Funktionen des Exploration Servers bereit (Grenzen: ≈ 195 kB/s bei 2 Mbaud,
+ * CSM lückenlos bis 21 kHz Sweep-Rate, s. docs/HARDWARE.md):
  *   - 1..4 unabhängige Subsweeps pro Frame (Start, Step, NumPoints, Profile 1..5, PRF 19.5..5.2 MHz,
  *     HWAAS 1..511, Receiver Gain 0..23, Enable TX, Phase Enhancement, IQ Imbalance Compensation,
  *     On-Chip Loopback)
  *   - Continuous Sweep Mode (CSM) & Double Buffering für kHz-Mikro-Doppler/Vibrationsanalyse
  *   - Inter-Frame & Inter-Sweep Idle States (DEEP_SLEEP, SLEEP, READY)
  *   - On-Chip Temperatursensor, Sättigungs- und Kalibrierungs-Flags pro Frame
- *   - Automatische Baudraten-Aushandlung (115200 -> 921600 / 2000000 Baud)
+ *   - Baudraten-Aushandlung nach Break-Reset (115200 -> 2000000 Baud)
  *   - Hardware-Soft-Reset des STM32L431 per gezieltem UART-Break-Puls auf der TX-Leitung.
  *
  * Protokoll (am Server a121-v1.12.0 über CH342 Kanal B geprüft, 2026-10-31):
@@ -22,7 +23,8 @@
  *     readResponse()/readStreamFrame() überspringen sie.
  *   - Enum-Werte wie exptool: "profile":1..5, "prf":"15_6_MHz", Idle-States "ready"/"sleep"/"deep_sleep",
  *     freie Rate = 0.0 (nicht null).
- *   - Jeder Framing-Error auf RX (Break oder falsche Baudrate) setzt den STM32 zurück → danach 115200 Baud.
+ *   - Seit der Härtung (2026-11-01) setzt jeder UART-Fehler auf RX (Break, falsche Baudrate, Rauschen) den STM32
+ *     zurück → danach 115200 Baud.
  */
 
 #ifndef A121_SERVER_CLIENT_H
@@ -80,6 +82,7 @@ public:
 
     void begin(uint32_t baud = 921600) {
         current_baud_ = baud;
+        stage_pos_ = stage_len_ = 0;
         if (!rx_buf_allocated_) {
             uart_.end();                     /* Puffergröße lässt sich nur bei gestoppter UART setzen */
             uart_.setRxBufferSize(32768);
@@ -98,6 +101,7 @@ public:
     /** UART stoppen und beide Pins hochohmig machen (z. B. bevor I2C dieselben Pins nutzt). */
     void release() {
         uart_.end();
+        stage_pos_ = stage_len_ = 0;
         rx_buf_allocated_ = false;
         pinMode(rx_pin_, INPUT);
         pinMode(tx_pin_, INPUT);
@@ -167,7 +171,7 @@ public:
     /**
      * @brief Konfiguriert eine beliebige 1..4 Subsweep Sparse-IQ Session auf dem A121.
      */
-    bool setupSession(const SessionSpec &spec, String *out_setup_ack = nullptr) {
+    bool setupSession(const SessionSpec &spec, String *out_setup_ack = nullptr, String *out_logs = nullptr) {
         if (spec.num_subsweeps == 0 || spec.num_subsweeps > 4) return false;
 
         String json;
@@ -222,7 +226,7 @@ public:
         uart_.print(json);
 
         String resp;
-        if (!readResponse(resp, 1500)) {
+        if (!readResponse(resp, 1500, out_logs)) {
             return false;
         }
         if (out_setup_ack) *out_setup_ack = resp;
@@ -367,46 +371,99 @@ private:
         return readResponse(resp, 150) && resp.indexOf("rss_version") >= 0;
     }
 
-    /** Nächste Antwortzeile, Server-Logzeilen ({"status":"log",...}, payload_size 0) werden übersprungen. */
-    bool readResponse(String &out, uint32_t timeout_ms) {
+    /**
+     * Nächste Antwortzeile, Server-Logzeilen ({"status":"log",...}, payload_size 0) werden übersprungen.
+     * Mit `logs` werden Logzeilen außer INFO als "LEVEL: Text\n" gesammelt. Den genauen Grund einer abgelehnten
+     * Konfiguration (z. B. "Invalid step_length") nennt der Server nur dort.
+     */
+    bool readResponse(String &out, uint32_t timeout_ms, String *logs = nullptr) {
         const uint32_t t0 = millis();
         while (true) {
             const uint32_t el = millis() - t0;
             if (el >= timeout_ms || !readJsonLine(out, timeout_ms - el)) return false;
             if (out.indexOf("\"status\":\"log\"") < 0) return true;
+            if (logs && out.indexOf("\"level\":\"INFO\"") < 0) {
+                *logs += jsonString(out, "level");
+                *logs += ": ";
+                *logs += jsonString(out, "log");
+                *logs += "\n";
+            }
         }
     }
 
+    /** Wert eines einfachen String-Felds ("key":"wert"), ohne Escape-Behandlung bis auf \". */
+    static String jsonString(const String &js, const char *key) {
+        String k = String("\"") + key + "\":\"";
+        int i = js.indexOf(k);
+        if (i < 0) return String();
+        i += k.length();
+        String v;
+        for (int j = i; j < (int)js.length(); j++) {
+            char c = js[j];
+            if (c == '\\' && j + 1 < (int)js.length()) { v += js[++j]; continue; }
+            if (c == '"') break;
+            v += c;
+        }
+        return v;
+    }
+
     void drainRx(uint32_t wait_ms) {
+        stage_pos_ = stage_len_ = 0;
+        uint8_t tmp[256];
         uint32_t t0 = millis();
         while ((millis() - t0) < wait_ms) {
-            while (uart_.available()) {
-                (void)uart_.read();
+            int avail;
+            while ((avail = uart_.available()) > 0) {
+                (void)uart_.readBytes(tmp, min((size_t)avail, sizeof(tmp)));
             }
             delay(1);
         }
     }
 
+    /**
+     * Zwischenpuffer: Bytes blockweise aus dem UART-Treiber holen statt einzeln. Jeder read()/available()-Aufruf
+     * kostet im Arduino-Core eine Treiber-Sperre. Byteweise schaffte der ESP32 nur ~140 Frame-Header pro Sekunde;
+     * bei 375 Frames/s lief der 32-KB-Puffer über (2026-11-01 am Gerät, `sess`).
+     */
+    bool fillStage() {
+        if (stage_pos_ < stage_len_) return true;
+        int avail = uart_.available();
+        if (avail <= 0) return false;
+        stage_len_ = uart_.readBytes(stage_, min((size_t)avail, sizeof(stage_)));
+        stage_pos_ = 0;
+        return stage_len_ > 0;
+    }
+
     bool readJsonLine(String &out, uint32_t timeout_ms) {
         out = "";
+        out.reserve(256);
         uint32_t t0 = millis();
         while ((millis() - t0) < timeout_ms) {
-            while (uart_.available()) {
-                char c = (char)uart_.read();
+            if (!fillStage()) {
+                delayMicroseconds(50);
+                continue;
+            }
+            while (stage_pos_ < stage_len_) {
+                char c = (char)stage_[stage_pos_++];
                 if (c == '\n') {
                     out.trim();
                     if (out.length() > 0) return true;
-                } else if (c != '\r') {
+                } else if (c != '\r' && out.length() < 2048) {  // Schutz bei Binärmüll ohne Zeilenende
                     out += c;
                 }
             }
-            delayMicroseconds(100);
         }
         return false;
     }
 
     bool readExactBytes(uint8_t *dst, size_t count, uint32_t timeout_ms) {
         size_t got = 0;
+        if (stage_pos_ < stage_len_) {  // erst den Zwischenpuffer leeren
+            size_t n = min(count, stage_len_ - stage_pos_);
+            memcpy(dst, stage_ + stage_pos_, n);
+            stage_pos_ += n;
+            got = n;
+        }
         uint32_t t0 = millis();
         while (got < count && (millis() - t0) < timeout_ms) {
             int avail = uart_.available();
@@ -437,6 +494,8 @@ private:
     int             tx_pin_;
     uint32_t        current_baud_     = 921600;
     bool            rx_buf_allocated_ = false;
+    uint8_t         stage_[1024];
+    size_t          stage_pos_ = 0, stage_len_ = 0;
 };
 
 } /* namespace a121_srv */

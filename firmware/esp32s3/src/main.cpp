@@ -23,6 +23,7 @@
 
 #include "a121_esp_dsp.h"
 #include "a121_server_client.h"
+#include "a121_session_console.h"
 
 static const int PIN_SDA = 15;
 static const int PIN_SCL = 16;
@@ -57,6 +58,7 @@ static const char *linkName() { return g_link == Link::I2C ? "i2c" : g_link == L
 
 static a121_srv::ExplorationServerClient g_srv(SrvUart, PIN_SRV_RX, PIN_SRV_TX);
 static a121_dsp::UltimateEspDsp g_dsp;
+static a121_sess::SessionConsole g_sess;
 
 static void led(uint8_t r, uint8_t g, uint8_t b) { neopixelWrite(rgbPin, r, g, b); }
 
@@ -824,6 +826,7 @@ static void help() {
       "  iq3 [sek] [start_mm]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
       "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm)\n"
       "  doppler [sek] [mm] [hz] Continuous Sweep Mode (CSM) + Double Buffering Mikro-Doppler (Standard: 15 s, 500 mm, 2000 Hz)\n"
+      "  sess ...              Beliebige Sparse-IQ-Session einstellen + auf dem ESP32 auswerten ('sess help')\n"
       "  bridge                Transparente USB <-> Server-UART Bridge für PC-Tools (Beenden: +++EXIT)\n"
       "  --- Modus B: I2C Distance Detector (I2C2 GPIO15/GPIO16 @ 0x52, nur bei 'link i2c') ---\n"
       "  scan                  I2C-Bus scannen (SDA 15, SCL 16)\n"
@@ -868,6 +871,8 @@ static void handle(String cmd) {
     float rateHz = 2000.0f;
     sscanf(cmd.c_str(), "doppler %d %d %f", &sek, &distMm, &rateHz);
     cmdDoppler(sek < 0 ? 0 : (uint32_t)sek, distMm, rateHz);
+  } else if (cmd == "sess" || cmd.startsWith("sess ")) {
+    g_sess.handle(cmd.substring(4), g_srv, ensureServerConnected);
   } else if (cmd == "bridge") {
     cmdBridge();
   } else if (cmd.startsWith("gpio")) {
