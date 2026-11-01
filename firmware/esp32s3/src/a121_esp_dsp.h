@@ -4,7 +4,8 @@
  *
  * Kette (Stand 2026-11-01, an `iq3raw_normal_120s_2026-11-01.npz` und `iq3raw_motion_120s_2026-11-01.npz` entwickelt):
  *   1. Subsweep 0: On-Chip-Loopback → Phasen-Derotation aller Zoom-Punkte pro Frame (PLL-/Taktjitter).
- *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (15 s Historie).
+ *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (18 s Historie: 15-s-Fenster
+ *      und 3 s, in denen der Report aus seinem Schnappschuss rechnet, während weiter Frames ankommen; V2.1).
  *   3. Puls: pro Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Fit, circleCenter) abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
  *      0,6–5,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
  *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) für
@@ -67,8 +68,10 @@ static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 Punkte * 30 mm
 static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
 
 static constexpr float    kFsHz        = 60.0f;  /* Frame-Rate der iq3-Session; Filterkoeffizienten gelten nur hierfür */
-static constexpr uint16_t kHistoryLen  = 960U;   /* 16 s @ 60 Hz */
+static constexpr uint16_t kHistoryLen  = 1080U;  /* 18 s @ 60 Hz: 15-s-Fenster + 3 s, die pushFrame während eines Reports
+                                                     weiterschreiben darf (V2.1, ReportSnapshot) */
 static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
+static constexpr uint16_t kSnapMaxLag  = kHistoryLen - kHrWin;  /* höchstens so viele Frames nach dem Schnappschuss */
 static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
 static constexpr float    kHrFMin      = 0.64f;  /* 38 /min; mit 3 gesperrten Randschritten Suche ab 0,67 Hz = 40 /min (V1.2) */
@@ -580,6 +583,27 @@ struct VitalReport {
     int32_t  recommended_zoom_start_pt;
 };
 
+/**
+ * Stand der Historie für einen Report (V2.1). takeSnapshot() läuft im Frame-Takt direkt nach pushFrame(); der Report
+ * rechnet danach (auf dem ESP32 im DSP-Task auf Kern 0) nur aus diesem Stand und dem Ring. pushFrame() darf dabei
+ * bis kSnapMaxLag Frames weiterschreiben, ohne das Fenster des Schnappschusses zu berühren. Die Sensor-Zähler sind
+ * Summen seit begin(); der Report meldet die Differenz zum zuletzt gerechneten Schnappschuss.
+ */
+#define A121_DSP_SNAPSHOT 1
+struct ReportSnapshot {
+    uint16_t write_idx, count;
+    uint32_t frame_count;
+    uint8_t  best_zoom_bin;
+    int16_t  temp_c;
+    float    lb_amp;
+    uint32_t tot_delayed, tot_sat, tot_tickgap;
+    float    room_amp[kRoomPoints], room_mot[kRoomPoints], room_amp_slow[kRoomPoints], room_mot_slow[kRoomPoints];
+};
+
+/** Report aus einem Schnappschuss, nach dem pushFrame() schon mehr als kSnapMaxLag Frames weiter war: Das Fenster ist
+ *  teils überschrieben, der Report gilt nicht (ESP32 und Nachrechnung prüfen beim Ausgeben gleich). */
+inline bool snapshotStale(uint32_t snap_frame, uint32_t frame_now) { return frame_now - snap_frame > kSnapMaxLag; }
+
 class UltimateEspDsp {
 public:
     UltimateEspDsp() = default;
@@ -588,7 +612,8 @@ public:
         zoom_start_pt_ = zoom_start_pt;
         room_start_pt_ = room_start_pt;
         room_step_     = room_step;
-        n_delayed_ = n_sat_ = n_tickgap_ = 0;  /* neuer Stream */
+        tot_delayed_ = tot_sat_ = tot_tickgap_ = 0;  /* neuer Stream */
+        prev_delayed_ = prev_sat_ = prev_tickgap_ = 0;
 
         if (!allocated_) {
             hist_zoom_   = allocFloat((size_t)kHistoryLen * kZoomPoints * 2U);
@@ -651,6 +676,7 @@ public:
     }
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
+    uint32_t frameCount() const { return frame_count_; }  /* Frames seit begin()/Rezoom/Neubeginn */
 
     /** Raumprofil (Subsweep 2): geglättete Amplitude und Bewegung je Punkt, kRoomPoints Werte. */
     const float *roomAmp() const { return room_amp_ema_; }
@@ -667,10 +693,10 @@ public:
                    const FrameFlags &ff = FrameFlags()) {
         (void)dt_s;
         /* Sensor-Flags zählen (je Report zurückgesetzt); tick-Lücke nur innerhalb einer Historie */
-        if (ff.delayed && n_delayed_ < 0xFFFFU) n_delayed_++;
-        if (ff.saturated && n_sat_ < 0xFFFFU) n_sat_++;
+        if (ff.delayed) tot_delayed_++;
+        if (ff.saturated) tot_sat_++;
         if (ff.have_tick) {
-            if (have_last_tick_ && (uint32_t)(ff.tick - last_tick_) > kTickGapMs && n_tickgap_ < 0xFFFFU) n_tickgap_++;
+            if (have_last_tick_ && (uint32_t)(ff.tick - last_tick_) > kTickGapMs) tot_tickgap_++;
             last_tick_      = ff.tick;
             have_last_tick_ = true;
         }
@@ -799,32 +825,62 @@ public:
         frame_count_++;
     }
 
+    /** Stand für einen Report festhalten (im Frame-Takt nach pushFrame(), V2.1). */
+    void takeSnapshot(ReportSnapshot &s) const {
+        s.write_idx     = hist_write_idx_;
+        s.count         = hist_count_;
+        s.frame_count   = frame_count_;
+        s.best_zoom_bin = best_zoom_bin_;
+        s.temp_c        = last_temp_c_;
+        s.lb_amp        = last_lb_amp_;
+        s.tot_delayed   = tot_delayed_;
+        s.tot_sat       = tot_sat_;
+        s.tot_tickgap   = tot_tickgap_;
+        memcpy(s.room_amp, room_amp_ema_, sizeof(s.room_amp));
+        memcpy(s.room_mot, room_var_ema_, sizeof(s.room_mot));
+        memcpy(s.room_amp_slow, room_amp_slow_, sizeof(s.room_amp_slow));
+        memcpy(s.room_mot_slow, room_mot_slow_, sizeof(s.room_mot_slow));
+    }
+
     /**
-     * @brief Raum-Ziele + Rezoom-Empfehlung immer; Vitalwerte (valid = true) ab kHrMinWin Frames.
+     * @brief Report zum aktuellen Stand (Schnappschuss und Rechnung in einem, wie vor V2.1).
      *        Etwa einmal pro Sekunde aufrufen (Verfolgung und Rezoom zählen in Reports).
      */
     bool computeVitalReport(VitalReport &rep) {
+        takeSnapshot(snap_);
+        return computeVitalReport(snap_, rep);
+    }
+
+    /**
+     * @brief Raum-Ziele + Rezoom-Empfehlung immer; Vitalwerte (valid = true) ab kHrMinWin Frames. Liest außer dem
+     *        Schnappschuss nur den Ring im Fenster des Schnappschusses und Report-Zustand (Verfolgung, Kreismittelpunkte,
+     *        Arbeitspuffer); pushFrame() darf parallel laufen, solange es höchstens kSnapMaxLag Frames weiter ist und
+     *        zoom_start_pt_ nicht wechselt (setZoomStartPoint/begin erst nach dem Report).
+     */
+    bool computeVitalReport(const ReportSnapshot &s, VitalReport &rep) {
         const uint32_t t0 = micros();
         memset(&rep, 0, sizeof(rep));
-        rep.n_delayed = n_delayed_;
-        rep.n_sat     = n_sat_;
-        rep.n_tickgap = n_tickgap_;
-        n_delayed_ = n_sat_ = n_tickgap_ = 0;
-        rep.frame_count   = frame_count_;
+        rep.n_delayed = sat16(s.tot_delayed - prev_delayed_);
+        rep.n_sat     = sat16(s.tot_sat - prev_sat_);
+        rep.n_tickgap = sat16(s.tot_tickgap - prev_tickgap_);
+        prev_delayed_ = s.tot_delayed;
+        prev_sat_     = s.tot_sat;
+        prev_tickgap_ = s.tot_tickgap;
+        rep.frame_count   = s.frame_count;
         rep.fs_hz         = kFsHz;
-        rep.temperature_c = last_temp_c_;
-        rep.loopback_amp  = last_lb_amp_;
-        rep.best_zoom_bin = best_zoom_bin_;
-        rep.target_dist_m = (float)(zoom_start_pt_ + (int32_t)best_zoom_bin_) * kPointStepM;
-        extractRoomTargets(rep);
+        rep.temperature_c = s.temp_c;
+        rep.loopback_amp  = s.lb_amp;
+        rep.best_zoom_bin = s.best_zoom_bin;
+        rep.target_dist_m = (float)(zoom_start_pt_ + (int32_t)s.best_zoom_bin) * kPointStepM;
+        extractRoomTargets(s, rep);
 
-        if (hist_count_ < kHrMinWin) {
+        if (s.count < kHrMinWin) {
             rep.valid = false;
             rep.compute_us = micros() - t0;
             return false;
         }
-        const uint16_t N = (hist_count_ > kHrWin) ? kHrWin : hist_count_;
-        const uint16_t start = (uint16_t)((hist_write_idx_ + kHistoryLen - N) % kHistoryLen);
+        const uint16_t N = (s.count > kHrWin) ? kHrWin : s.count;
+        const uint16_t start = (uint16_t)((s.write_idx + kHistoryLen - N) % kHistoryLen);
 
         /* Loopback-Phasenstabilität */
         float lb_mean = 0.0f, lb_var = 0.0f;
@@ -1148,6 +1204,8 @@ public:
     }
 
 private:
+    static uint16_t sat16(uint32_t v) { return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v; }
+
     static float *allocFloat(size_t count) {
         void *p = nullptr;
         if (psramFound()) p = ps_malloc(count * sizeof(float));
@@ -1386,13 +1444,13 @@ private:
         return ((float)room_start_pt_ + ((float)r + d) * (float)room_step_) * kPointStepM;
     }
 
-    void extractRoomTargets(VitalReport &rep) {
+    void extractRoomTargets(const ReportSnapshot &s, VitalReport &rep) {
         rep.num_room_targets = 0;
         /* Rauschpegel getrennt für Amplitude und Bewegung. Reines Rauschen hat Bewegung ≈ Amplitude (das Standbild
          * mittelt es weg); am Datensatz 2026-11-01 beide ≈ 55, die Person bis 3300 / 2600. +1 gegen Division durch 0
          * in den ersten Frames. */
-        const float noise_amp = lowerQuartile(room_amp_ema_) + 1.0f;
-        const float noise_mot = lowerQuartile(room_var_ema_) + 1.0f;
+        const float noise_amp = lowerQuartile(s.room_amp) + 1.0f;
+        const float noise_mot = lowerQuartile(s.room_mot) + 1.0f;
         rep.room_noise_amp    = noise_amp;
         rep.room_noise_motion = noise_mot;
 
@@ -1400,8 +1458,8 @@ private:
          * (Wand, Möbel: Amplitude hoch, Bewegung ≈ Rauschen) und schwache bewegte Echos. Behalten werden die
          * kMaxRoomTargets stärksten nach Amplitude + 8 × Bewegung (Bewegung zählt stärker), egal in welcher Entfernung. */
         auto key = [](const RoomTarget &t) { return t.amplitude + 8.0f * t.motion_energy; };
-        forEachRoomPeak(room_amp_ema_, room_var_ema_, noise_amp, noise_mot, [&](uint16_t r, float d, bool moving) {
-            const RoomTarget t = {roomDistM(r, d), room_amp_ema_[r], room_var_ema_[r], moving};
+        forEachRoomPeak(s.room_amp, s.room_mot, noise_amp, noise_mot, [&](uint16_t r, float d, bool moving) {
+            const RoomTarget t = {roomDistM(r, d), s.room_amp[r], s.room_mot[r], moving};
             uint8_t n = rep.num_room_targets;
             if (n == kMaxRoomTargets && key(t) <= key(rep.room_targets[n - 1])) return;
             uint8_t pos = (n < kMaxRoomTargets) ? n : (uint8_t)(n - 1U);  /* volle Liste: schwächstes Ziel fällt raus */
@@ -1419,11 +1477,11 @@ private:
          * t = 3 s wählte das hintere um 1 %, und dort war der Puls schlechter (Konfidenz 78 statt 99 %). Geglättet trifft
          * die Wahl in allen vier Logs die Brust (τ = 1–8 s geprüft). Das stärkste Echo allein wäre falsch gewesen.
          * Das Fenster hält nur dieses Ziel (±60 mm), nicht jedes bewegte Echo: Sonst blieb es 19 s am hinteren Echo. */
-        const float ns_amp = lowerQuartile(room_amp_slow_) + 1.0f;
-        const float ns_mot = lowerQuartile(room_mot_slow_) + 1.0f;
+        const float ns_amp = lowerQuartile(s.room_amp_slow) + 1.0f;
+        const float ns_mot = lowerQuartile(s.room_mot_slow) + 1.0f;
         float best_m = -1.0f, best_key = 0.0f;
-        forEachRoomPeak(room_amp_slow_, room_mot_slow_, ns_amp, ns_mot, [&](uint16_t r, float d, bool moving) {
-            const float k = room_amp_slow_[r] + 8.0f * room_mot_slow_[r];
+        forEachRoomPeak(s.room_amp_slow, s.room_mot_slow, ns_amp, ns_mot, [&](uint16_t r, float d, bool moving) {
+            const float k = s.room_amp_slow[r] + 8.0f * s.room_mot_slow[r];
             if (moving && (best_m < 0.0f || k > best_key)) {
                 best_m   = roomDistM(r, d);
                 best_key = k;
@@ -1444,7 +1502,7 @@ private:
             out_of_window_frames_ = 0;
             return;
         }
-        const uint16_t needed = (frame_count_ < 600U) ? 3U : 5U;
+        const uint16_t needed = (s.frame_count < 600U) ? 3U : 5U;
         if (++out_of_window_frames_ >= needed) {
             int32_t new_start = (int32_t)roundf(best_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
             if (new_start < 80) new_start = 80; /* ≥ 0,20 m */
@@ -1476,7 +1534,9 @@ private:
     uint8_t  hr_miss_              = 0;
     uint8_t  alt_count_            = 0;     /* Reports in Folge mit Alternative zur Oberwelle */
     BreathStateTracker br_track_;           /* Atemzustand (V1.4) */
-    uint16_t n_delayed_ = 0, n_sat_ = 0, n_tickgap_ = 0;  /* Sensor-Zähler seit dem letzten Report (V1.5) */
+    uint32_t tot_delayed_ = 0, tot_sat_ = 0, tot_tickgap_ = 0;    /* Sensor-Zähler seit begin() (V1.5, Summen seit V2.1) */
+    uint32_t prev_delayed_ = 0, prev_sat_ = 0, prev_tickgap_ = 0; /* … beim zuletzt gerechneten Report */
+    ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
     uint32_t last_tick_ = 0;
     bool     have_last_tick_ = false;
     uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated je Frame der Historie */
@@ -1556,10 +1616,11 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
-    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u", (unsigned long)t_ms,
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu", (unsigned long)t_ms,
                              (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,
                              rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state,
-                             (unsigned)rep.n_delayed, (unsigned)rep.n_sat, (unsigned)rep.n_tickgap),
+                             (unsigned)rep.n_delayed, (unsigned)rep.n_sat, (unsigned)rep.n_tickgap,
+                             (unsigned long)rep.frame_count),
                     cap);
 }
 

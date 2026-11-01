@@ -124,5 +124,71 @@ class BaselineHeaderTest(unittest.TestCase):
         self.assertGreater(len(vital), 5)
 
 
+class SnapshotReplayTest(unittest.TestCase):
+    """V2.1: Der ESP32 rechnet den Report auf Kern 0 aus einem Schnappschuss; @DSP kommt deshalb einige Frames später
+    und trägt in Feld 13 den Frame-Stand des Schnappschusses. Die Nachrechnung rechnet an diesem Stand und kommt auf
+    dieselben Werte wie ohne Verzug. Ist pushFrame mehr als kSnapMaxLag (180) Frames weiter, ist das Fenster teils
+    überschrieben: Report ungültig, kein @VITAL (ESP32 und Nachrechnung gleich)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.dir = pathlib.Path(cls.tmp.name)
+        vital_sim.make_frames(cls.dir / "base", seed=1, T=30.0)
+        cls.skel = cls.dir / "skel.log"
+        vital_sim.write_skeleton(pathlib.Path(f"{cls.dir / 'base'}.iq"), 244, cls.skel, vital_placeholders=False)
+        cls.sync = cls.run_log(cls.skel.read_text().splitlines(), "sync")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    @classmethod
+    def run_log(cls, lines: list[str], name: str) -> list[str]:
+        src, out = cls.dir / f"{name}.log", cls.dir / f"{name}_out.log"
+        src.write_text("\n".join(lines) + "\n")
+        vital_sim.replay_skeleton(src, out)
+        return out.read_text().splitlines()
+
+    def delayed(self, lag: int) -> list[str]:
+        """@DSP/@ROOM jeweils lag Frames später (nach dessen @RAW), @DSP mit Feld 13 = Frames bis zum Schnappschuss;
+        was nach dem letzten Frame käme, steht vor @END."""
+        out, held, frames = [], [], 0
+        for ln in self.skel.read_text().splitlines():
+            if ln.startswith("@DSP,"):
+                held.append((frames + lag, [ln + ",0,0,0,0,0," + str(frames)]))   # Felder 8–12, 13
+                continue
+            if ln.startswith("@ROOM,"):
+                held[-1][1].append(ln)
+                continue
+            if ln.startswith("@END"):
+                break
+            out.append(ln)
+            if ln.startswith("@RAW,"):
+                frames += 1
+                if held and held[0][0] == frames:
+                    out += held.pop(0)[1]
+        return out + [x for _, g in held for x in g] + ["@END"]
+
+    @staticmethod
+    def tail(lines: list[str], tag: str) -> list[list[str]]:
+        return [ln.split(",")[2:] for ln in lines if ln.startswith(tag)]
+
+    def test_lag_gives_same_values(self):
+        lagged = self.run_log(self.delayed(180), "lag180")
+        self.assertGreater(len(self.tail(self.sync, "@VITAL,")), 10)
+        self.assertEqual(self.tail(lagged, "@VITAL,"), self.tail(self.sync, "@VITAL,"))
+        self.assertEqual(self.tail(lagged, "@DSP,"), self.tail(self.sync, "@DSP,"))
+
+    def test_stale_snapshot_invalid(self):
+        lagged = self.run_log(self.delayed(181), "lag181")
+        dsp = self.tail(lagged, "@DSP,")
+        self.assertEqual(len(dsp), len(self.tail(self.sync, "@DSP,")))
+        late = sum(1 for f in dsp if int(f[11]) + 181 > 1800)   # stehen vor @END, Verzug dort < 181
+        self.assertEqual(late, 4)
+        self.assertEqual({f[0] for f in dsp[:-late]}, {"0"})
+        self.assertEqual(self.tail(lagged, "@VITAL,"), self.tail(self.sync, "@VITAL,")[-late:])
+
+
 if __name__ == "__main__":
     unittest.main()

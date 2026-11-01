@@ -11,6 +11,9 @@
  * Formatfunktionen aus a121_esp_dsp.h). Ist ein eigener Report gültig, beim ESP32 aber kein `@VITAL` da, schreibt der
  * Replayer sein `@VITAL` trotzdem (mit der Zeit der `@DSP`-Zeile) und zählt die Zeile als fehlend; so lassen sich
  * Header-Varianten mit anderer Verfügbarkeit auswerten (host/vital_eval.py --replay).
+ * Seit V2.1 rechnet der ESP32 den Report aus einem Schnappschuss auf Kern 0; `@DSP` kommt dann einige Frames später und
+ * trägt in Feld 13 den Frame-Stand des Schnappschusses. Der Replayer hält dafür die Schnappschüsse der letzten
+ * kSnapRing Frames und rechnet an diesem Stand (ohne Feld 13: am aktuellen Stand wie früher).
  *
  * Braucht vor dem Einbinden ein `Arduino.h` (hier: Shim im selben Ordner) und den Include-Pfad zu
  * `firmware/esp32s3/src`. Für bitgleiche Ergebnisse ohne `-ffast-math` und mit `-ffp-contract=off` übersetzen.
@@ -26,6 +29,7 @@
 #include <sys/types.h>
 
 #include <string>
+#include <vector>
 
 #include "a121_esp_dsp.h"
 
@@ -254,6 +258,7 @@ private:
         closePending();
         zoom_pt_ = mmToPt(lfield(c, 1));
         running_ = dsp_.begin(zoom_pt_, 120, kRoomStep);
+        clearSnaps();
         if (!running_) report("FEHLER: DSP-Speicher\n");
         streams_++;
         last_frame_ = -1;
@@ -333,6 +338,11 @@ private:
         ff.saturated = iq3 && lfield(iq3, 6) != 0;
         ff.delayed   = delayed > 0;
         dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um, ff);
+#ifdef A121_DSP_SNAPSHOT
+        const size_t si = (size_t)dsp_.frameCount() % kSnapRing;
+        dsp_.takeSnapshot(snaps_[si]);
+        snap_ok_[si] = true;
+#endif
 #else
         dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um);
 #endif
@@ -360,7 +370,21 @@ private:
 
     void onDsp(const char *c) {
         closePending();
-        vital_ok_ = dsp_.computeVitalReport(rep_);
+        const long snap = lfield(c, 13, -1);  /* Frame-Stand des Schnappschusses (V2.1) */
+#ifdef A121_DSP_SNAPSHOT
+        if (snap >= 0) {
+            const ReportSnapshot &s = snaps_[(size_t)snap % kSnapRing];
+            if (s.frame_count == (uint32_t)snap && snap_ok_[(size_t)snap % kSnapRing]) {
+                vital_ok_ = dsp_.computeVitalReport(s, rep_);
+            } else {
+                missing("@DSP: Schnappschuss nicht mehr da, am aktuellen Stand gerechnet");
+                vital_ok_ = dsp_.computeVitalReport(rep_);
+            }
+            if (snapshotStale((uint32_t)snap, dsp_.frameCount())) vital_ok_ = rep_.valid = false;
+        } else
+#endif
+            vital_ok_ = dsp_.computeVitalReport(rep_);
+        (void)snap;
         have_rep_ = true;
         dsp_t_ms_ = (uint32_t)ufield(c, 1);
         formatDspLine(buf_, sizeof(buf_), dsp_t_ms_, vital_ok_, rep_, (uint32_t)ufield(c, 5) /* Rechenzeit vom ESP32 */);
@@ -404,6 +428,7 @@ private:
         // dem ESP32 folgen: die folgenden Rohdaten gehören zu seinem Fenster
         zoom_pt_ = esp_pt;
         dsp_.setZoomStartPoint(zoom_pt_);
+        clearSnaps();
         rezooms_++;
         emit(c);
     }
@@ -412,6 +437,7 @@ private:
     void onRecal(const char *c) {
         flushVital();
         dsp_.setZoomStartPoint(zoom_pt_);
+        clearSnaps();
         recals_++;
         emit(c);
     }
@@ -419,11 +445,15 @@ private:
     void onReconnect(const char *c) {
         if (lfield(c, 3) == 1) {
             dsp_.setZoomStartPoint(zoom_pt_);  /* wie cmdIq3(): Lücke im Signal, Verlauf neu */
+            clearSnaps();
             reconnects_++;
             last_frame_ = -1;  /* Frame-Zähler läuft weiter, aber über die Lücke nicht als Verlust zählen */
         }
         emit(c);
     }
+
+    /** Neubeginn der Historie: frame_count beginnt bei 0, alte Schnappschüsse gelten nicht mehr. */
+    void clearSnaps() { snap_ok_.assign(kSnapRing, false); }
 
     void onEnd(const char *c) {
         closePending();
@@ -444,6 +474,13 @@ private:
                   extra_ = 0;
     unsigned streams_ = 0;
     std::string cur_, iq3_;
+#ifdef A121_DSP_SNAPSHOT
+    static constexpr size_t kSnapRing = 256U;  /* > kSnapMaxLag: jeder noch gültige Schnappschuss ist da */
+    std::vector<ReportSnapshot> snaps_ = std::vector<ReportSnapshot>(kSnapRing);
+#else
+    static constexpr size_t kSnapRing = 1U;
+#endif
+    std::vector<bool> snap_ok_ = std::vector<bool>(kSnapRing, false);
     char buf_[kRoomLineMax];
     TagStat stats_[NTAGS] = {{"@IQ3"}, {"@ROOMPROF"}, {"@DSP"}, {"@ROOM"}, {"@VITAL"}, {"@REZOOM"}};
 };

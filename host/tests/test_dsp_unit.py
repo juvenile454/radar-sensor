@@ -288,6 +288,12 @@ class DspLineTest(unittest.TestCase):
                       'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
         self.assertEqual(out.split(",")[10:13], ["3", "2", "1"])
 
+    def test_snap_frame_last(self):
+        """Feld 13 = frame_count des Schnappschusses (V2.1): dort rechnet die Nachrechnung den Report."""
+        out = run_cpp('VitalReport r = {}; r.frame_count = 1234; char b[256];'
+                      'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
+        self.assertEqual(out.split(",")[13], "1234")
+
 
 class FrameFlagsTest(unittest.TestCase):
     """V1.5 (B15, B16): Sensor-Flags je Frame, Zähler je Report (seit dem letzten), tick-Lücken > 25 ms ohne Rezoom."""
@@ -367,6 +373,66 @@ class TimeDomainIbiTest(unittest.TestCase):
     def test_slow_pulse_40(self):
         r = self.ibi("for (float t = 0.5f; t < 15.0f; t += 1.48f) tb.push_back(t);", 40.5)
         self.assertAlmostEqual(r["bpm"], 40.5, delta=1.0)
+
+
+class SnapshotTest(unittest.TestCase):
+    """V2.1 (B12): Report aus einem Schnappschuss, während weiter Frames ankommen. Bis zu kSnapMaxLag = 180 Frames (3 s) später
+    gerechnet muss er gleich sein wie sofort gerechnet (kHistoryLen 1080 = 15-s-Fenster + 3 s)."""
+
+    BODY = """
+    static Complex16 pts[kTotal3SubPts];
+    auto fill = [&](uint32_t k, float extra) {
+        const float t = k / 60.0f;
+        const float ph = 2.0f * sinf(6.2832f * 0.25f * t) + 0.05f * sinf(6.2832f * 1.2f * t) + extra;
+        pts[0].real = 2000; pts[0].imag = 0;
+        for (int b = 0; b < kZoomPoints; b++) {
+            const float a = ph * (1.0f - 0.02f * b) + 0.1f * b;
+            pts[1 + b].real = (int16_t)(1500 * cosf(a) + 3 * sinf(k * 1.7f + b));
+            pts[1 + b].imag = (int16_t)(1500 * sinf(a) + 3 * cosf(k * 2.3f + b));
+        }
+        for (int r = 0; r < kRoomPoints; r++) {
+            pts[1 + kZoomPoints + r].real = (int16_t)((r == 20 ? 900 : 60) * cosf(0.3f * r + (r == 20 ? ph : 0)));
+            pts[1 + kZoomPoints + r].imag = (int16_t)((r == 20 ? 900 : 60) * sinf(0.3f * r + (r == 20 ? ph : 0)));
+        }
+    };
+    static UltimateEspDsp a, b;
+    a.begin(244, 120, kRoomStep); b.begin(244, 120, kRoomStep);
+    float um;
+    for (uint32_t k = 0; k < 960; k++) { fill(k, 0); a.pushFrame(pts, kTotal3SubPts, 20, 0, um); b.pushFrame(pts, kTotal3SubPts, 20, 0, um); }
+    VitalReport ra, rb;
+    a.computeVitalReport(ra);
+    static ReportSnapshot s; b.takeSnapshot(s);
+    for (uint32_t k = 960; k < 960 + LATER; k++) { fill(k, 1.5f); b.pushFrame(pts, kTotal3SubPts, 25, 0, um); }
+    b.computeVitalReport(s, rb);
+    char la[256], lb[256], va[256], vb[256];
+    formatDspLine(la, sizeof(la), 1, true, ra, 0); formatDspLine(lb, sizeof(lb), 1, true, rb, 0);
+    formatVitalLine(va, sizeof(va), 1, ra); formatVitalLine(vb, sizeof(vb), 1, rb);
+    printf("%s\\n%s\\n%s\\n%s\\n", la, lb, va, vb);
+    """
+
+    def lines(self, later: int) -> list[str]:
+        return run_cpp(self.BODY.replace("LATER", str(later))).splitlines()
+
+    def test_snapshot_report_equals_immediate(self):
+        la, lb, va, vb = self.lines(180)   # kSnapMaxLag
+        self.assertEqual(la, lb)
+        self.assertEqual(va, vb)
+        self.assertEqual(la.split(",")[13], "960")
+
+    def test_counter_deltas_with_snapshot_every_frame(self):
+        """Nachrechnung: Schnappschuss nach jedem Frame, gerechnet wird nur jeder 60.; die Zähler sind Differenzen
+        zwischen zwei gerechneten Schnappschüssen."""
+        out = run_cpp("""
+        static Complex16 pts[kTotal3SubPts];
+        static UltimateEspDsp d; d.begin(244, 120, kRoomStep);
+        static ReportSnapshot s; VitalReport r; float um;
+        for (int k = 0; k < 120; k++) {
+            FrameFlags ff; ff.delayed = (k == 10 || k == 20 || k == 70); ff.have_tick = true; ff.tick = 17 * k;
+            d.pushFrame(pts, kTotal3SubPts, 20, 0, um, ff);
+            d.takeSnapshot(s);
+            if (k == 59 || k == 119) { d.computeVitalReport(s, r); printf("%u ", r.n_delayed); }
+        }""")
+        self.assertEqual(out.split(), ["2", "1"])
 
 
 if __name__ == "__main__":

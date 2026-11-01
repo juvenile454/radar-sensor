@@ -20,6 +20,9 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <mbedtls/base64.h>
 
 #include "a121_esp_dsp.h"
@@ -615,6 +618,34 @@ static void printLine(const char *buf, size_t len) {
   Serial.write('\n');
 }
 
+// Reports auf Kern 0 (V2.1, B12): Der Frame-Takt (Kern 1) nimmt alle kReportEvery Frames einen Schnappschuss und gibt
+// ihn an dspTask; der Report rechnet daraus, während weiter Frames ankommen (bis kSnapMaxLag Frames, s. ReportSnapshot).
+// Höchstens ein Report ist unterwegs; Rezoom, Neu-Kalibrierung und Neuverbinden warten auf ihn (waitDsp).
+struct DspResult {
+  a121_dsp::VitalReport rep;
+  bool ok;
+};
+static const uint32_t kReportEvery = 60;  // 1 Report/s bei 60 Hz, gezählt in Frames
+static QueueHandle_t g_snapQ = nullptr, g_resQ = nullptr;
+
+static void dspTask(void *) {
+  static a121_dsp::ReportSnapshot snap;
+  static DspResult res;
+  for (;;) {
+    if (xQueueReceive(g_snapQ, &snap, portMAX_DELAY) != pdTRUE) continue;
+    res.ok = g_dsp.computeVitalReport(snap, res.rep);
+    xQueueSend(g_resQ, &res, portMAX_DELAY);
+  }
+}
+
+static bool startDspTask() {
+  if (g_snapQ) return true;
+  g_snapQ = xQueueCreate(1, sizeof(a121_dsp::ReportSnapshot));
+  g_resQ = xQueueCreate(1, sizeof(DspResult));
+  if (!g_snapQ || !g_resQ) return false;
+  return xTaskCreatePinnedToCore(dspTask, "dsp", 10240, nullptr, 1, nullptr, 0) == pdPASS;
+}
+
 // 3-Subsweep Sparse-IQ Session (Sub 0 Loopback + Sub 1 2.5-mm Vital-Zoom + Sub 2 Raum-Scan)
 // mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom.
 // raw = true: zusätzlich je Frame '@RAW,frame,tick,n,<Base64>' mit den unveränderten Punkten vom Server
@@ -625,6 +656,10 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   int32_t zoomStartPt = (int32_t)lroundf((float)constrain(startMm, 200, 2200) / 2.5f);
   if (!g_dsp.begin(zoomStartPt, 120, a121_dsp::kRoomStep)) {
     Serial.println("FEHLER: PSRAM/Heap-Allokation für On-Device DSP fehlgeschlagen");
+    return;
+  }
+  if (!startDspTask()) {
+    Serial.println("FEHLER: DSP-Task auf Kern 0 nicht gestartet");
     return;
   }
 
@@ -649,7 +684,6 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   a121_srv::FrameMeta meta = {};
   uint32_t tStart = millis();
   uint32_t lastFrameUs = micros();
-  uint32_t lastReportMs = millis();
   // Raumprofil alle 12 Frames (5 Hz bei 60 Hz), gezählt in Frames statt ESP32-Zeit: Nach jeder Rechenpause kommen die
   // Frames gebündelt, ein Zeittakt würde dann Profile überspringen.
   static const uint32_t kRoomProfEvery = 12;
@@ -662,6 +696,41 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   static const uint32_t kRecalMinMs = 10000;
   uint32_t lastRecalMs = 0;
   bool recalDone = false;
+  static a121_dsp::ReportSnapshot snap;
+  static DspResult res;
+  bool dspBusy = false;
+
+  // Ergebnis ausgeben: @DSP (Zusatzwerte; @VITAL behält sein Format), @ROOM (auch ohne gültigen Puls), @VITAL; Formate
+  // im DSP-Header. War pushFrame zu weit (Fenster teils überschrieben), gilt der Report nicht (wie die Nachrechnung).
+  // mayRezoom = false vor einem Neubeginn, der ohnehin folgt.
+  auto handleResult = [&](bool mayRezoom) {
+    dspBusy = false;
+    bool vitalOk = res.ok;
+    if (a121_dsp::snapshotStale(res.rep.frame_count, g_dsp.frameCount())) {
+      Serial.println("@WARN,dsp_late");
+      vitalOk = res.rep.valid = false;
+    }
+    a121_dsp::VitalReport &rep = res.rep;
+    printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), millis() - tStart, vitalOk, rep, rep.compute_us));
+    a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
+    Serial.println(roomLine);
+    if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
+
+    // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
+    if (mayRezoom && rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {
+      zoomStartPt = rep.recommended_zoom_start_pt;
+      g_srv.stopStreaming();
+      spec = a121_srv::ExplorationServerClient::make3SubsweepPreset(zoomStartPt, 60.0f);
+      if (g_srv.setupSession(spec) && g_srv.startStreaming()) {
+        g_dsp.setZoomStartPoint(zoomStartPt);
+        printLine(repLine, a121_dsp::formatRezoomLine(repLine, sizeof(repLine), zoomStartPt));
+      }
+    }
+  };
+  // Vor jedem Neubeginn der Historie (und am Ende): laufenden Report abwarten und ausgeben.
+  auto waitDsp = [&]() {
+    if (dspBusy && xQueueReceive(g_resQ, &res, portMAX_DELAY) == pdTRUE) handleResult(false);
+  };
 
   while (true) {
     const StreamInput in = pollStreamInput();
@@ -675,6 +744,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     }
 
     if (!g_srv.readStreamFrame(pts, a121_dsp::kTotal3SubPts, meta, 500)) {
+      waitDsp();  // vor @RECONNECT, damit die Nachrechnung den Report noch vor dem Neubeginn rechnet
       if (handleFrameTimeout(rs, spec, millis() - tStart)) {
         g_dsp.setZoomStartPoint(zoomStartPt);  // Lücke im Signal: Verlauf neu beginnen (wie beim Rezoom)
         lastFrameUs = micros();
@@ -688,6 +758,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     if (meta.calibration_needed && (!recalDone || (millis() - lastRecalMs) >= kRecalMinMs)) {
       recalDone = true;
       lastRecalMs = millis();
+      waitDsp();
       Serial.println("@WARN,calibration_needed");
       g_srv.stopStreaming();
       if (g_srv.setupSession(spec) && g_srv.startStreaming()) {
@@ -744,31 +815,19 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       Serial.println(roomLine);
     }
 
-    if ((millis() - lastReportMs) >= 1000UL) {
-      lastReportMs = millis();
-      a121_dsp::VitalReport rep;
-      const bool vitalOk = g_dsp.computeVitalReport(rep);
-      // @DSP (Zusatzwerte; @VITAL behält sein Format), @ROOM (auch ohne gültigen Puls), @VITAL: Formate im DSP-Header
-      printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), millis() - tStart, vitalOk, rep, rep.compute_us));
-      a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
-      Serial.println(roomLine);
-      if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
-
-      // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
-      {
-        if (rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {
-          zoomStartPt = rep.recommended_zoom_start_pt;
-          g_srv.stopStreaming();
-          spec = a121_srv::ExplorationServerClient::make3SubsweepPreset(zoomStartPt, 60.0f);
-          if (g_srv.setupSession(spec) && g_srv.startStreaming()) {
-            g_dsp.setZoomStartPoint(zoomStartPt);
-            printLine(repLine, a121_dsp::formatRezoomLine(repLine, sizeof(repLine), zoomStartPt));
-          }
-        }
+    // Schnappschuss im Frame-Takt (Frames seit dem letzten Neubeginn); läuft noch einer, fällt dieser Report aus
+    if (g_dsp.frameCount() % kReportEvery == 0) {
+      if (dspBusy) {
+        Serial.println("@WARN,dsp_busy");
+      } else {
+        g_dsp.takeSnapshot(snap);
+        dspBusy = xQueueSend(g_snapQ, &snap, 0) == pdTRUE;
       }
     }
+    if (dspBusy && xQueueReceive(g_resQ, &res, 0) == pdTRUE) handleResult(true);
   }
 
+  waitDsp();
   g_srv.stopStreaming();
   led(0, 20, 0);
   Serial.println("@END");
