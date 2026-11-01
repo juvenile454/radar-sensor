@@ -1,0 +1,243 @@
+package de.timo.radarsensor.reference
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelUuid
+import android.os.SystemClock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
+
+/** Gefundener Gurt (BLE-Werbung mit Heart Rate Service). */
+data class HrDevice(
+    val address: String,
+    val name: String?,
+    val rssi: Int,
+)
+
+sealed interface RefState {
+    data object Idle : RefState
+
+    data object Scanning : RefState
+
+    data class Connecting(
+        val address: String,
+    ) : RefState
+
+    data class Connected(
+        val address: String,
+        val name: String?,
+    ) : RefState
+
+    data class Failed(
+        val message: String,
+    ) : RefState
+}
+
+/**
+ * EKG-Gurt über BLE (V0.1), z. B. Polar H10: Suche nach Geräten mit Heart Rate Service (0x180D), Verbinden,
+ * Benachrichtigungen der Heart Rate Measurement (0x2A37) einschalten, jede Benachrichtigung mit Empfangszeit
+ * (elapsedRealtimeNanos, dieselbe Zeitachse wie rxtime.csv) an [onMeasurement]. Reißt die Verbindung ab, verbindet
+ * Android von selbst wieder (autoConnect), bis [disconnect] gerufen wird. Die Berechtigungen BLUETOOTH_SCAN
+ * (neverForLocation) und BLUETOOTH_CONNECT fragt die Activity an; fehlen sie, meldet [state] Failed.
+ */
+@SuppressLint("MissingPermission")
+class HrReference(
+    private val context: Context,
+    private val onMeasurement: (rxNanos: Long, m: HrMeasurement) -> Unit,
+    private val log: (String) -> Unit,
+) {
+    private val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+    private val main = Handler(Looper.getMainLooper())
+
+    private val _state = MutableStateFlow<RefState>(RefState.Idle)
+    val state: StateFlow<RefState> = _state.asStateFlow()
+
+    private val _found = MutableStateFlow<List<HrDevice>>(emptyList())
+    val found: StateFlow<List<HrDevice>> = _found.asStateFlow()
+
+    /** Letzte Benachrichtigung (für Status und Anzeige). */
+    @Volatile var last: HrMeasurement? = null
+        private set
+
+    @Volatile var notifications = 0L
+        private set
+
+    @Volatile private var gatt: BluetoothGatt? = null
+
+    @Volatile private var userClosed = false
+    private var scanning = false
+
+    private val scanCb =
+        object : ScanCallback() {
+            override fun onScanResult(
+                callbackType: Int,
+                result: ScanResult,
+            ) {
+                val d = HrDevice(result.device.address, result.scanRecord?.deviceName ?: result.device.name, result.rssi)
+                _found.value = (_found.value.filter { it.address != d.address } + d).sortedByDescending { it.rssi }
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                scanning = false
+                fail("BLE-Suche fehlgeschlagen (Fehler $errorCode)")
+            }
+        }
+
+    /** Gurte suchen (durationMs lang); Ergebnisse in [found], stärkstes Signal zuerst. */
+    fun scan(durationMs: Long = 10_000L) {
+        val sc = adapter?.bluetoothLeScanner
+        if (adapter == null || !adapter.isEnabled || sc == null) {
+            fail("Bluetooth aus oder nicht vorhanden")
+            return
+        }
+        stopScan()
+        _found.value = emptyList()
+        try {
+            val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(HR_SERVICE)).build()
+            val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+            sc.startScan(listOf(filter), settings, scanCb)
+        } catch (e: SecurityException) {
+            fail("Bluetooth-Berechtigung fehlt (${e.message})")
+            return
+        }
+        scanning = true
+        if (gatt == null) _state.value = RefState.Scanning
+        log("Gurt-Suche ${durationMs / 1000} s")
+        main.postDelayed({ stopScan() }, durationMs)
+    }
+
+    fun stopScan() {
+        if (!scanning) return
+        scanning = false
+        try {
+            adapter?.bluetoothLeScanner?.stopScan(scanCb)
+        } catch (_: SecurityException) {
+        }
+        if (_state.value == RefState.Scanning) _state.value = RefState.Idle
+        log("Gurt-Suche beendet: ${_found.value.size} gefunden")
+    }
+
+    /** Mit dem Gurt an address (MAC) verbinden; eine bestehende Verbindung wird vorher getrennt. */
+    fun connect(address: String) {
+        stopScan()
+        closeGatt()
+        val a = adapter
+        if (a == null || !a.isEnabled) {
+            fail("Bluetooth aus oder nicht vorhanden")
+            return
+        }
+        val dev =
+            try {
+                a.getRemoteDevice(address.uppercase())
+            } catch (e: IllegalArgumentException) {
+                fail("ungültige Adresse: $address")
+                return
+            }
+        userClosed = false
+        _state.value = RefState.Connecting(dev.address)
+        log("verbinde Gurt ${dev.address}")
+        try {
+            gatt = dev.connectGatt(context, false, gattCb, BluetoothDevice.TRANSPORT_LE)
+        } catch (e: SecurityException) {
+            fail("Bluetooth-Berechtigung fehlt (${e.message})")
+        }
+    }
+
+    /** Vom Nutzer: trennen, nicht wieder verbinden. */
+    fun disconnect() {
+        userClosed = true
+        stopScan()
+        closeGatt()
+        _state.value = RefState.Idle
+        log("Gurt getrennt")
+    }
+
+    private fun closeGatt() {
+        val g = gatt ?: return
+        gatt = null
+        try {
+            g.disconnect()
+            g.close()
+        } catch (_: SecurityException) {
+        }
+    }
+
+    private fun fail(msg: String) {
+        _state.value = RefState.Failed(msg)
+        log(msg)
+    }
+
+    private val gattCb =
+        object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(
+                g: BluetoothGatt,
+                status: Int,
+                newState: Int,
+            ) {
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> g.discoverServices()
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        if (gatt !== g) return
+                        if (userClosed) return
+                        // abgerissen (außer Reichweite, Gurt ab): Android verbindet selbst wieder, sobald er da ist
+                        g.close()
+                        _state.value = RefState.Connecting(g.device.address)
+                        log("Gurt-Verbindung verloren (Status $status), verbinde wieder")
+                        gatt = g.device.connectGatt(context, true, this, BluetoothDevice.TRANSPORT_LE)
+                    }
+                }
+            }
+
+            override fun onServicesDiscovered(
+                g: BluetoothGatt,
+                status: Int,
+            ) {
+                val ch = g.getService(HR_SERVICE)?.getCharacteristic(HR_MEASUREMENT)
+                val cccd = ch?.getDescriptor(CCCD)
+                if (ch == null || cccd == null) {
+                    fail("Gerät hat keinen Heart Rate Service")
+                    userClosed = true
+                    g.disconnect()
+                    return
+                }
+                g.setCharacteristicNotification(ch, true)
+                g.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                _state.value = RefState.Connected(g.device.address, g.device.name)
+                log("Gurt verbunden: ${g.device.name ?: g.device.address}")
+            }
+
+            override fun onCharacteristicChanged(
+                g: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray,
+            ) {
+                val now = SystemClock.elapsedRealtimeNanos()
+                if (characteristic.uuid != HR_MEASUREMENT) return
+                val m = parseHrMeasurement(value) ?: return
+                last = m
+                notifications++
+                onMeasurement(now, m)
+            }
+        }
+
+    companion object {
+        val HR_SERVICE: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
+        val HR_MEASUREMENT: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
+        val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+    }
+}

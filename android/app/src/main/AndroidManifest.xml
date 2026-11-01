@@ -12,6 +12,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lesen bei ausgeschaltetem Bildschirm (Aufnahme), nur solange verbunden. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- EKG-Gurt als Pulsreferenz (V0.1): BLE-Suche ohne Standort, Verbinden. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:name=".RadarApp"

@@ -18,8 +18,11 @@ import de.timo.radarsensor.protocol.LineAssembler
 import de.timo.radarsensor.protocol.LineParser
 import de.timo.radarsensor.protocol.SessEnd
 import de.timo.radarsensor.record.Recorder
+import de.timo.radarsensor.reference.HrMeasurement
+import de.timo.radarsensor.reference.HrReference
 import de.timo.radarsensor.transport.Transport
 import de.timo.radarsensor.transport.UsbSerialTransport
+import de.timo.radarsensor.ui.Metronome
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -315,6 +318,30 @@ object RadarController {
     }
 
     val recordingLines: Long get() = recorder?.lines ?: 0
+
+    // ---------------------------------------------------------------- EKG-Gurt (V0.1), Marker und Metronom (V0.2)
+
+    /** EKG-Gurt über BLE; jede Benachrichtigung in die Aufnahme (ref_hr.csv) und als Referenzkurve in die Anzeige. */
+    val hrRef: HrReference by lazy { HrReference(app, ::onReference) { store.note(it) } }
+
+    private fun onReference(
+        rxNanos: Long,
+        m: HrMeasurement,
+    ) {
+        recorder?.reference(rxNanos, m)
+        store.reference(m)
+    }
+
+    /** Marker in events.csv (nur während einer Aufnahme) und als Ereignis in der Anzeige. */
+    fun mark(text: String) {
+        val now = SystemClock.elapsedRealtimeNanos()
+        val r = recorder
+        r?.mark(now, text)
+        store.note(if (r != null) "Marker: $text" else "Marker ohne Aufnahme: $text")
+    }
+
+    /** Metronom-Atmung: jeder Einatem-Ton schreibt „ein" (ohne Ereignis in der Anzeige, das wäre zu oft). */
+    val metronome: Metronome by lazy { Metronome(scope) { nanos -> recorder?.mark(nanos, "ein") } }
 
     // ---------------------------------------------------------------- DSP nachrechnen (A5)
 

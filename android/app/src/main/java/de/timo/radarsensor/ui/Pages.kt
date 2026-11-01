@@ -39,7 +39,9 @@ import de.timo.radarsensor.core.RadarController
 import de.timo.radarsensor.live.EventKind
 import de.timo.radarsensor.live.LiveSnapshot
 import de.timo.radarsensor.protocol.Dsp
+import de.timo.radarsensor.record.MetronomeSchedule
 import de.timo.radarsensor.record.Recorder
+import de.timo.radarsensor.reference.RefState
 import de.timo.radarsensor.transport.ReplayTransport
 import java.io.File
 
@@ -180,8 +182,13 @@ fun VitalPage(s: LiveSnapshot) =
         Row { listOf(60, 300, 1800).forEach { w -> Quick(if (w < 600) "$w s" else "${w / 60} min", if (window == w) Pal.c2 else Pal.c1) { window = w } } }
         val xw = window.toFloat()
         val v = s.lastVital
+        ReferencePanel()
         Text(
-            "Puls nur als Rhythmus-Kandidat: keine Referenzmessung, keine Genauigkeitsaussage.",
+            if (s.lastRef != null) {
+                "Gurt als Referenz: Abweichung gilt nur für diese Sitzung, keine allgemeine Genauigkeitsaussage."
+            } else {
+                "Puls nur als Rhythmus-Kandidat: keine Referenzmessung, keine Genauigkeitsaussage."
+            },
             fontSize = 11.sp,
             color = Pal.warn,
         )
@@ -189,6 +196,7 @@ fun VitalPage(s: LiveSnapshot) =
         LineChart(
             "Puls-Kandidaten",
             listOf(
+                Series(s.refT, s.refHr, Pal.ok, "Gurt"),
                 Series(s.vitalT, s.vitalHr, Pal.c2, "fused"),
                 Series(s.vitalT, s.vitalHrSpec, Pal.c3, "Spektrum", dots = true),
                 Series(s.vitalT, s.vitalHrAcf, Pal.c4, "AKF", dots = true),
@@ -222,6 +230,59 @@ fun VitalPage(s: LiveSnapshot) =
                 (d.pointAgreePct?.let { " · Punkte einig ${f0(it)} %" } ?: ""))
         }
     }
+
+/**
+ * EKG-Gurt (V0.1), Marker und Metronom-Atmung (V0.2). Marker landen in events.csv der laufenden Aufnahme
+ * (Namen wie host/vital_eval.py sie liest).
+ */
+@Composable
+private fun ReferencePanel() {
+    val ref = RadarController.hrRef
+    val st by ref.state.collectAsState()
+    val found by ref.found.collectAsState()
+    val rate by RadarController.metronome.rate.collectAsState()
+    var hold by rememberSaveable { mutableStateOf(false) }
+    var move by rememberSaveable { mutableStateOf(false) }
+    var count by rememberSaveable { mutableStateOf(false) }
+    Labeled(
+        "EKG-Gurt",
+        when (val x = st) {
+            RefState.Idle -> "nicht verbunden"
+            RefState.Scanning -> "suche …"
+            is RefState.Connecting -> "verbinde ${x.address} …"
+            is RefState.Connected -> "${x.name ?: x.address} · ${ref.last?.bpm ?: "–"} /min"
+            is RefState.Failed -> x.message
+        },
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (st is RefState.Connected || st is RefState.Connecting) {
+            Quick("Gurt trennen", Pal.bad) { ref.disconnect() }
+        } else {
+            Quick("Gurt suchen") { ref.scan() }
+            for (d in found) Quick("${d.name ?: d.address} (${d.rssi} dBm)", Pal.ok) { ref.connect(d.address) }
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Quick(if (hold) "Atem anhalten: Ende" else "Atem anhalten", if (hold) Pal.bad else Pal.c1) {
+            RadarController.mark(if (hold) "anhalten_ende" else "anhalten_start")
+            hold = !hold
+        }
+        Quick(if (move) "Bewegung: Ende" else "Bewegung", if (move) Pal.bad else Pal.c1) {
+            RadarController.mark(if (move) "bewegung_ende" else "bewegung_start")
+            move = !move
+        }
+        Quick(if (count) "Zählfenster: Ende" else "Zählfenster", if (count) Pal.bad else Pal.c1) {
+            RadarController.mark(if (count) "zaehlen_ende" else "zaehlen_start")
+            count = !count
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (r in MetronomeSchedule.RATES) {
+            Quick("$r /min", if (rate == r) Pal.c2 else Pal.c1) { RadarController.metronome.start(r) }
+        }
+        if (rate != null) Quick("Metronom aus", Pal.bad) { RadarController.metronome.stop() }
+    }
+}
 
 // ------------------------------------------------------------------------------------------------- Doppler
 

@@ -1,5 +1,6 @@
 package de.timo.radarsensor.live
 
+import de.timo.radarsensor.reference.HrMeasurement
 import de.timo.radarsensor.protocol.Doppler
 import de.timo.radarsensor.protocol.DopplerStart
 import de.timo.radarsensor.protocol.Dsp
@@ -89,6 +90,10 @@ class LiveSnapshot(
     val dspComputeMs: FloatArray,
     val dspMotion: FloatArray,
     val lastDsp: Dsp?,
+    /** EKG-Gurt (V0.1): Puls auf derselben Zeitachse wie vitalT */
+    val refT: FloatArray,
+    val refHr: FloatArray,
+    val lastRef: HrMeasurement?,
     // Doppler
     val dopT: FloatArray,
     val dopV: FloatArray,
@@ -189,6 +194,9 @@ class LiveStore(
     private val vSnr = FloatRing(vitalCapacity)
     private val vRmssd = FloatRing(vitalCapacity)
     private var lastVital: Vital? = null
+    private val refT = FloatRing(vitalCapacity)
+    private val refHr = FloatRing(vitalCapacity)
+    private var lastRef: HrMeasurement? = null
     private val dT = FloatRing(vitalCapacity)
     private val dCompute = FloatRing(vitalCapacity)
     private val dMotion = FloatRing(vitalCapacity)
@@ -328,6 +336,20 @@ class LiveStore(
     }
 
     /** Nachricht der App (Verbindung, gesendeter Befehl) in Konsole und Ereignisliste. */
+    /**
+     * Gurt-Benachrichtigung (V0.1): Zeit = letzte Radar-Datenzeit + seitdem vergangene Zeit, damit Referenz- und
+     * Radarkurve übereinander liegen. Ohne Radardaten (noch keine Zeitachse) verworfen.
+     */
+    fun reference(m: HrMeasurement) {
+        synchronized(lock) {
+            if (lastDataNs == NO_DATA) return
+            refT.add(tMax + (nanoTime() - lastDataNs) / 1e9f)
+            refHr.add(m.bpm.toFloat())
+            lastRef = m
+            version++
+        }
+    }
+
     fun note(text: String) =
         synchronized(lock) {
             addConsole("» $text")
@@ -352,7 +374,7 @@ class LiveStore(
         tOffset = 0f
         tMax = 0f
         lastDataNs = NO_DATA
-        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
+        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, refT, refHr, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
             .forEach { it.clear() }
         iqSaturated = 0
         iqDelayed = 0
@@ -369,6 +391,7 @@ class LiveStore(
         lastRoomT = Float.NaN
         lastVital = null
         lastDsp = null
+        lastRef = null
         dopplerStart = null
         lastDoppler = null
         sessMeta = null
@@ -515,6 +538,9 @@ class LiveStore(
                 dspComputeMs = dCompute.toArray(),
                 dspMotion = dMotion.toArray(),
                 lastDsp = lastDsp,
+                refT = refT.toArray(),
+                refHr = refHr.toArray(),
+                lastRef = lastRef,
                 dopT = dopT.toArray(),
                 dopV = dopV.toArray(),
                 dopAmp = dopAmp.toArray(),

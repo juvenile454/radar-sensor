@@ -10,6 +10,8 @@ import de.timo.radarsensor.core.RadarController
  *
  *   adb shell am broadcast -a de.timo.radarsensor.DEBUG -n de.timo.radarsensor/.debug.DebugReceiver --es cmd status
  *   … --es cmd rec_start --es name usb_lang | rec_stop | send --es line "iq3 0 raw" | stop | usb | disconnect
+ *   … --es cmd ref_scan | ref_connect --es addr <mac> | ref_disconnect | ref_status        (EKG-Gurt, V0.1)
+ *   … --es cmd mark --es text anhalten_start | metro --ei rate 15 (0 = aus)                 (Marker, Metronom, V0.2)
  *
  * Antwort steht im Ergebnis von `am broadcast` (data="…").
  */
@@ -55,6 +57,43 @@ class DebugReceiver : BroadcastReceiver() {
                         "DSP nachrechnen: ${dir.name}"
                     } else {
                         "keine Aufnahme: ${dir.name}"
+                    }
+                }
+                "ref_scan" -> {
+                    c.hrRef.scan()
+                    "Gurt-Suche 10 s; danach ref_status"
+                }
+                "ref_connect" -> {
+                    val addr = intent.getStringExtra("addr") ?: ""
+                    c.hrRef.connect(addr)
+                    "verbinde Gurt $addr"
+                }
+                "ref_disconnect" -> {
+                    c.hrRef.disconnect()
+                    "Gurt getrennt"
+                }
+                "ref_status" -> {
+                    val r = c.hrRef
+                    "Gurt ${r.state.value} | letzter ${r.last} | Benachrichtigungen ${r.notifications} | gefunden " +
+                        r.found.value.joinToString { "${it.name ?: "?"} ${it.address} ${it.rssi} dBm" }
+                }
+                "mark" -> {
+                    val text = intent.getStringExtra("text") ?: ""
+                    c.mark(text)
+                    "Marker $text"
+                }
+                "metro" -> {
+                    val rate = intent.getIntExtra("rate", 0)
+                    when (rate) {
+                        0 -> {
+                            c.metronome.stop()
+                            "Metronom aus"
+                        }
+                        in de.timo.radarsensor.record.MetronomeSchedule.RATES -> {
+                            c.metronome.start(rate)
+                            "Metronom $rate /min"
+                        }
+                        else -> "Takt nur ${de.timo.radarsensor.record.MetronomeSchedule.RATES} /min"
                     }
                 }
                 "status", null -> ""

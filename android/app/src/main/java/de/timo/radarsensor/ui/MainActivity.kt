@@ -37,14 +37,19 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
-    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
+        // Benachrichtigung (Vordergrunddienst) und Bluetooth für den EKG-Gurt (V0.1)
+        val missing =
+            listOf(
+                android.Manifest.permission.POST_NOTIFICATIONS,
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+            ).filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) permissions.launch(missing.toTypedArray())
         handleIntent(intent)
         setContent { RadarTheme { RadarScreen() } }
     }

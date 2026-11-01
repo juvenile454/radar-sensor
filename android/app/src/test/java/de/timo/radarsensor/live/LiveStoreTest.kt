@@ -1,6 +1,7 @@
 package de.timo.radarsensor.live
 
 import de.timo.radarsensor.protocol.LineParser
+import de.timo.radarsensor.reference.HrMeasurement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -116,5 +117,22 @@ class LiveStoreTest {
         for (v in 1..5) r.add(v.toFloat())
         assertEquals(listOf(3f, 4f, 5f), r.toArray().toList())
         assertEquals(5f, r.last())
+    }
+
+    /** V0.1/V5.1: Gurt-Puls auf der Zeitachse der Radarwerte (letzte Datenzeit + seitdem vergangene Zeit). */
+    @Test fun referenzKurveAufDerLiveZeitachse() {
+        var now = 0L
+        val s = LiveStore(nanoTime = { now })
+        s.reference(HrMeasurement(70, emptyList(), true)) // noch keine Radarzeit: verworfen
+        assertEquals(0, s.snapshot().refT.size)
+        s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,2000,14,1.0,0,1.0,0,0,2572")
+        now += 500_000_000L
+        s.reference(HrMeasurement(72, listOf(830.0), true))
+        val snap = s.snapshot()
+        assertEquals(listOf(72f), snap.refHr.toList())
+        assertEquals(2.5f, snap.refT[0], 1e-3f)
+        assertEquals(72, snap.lastRef?.bpm)
+        s.clear()
+        assertEquals(0, s.snapshot().refT.size)
     }
 }

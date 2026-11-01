@@ -1,5 +1,6 @@
 package de.timo.radarsensor.record
 
+import de.timo.radarsensor.reference.HrMeasurement
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.BufferedWriter
@@ -33,7 +34,9 @@ data class RecordingMeta(
 
 /**
  * Schreibt eine Aufnahme im selben Format wie host/esp_record.py: `stream.log` (Zeilen wie vom ESP32),
- * `rxtime.csv` (line,rx_ms seit Start), `meta.json`. Puffer werden jede Sekunde geleert, damit ein Absturz
+ * `rxtime.csv` (line,rx_ms seit Start), `meta.json`; dazu, sobald es Daten gibt, `ref_hr.csv` (EKG-Gurt, V0.1:
+ * rx_ms,hr_bpm,rr_ms,contact, eine Zeile je RR-Wert) und `events.csv` (Marker, V0.2: rx_ms,text). Alle rx_ms auf
+ * derselben Zeitachse (ms seit Aufnahmebeginn, elapsedRealtimeNanos), so wertet host/vital_eval.py sie aus. Puffer werden jede Sekunde geleert, damit ein Absturz
  * höchstens die letzte Sekunde kostet. Aufrufe aus dem Lese-Thread und der Oberfläche, daher synchronisiert.
  */
 class Recorder private constructor(
@@ -43,6 +46,8 @@ class Recorder private constructor(
 ) {
     private val log: BufferedWriter = File(dir, "stream.log").bufferedWriter(bufferSize = 64 * 1024)
     private val rx: BufferedWriter = File(dir, "rxtime.csv").bufferedWriter(bufferSize = 16 * 1024)
+    private var refHr: BufferedWriter? = null
+    private var events: BufferedWriter? = null
     private var lastFlush = startNanos
     private var closed = false
 
@@ -68,9 +73,50 @@ class Recorder private constructor(
         if (rxNanos - lastFlush > 1_000_000_000L) {
             log.flush()
             rx.flush()
+            refHr?.flush()
+            events?.flush()
             lastFlush = rxNanos
         }
     }
+
+    /** Eine Gurt-Benachrichtigung (V0.1): je RR-Wert eine Zeile, ohne RR eine Zeile mit leerem rr_ms. */
+    fun reference(
+        rxNanos: Long,
+        m: HrMeasurement,
+    ) = synchronized(this) {
+        if (closed) return
+        val w = refHr ?: File(dir, "ref_hr.csv").bufferedWriter().also {
+            it.write("rx_ms,hr_bpm,rr_ms,contact\n")
+            refHr = it
+        }
+        val t = ms(rxNanos)
+        val c = when (m.contact) {
+            true -> "1"
+            false -> "0"
+            null -> ""
+        }
+        if (m.rrMs.isEmpty()) {
+            w.write("$t,${m.bpm},,$c\n")
+        } else {
+            for (rr in m.rrMs) w.write("$t,${m.bpm},${"%.1f".format(java.util.Locale.ROOT, rr)},$c\n")
+        }
+    }
+
+    /** Marker (V0.2), wie host/vital_eval.py sie liest: „ein" (Metronom), „anhalten_start" / „anhalten_ende",
+     *  „bewegung_start" / „bewegung_ende", „zaehlen_start" / „zaehlen_ende". */
+    fun mark(
+        rxNanos: Long,
+        text: String,
+    ) = synchronized(this) {
+        if (closed) return
+        val w = events ?: File(dir, "events.csv").bufferedWriter().also {
+            it.write("rx_ms,text\n")
+            events = it
+        }
+        w.write("${ms(rxNanos)},${text.replace(Regex("[,\\r\\n]+"), " ").trim()}\n")
+    }
+
+    private fun ms(nanos: Long) = "%.1f".format(java.util.Locale.ROOT, (nanos - startNanos) / 1e6)
 
     fun command(
         cmd: String,
@@ -86,6 +132,8 @@ class Recorder private constructor(
             closed = true
             log.close()
             rx.close()
+            refHr?.close()
+            events?.close()
             meta.durationS = (nowNanos - startNanos) / 1e9
             meta.end = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
             writeMeta()
