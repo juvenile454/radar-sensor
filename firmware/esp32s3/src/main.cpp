@@ -601,7 +601,13 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
     if ((millis() - lastReportMs) >= 1000UL) {
       lastReportMs = millis();
       a121_dsp::VitalReport rep;
-      if (g_dsp.computeVitalReport(rep)) {
+      const bool vitalOk = g_dsp.computeVitalReport(rep);
+      // Zusatzzeile (Format von @VITAL bleibt unverändert): Punkt mit klarstem Puls, Konfidenz, Rechenzeit,
+      // Bewegungsanteil im Pulsfenster (%), stärkste Pulsspitze auf einer Atem-Oberwelle (0/1)
+      Serial.printf("@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u\n", (unsigned long)(millis() - tStart), (unsigned)vitalOk,
+                    (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)rep.compute_us, rep.motion_pct,
+                    (unsigned)rep.hr_harm);
+      if (vitalOk) {
         Serial.printf("@VITAL,%lu,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.2f,%.0f,%u\n",
                       (unsigned long)(millis() - tStart),
                       rep.br_bpm,
@@ -618,8 +624,10 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
                       rep.loopback_phase_std_mrad,
                       rep.target_dist_m * 1000.0f,
                       (unsigned)rep.num_room_targets);
+      }
 
-        // Automatischer Schnell-Rezoom, falls Subsweep 2 erkennt, dass das Ziel das 60-mm-Fenster verlassen hat
+      // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
+      {
         if (rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {
           zoomStartPt = rep.recommended_zoom_start_pt;
           g_srv.stopStreaming();

@@ -1,15 +1,30 @@
 /**
  * @file a121_esp_dsp.h
- * @brief On-Device 3-Subsweep Sparse-IQ & Vital-Signs DSP Engine für den ESP32-S3 (Core 1 / PSRAM).
+ * @brief On-Device-Auswertung der 3-Subsweep-Sparse-IQ-Session (`iq3`) auf dem ESP32-S3 (PSRAM).
  *
- * Implementiert die vollständige Signalverarbeitungskette direkt auf dem ESP32-S3:
- *   1. On-Chip Loopback Phasen-Derotation (Subsweep 0 -> kompensiert PLL-/Taktjitter pro Frame)
- *   2. Statisches Clutter-Filter & kohärentes 5-Bin Spatial Beamforming (Subsweep 1, 24 Bins @ 2.5 mm)
- *   3. Algebraischer Kåsa-Kreisfit in der komplexen IQ-Ebene + regularisiertes DACM Phase-Unwrapping
- *      (rechnet direkt in physikalische Thorax-Auslenkung in Mikrometern um: lambda/(4*pi) = 394.37 µm/rad)
- *   4. Gleitende 7-s Hann-Hilbert Atem-Oberwellen-Projektion (m = 1..6 per Orthogonal Least Squares)
- *   5. Tri-Modaler Herzfrequenz- & IBI-Schätzer (Spektral/HPS + Autokorrelation + Zeitbereichs-IBI/RMSSD)
- *   6. Simultaner Raum-Scan (Subsweep 2, 0.30..2.67 m @ 30 mm) mit Mehrpersonen-Erkennung & Auto-Rezoom.
+ * Kette (Stand 2026-11-01, an `iq3raw_normal_120s_2026-11-01.npz` und `iq3raw_motion_120s_2026-11-01.npz` entwickelt):
+ *   1. Subsweep 0: On-Chip-Loopback → Phasen-Derotation aller Zoom-Punkte pro Frame (PLL-/Taktjitter).
+ *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (15 s Historie).
+ *   3. Puls: pro Punkt Phase um den Fenster-Mittelpunkt abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
+ *      0,8–3,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
+ *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Spektrum 0,88–2,30 Hz; Spitzen zählen nur
+ *      zwischen 0,91 und 2,27 Hz (55–136 /min). Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
+ *      Punkte mit klarem Puls zählen mehr. Atem-Oberwellen werden NICHT herausprojiziert: Liegt der Puls nahe
+ *      m × Atemfrequenz, entfernt die Projektion den Herzanteil mit (am Datensatz: 13–42 % statt 61–89 % Treffer).
+ *   4. Verfolgung: Kandidaten (Top 3) mit ≥ 40 % der Spitzenleistung innerhalb ±12 /min des bisherigen Werts
+ *      werden bevorzugt (Glättung 0,7/0,3); ein weiter Sprung gilt erst, wenn er 3 Reports hält, auf eine
+ *      Atem-Oberwelle (m = 2..6) erst nach 10 Reports. hr_harm = 1 heißt nur "Spitze liegt auf einer
+ *      Oberwelle"; der Puls kann dort liegen (live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5).
+ *   5. Konfidenz = Anteil (gewichtet) der Punkte, deren eigener Spitzenwert ±5 /min am Ergebnis liegt.
+ *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
+ *   6. Atemfrequenz aus der Leistungssumme aller Zoom-Punkte (0,115–0,585 Hz, Bandrand ausgeschlossen); Atemhub,
+ *      Herz-Autokorrelation und Zeitbereichs-Schläge (IBI, RMSSD) auf dem Punkt mit dem klarsten Puls.
+ *   7. Subsweep 2: Raum-Scan 0,30–2,67 m (30 mm) mit Rezoom-Empfehlung. Kein Rezoom, solange ein bewegtes Ziel
+ *      im Zoom-Fenster liegt (vorher wechselte der Zoom zwischen Körperstellen und löschte jedes Mal die Historie).
+ *
+ * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
+ * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
+ * Ergebnisse sind Rhythmus-Schätzungen ohne medizinische Aussage; Genauigkeit nur mit Referenzmessung bewerten.
  */
 
 #ifndef A121_ESP_DSP_H
@@ -21,22 +36,53 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
+
 namespace a121_dsp {
 
-static constexpr float kRadarFreqHz       = 60.5e9f;
-static constexpr float kSpeedOfLight      = 299792458.0f;
-static constexpr float kWavelengthM       = kSpeedOfLight / kRadarFreqHz;          /* ~4.9552 mm */
-static constexpr float kRadToUm           = (kWavelengthM / (4.0f * (float)M_PI)) * 1.0e6f; /* ~394.37 µm/rad */
-static constexpr float kPointStepM        = 0.0025f;                               /* 2.5 mm pro A121 Step */
+static constexpr float kRadarFreqHz  = 60.5e9f;
+static constexpr float kSpeedOfLight = 299792458.0f;
+static constexpr float kWavelengthM  = kSpeedOfLight / kRadarFreqHz;                    /* ~4.9552 mm */
+static constexpr float kRadToUm      = (kWavelengthM / (4.0f * (float)M_PI)) * 1.0e6f;  /* ~394.37 µm/rad */
+static constexpr float kPointStepM   = 0.0025f;                                         /* 2.5 mm pro A121 Step */
 
-static constexpr uint16_t kZoomPoints     = 24U;   /* Subsweep 1: 24 Punkte * 2.5 mm = 60 mm Fokusfenster */
-static constexpr uint16_t kRoomStep       = 12U;   /* RSS: step_length muss Teiler oder Vielfaches von 24 sein (16 wird abgelehnt) */
-static constexpr uint16_t kRoomPoints     = 80U;   /* Subsweep 2: 80 Punkte * 30 mm  = 2.40 m Raumfenster */
-static constexpr uint16_t kTotal3SubPts   = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
+static constexpr uint16_t kZoomPoints   = 24U;  /* Subsweep 1: 24 Punkte * 2.5 mm = 60 mm Fokusfenster */
+static constexpr uint16_t kRoomStep     = 12U;  /* RSS: step_length muss Teiler oder Vielfaches von 24 sein */
+static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 Punkte * 30 mm = 2.40 m Raumfenster */
+static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
 
-static constexpr uint16_t kHistoryLen     = 512U;  /* ~8.5 s @ 60 Hz für hochauflösende Vital-Schätzung */
-static constexpr uint16_t kHilbertWinLen  = 420U;  /* 7.0 s @ 60 Hz für Hann-Hilbert Oberwellen-Projektion */
-static constexpr uint8_t  kMaxHarmonics   = 6U;    /* m = 1..6 Atem-Oberwellen */
+static constexpr float    kFsHz        = 60.0f;  /* Frame-Rate der iq3-Session; Filterkoeffizienten gelten nur hierfür */
+static constexpr uint16_t kHistoryLen  = 960U;   /* 16 s @ 60 Hz */
+static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
+static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
+static constexpr uint16_t kRespMinWin  = 180U;   /* ab 3 s Atmung */
+static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
+static constexpr float    kHrFMin      = 0.88f;  /* 53 /min */
+static constexpr float    kHrFStep     = 0.01f;  /* 0,6 /min (feiner bringt bei 15-s-Fenster nichts, am Datensatz geprüft) */
+static constexpr uint16_t kHrNumF      = 143U;   /* 0,88 .. 2,30 Hz */
+static constexpr float    kBrFMin      = 0.10f;  /* Atem-Spektrum über alle Zoom-Punkte: 0,10 .. 0,60 Hz */
+static constexpr float    kBrFStep     = 0.005f;
+static constexpr uint16_t kBrNumF      = 101U;
+static constexpr uint16_t kBrEdgeBins  = 3U;     /* Atem-Spitze nicht am Bandrand (früher oft 6 /min) */
+static constexpr float    kBrMinQ      = 2.0f;   /* Atem-Spitze/Median: darunter keine Oberwellen-Prüfung */
+static constexpr float    kHarmTolHz   = 0.04f;  /* Puls-Kandidat gilt als Atem-Oberwelle, wenn |f − m·f_Atem| ≤ 0,04 Hz */
+static constexpr uint8_t  kHarmMMax    = 6U;     /* geprüfte Oberwellen m = 2 .. 6 */
+static constexpr uint8_t  kHoldHarm    = 10U;    /* Sprung auf eine Oberwelle erst nach 10 Reports (sonst 3) */
+static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
+static constexpr uint16_t kGateBlk     = 60U;    /* Bewegungsdämpfung: 1-s-Blöcke im Herzband */
+static constexpr float    kGateK       = 1.25f;  /* Grenze = 1,25 × Effektivwert des ruhigen Viertels der Blöcke */
+static constexpr float    kGateP       = 3.0f;   /* Verstärkung darüber (Grenze/Effektivwert)^3: Bewegung fällt praktisch heraus */
+static constexpr float    kMotionK     = 3.0f;   /* für motion_pct: Block > 3 × ruhiges Viertel gilt als Bewegung */
+static constexpr uint8_t  kMaxBlocks   = kHrWin / kGateBlk;
+static constexpr uint16_t kHrEdgeBins  = 3U;     /* Spitzen in den äußeren 3 Frequenzschritten zählen nicht (Leckage vom Bandrand) */
+
+/* Butterworth-Bandpass 4. Ordnung 0,8–3,0 Hz bei 60 Hz: scipy.signal.butter(4, [0.8, 3.0], 'band', fs=60, output='sos') */
+static constexpr float kBpSos[4][6] = {
+    {0.00013253330021777534f, 0.00026506660043555067f, 0.00013253330021777534f, 1.0f, -1.7068261607237221f, 0.75242884221456008f},
+    {1.0f, 2.0f, 1.0f, 1.0f, -1.8535228619096662f, 0.86595611483803558f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.7862894348694949f, 0.87269707452243317f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.9543928216301054f, 0.96170037756512228f},
+};
 
 struct Complex16 {
     int16_t real;
@@ -58,17 +104,21 @@ struct VitalReport {
     float    loopback_phase_std_mrad;
     float    target_dist_m;
     uint8_t  best_zoom_bin;
-    float    zoom_snr_db;
+    float    zoom_snr_db;      /* kombiniertes Pulsspektrum: Spitze/Median in dB */
     float    resp_depth_um;
     float    heart_amp_um;
     float    br_bpm;
-    float    hr_spec_bpm;
-    float    hr_acf_bpm;
-    float    hr_ibi_bpm;
-    float    hr_fused_bpm;
+    float    hr_spec_bpm;      /* stärkster Peak des kombinierten Spektrums (ungefiltert) */
+    float    hr_acf_bpm;       /* Autokorrelation, Punkt mit klarstem Puls */
+    float    hr_ibi_bpm;       /* Zeitbereich (Median-IBI), Punkt mit klarstem Puls */
+    float    hr_fused_bpm;     /* verfolgter, geglätteter Puls (Hauptausgabe) */
     float    ibi_median_ms;
     float    rmssd_ms;
-    float    confidence_pct;
+    float    confidence_pct;   /* Übereinstimmung der Zoom-Punkte (gewichtet) */
+    uint8_t  hr_bin;           /* Zoom-Punkt mit klarstem Puls */
+    uint32_t compute_us;       /* Rechenzeit dieses Reports */
+    bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
+    float    motion_pct;       /* Anteil gedämpfter 1-s-Blöcke im Fenster (Bewegung), über alle Zoom-Punkte */
     uint8_t  num_room_targets;
     RoomTarget room_targets[4];
     bool     needs_rezoom;
@@ -85,32 +135,40 @@ public:
         room_step_     = room_step;
 
         if (!allocated_) {
-            hist_i_       = allocFloat(kHistoryLen);
-            hist_q_       = allocFloat(kHistoryLen);
-            hist_um_      = allocFloat(kHistoryLen);
-            hist_lb_phi_  = allocFloat(kHistoryLen);
-            work_detrend_ = allocFloat(kHistoryLen);
-            work_clean_   = allocFloat(kHistoryLen);
-            work_hr_      = allocFloat(kHistoryLen);
-            allocated_    = (hist_i_ && hist_q_ && hist_um_ && hist_lb_phi_ && work_detrend_ && work_clean_ && work_hr_);
+            hist_zoom_   = allocFloat((size_t)kHistoryLen * kZoomPoints * 2U);
+            hist_um_     = allocFloat(kHistoryLen);
+            hist_lb_phi_ = allocFloat(kHistoryLen);
+            work_x_      = allocFloat(kHrWin);
+            work_ext_    = allocFloat(kHrWin + 2U * kFiltPad);
+            best_x_      = allocFloat(kHrWin);
+            best_h_      = allocFloat(kHrWin);
+            dec_         = allocFloat(kHrWin / kDecim + 1U);
+            spec_        = allocFloat(kHrNumF);
+            comb_        = allocFloat(kHrNumF);
+            scratch_     = allocFloat(kHrNumF);
+            br_comb_     = allocFloat(kBrNumF);
+            allocated_   = hist_zoom_ && hist_um_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ &&
+                         dec_ && spec_ && comb_ && scratch_ && br_comb_;
         }
         resetState();
         return allocated_;
     }
 
     void resetState() {
-        frame_count_         = 0;
-        hist_write_idx_      = 0;
-        hist_count_          = 0;
-        cum_phase_rad_       = 0.0f;
-        prev_centered_i_     = 0.0f;
-        prev_centered_q_     = 0.0f;
-        have_prev_iq_        = false;
-        dc_i_                = 0.0f;
-        dc_q_                = 0.0f;
-        best_zoom_bin_       = kZoomPoints / 2U;
+        frame_count_          = 0;
+        hist_write_idx_       = 0;
+        hist_count_           = 0;
+        cum_phase_rad_        = 0.0f;
+        prev_centered_i_      = 0.0f;
+        prev_centered_q_      = 0.0f;
+        have_prev_iq_         = false;
+        dc_i_                 = 0.0f;
+        dc_q_                 = 0.0f;
+        best_zoom_bin_        = kZoomPoints / 2U;
         out_of_window_frames_ = 0;
-        last_temp_c_         = 0;
+        last_temp_c_          = 0;
+        hr_prev_              = 0.0f;
+        hr_miss_              = 0;
 
         memset(zoom_clutter_i_, 0, sizeof(zoom_clutter_i_));
         memset(zoom_clutter_q_, 0, sizeof(zoom_clutter_q_));
@@ -129,36 +187,23 @@ public:
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
 
     /**
-     * @brief Verarbeitet einen kompletten 3-Subsweep Sparse-IQ Frame (85 komplexe Punkte = 340 Bytes).
-     * @param pts Zeiger auf `kTotal3SubPts` (85) komplexe `int16_t` Samples
-     * @param n_pts Anzahl Punkte (muss >= 1 + kZoomPoints sein; Subsweep 2 optional falls 25 Punkte)
-     * @param temp_c A121 Chiptemperatur in °C
-     * @param dt_s Gemessenes Frame-Delta in Sekunden (z.B. ~0.01667 s @ 60 Hz)
-     * @param out_um_sample Aktueller Phasen-Auslenkungswert in µm (für Echtzeit-Telemetrie)
+     * @brief Verarbeitet einen 3-Subsweep-Frame (105 komplexe Punkte).
+     * @param dt_s wird nicht mehr verwendet (Zeitbasis = kFsHz); bleibt für die Aufrufer-Kompatibilität.
+     * @param out_um_sample Auslenkung des Telemetrie-Strahls in µm (für `@IQ3`).
      */
     void pushFrame(const Complex16 *pts, uint16_t n_pts, int16_t temp_c, float dt_s, float &out_um_sample) {
+        (void)dt_s;
         if (!allocated_ || pts == nullptr || n_pts < (1U + kZoomPoints)) {
             out_um_sample = 0.0f;
             return;
         }
-
         last_temp_c_ = temp_c;
-        if (dt_s > 0.002f && dt_s < 0.250f) {
-            const float inst_fs = 1.0f / dt_s;
-            fs_ema_hz_ = (frame_count_ == 0) ? inst_fs : (0.98f * fs_ema_hz_ + 0.02f * inst_fs);
-        } else if (frame_count_ == 0) {
-            fs_ema_hz_ = 60.0f;
-        }
 
-        /* ---------------------------------------------------------------------
-         * 1. Subsweep 0: On-Chip Loopback Phasenreferenz & Derotation
-         * --------------------------------------------------------------------- */
+        /* 1. Loopback-Phasenreferenz */
         const float lb_i   = (float)pts[0].real;
         const float lb_q   = (float)pts[0].imag;
         const float lb_amp = sqrtf(lb_i * lb_i + lb_q * lb_q);
-        float       rot_re = 1.0f;
-        float       rot_im = 0.0f;
-        float       lb_phi = 0.0f;
+        float rot_re = 1.0f, rot_im = 0.0f, lb_phi = 0.0f;
         if (lb_amp > 1.0f) {
             rot_re =  lb_i / lb_amp;
             rot_im = -lb_q / lb_amp; /* e^{-j * phi_lb} */
@@ -166,13 +211,9 @@ public:
         }
         last_lb_amp_ = lb_amp;
 
-        /* ---------------------------------------------------------------------
-         * 2. Subsweep 1: 24 Zoom-Bins derotieren & Pulsations-Varianz schätzen
-         * --------------------------------------------------------------------- */
-        float derot_i[kZoomPoints];
-        float derot_q[kZoomPoints];
+        /* 2. Zoom-Punkte derotieren, speichern und Bewegungsenergie schätzen */
+        float derot_i[kZoomPoints], derot_q[kZoomPoints];
         const Complex16 *zoom_pts = &pts[1];
-
         for (uint16_t b = 0; b < kZoomPoints; b++) {
             const float ri = (float)zoom_pts[b].real;
             const float rq = (float)zoom_pts[b].imag;
@@ -180,7 +221,9 @@ public:
             const float zq = ri * rot_im + rq * rot_re;
             derot_i[b] = zi;
             derot_q[b] = zq;
-
+            float *slot = hist_zoom_ + ((size_t)b * kHistoryLen + hist_write_idx_) * 2U;  /* punktweise ablegen */
+            slot[0] = zi;
+            slot[1] = zq;
             if (frame_count_ == 0) {
                 zoom_clutter_i_[b] = zi;
                 zoom_clutter_q_[b] = zq;
@@ -190,75 +233,50 @@ public:
                 const float dq = zq - zoom_clutter_q_[b];
                 zoom_clutter_i_[b] += 0.008f * di;
                 zoom_clutter_q_[b] += 0.008f * dq;
-                const float dyn_pwr = di * di + dq * dq;
-                zoom_var_ema_[b]    = 0.96f * zoom_var_ema_[b] + 0.04f * dyn_pwr;
+                zoom_var_ema_[b]    = 0.96f * zoom_var_ema_[b] + 0.04f * (di * di + dq * dq);
             }
         }
 
-        /* Alle 30 Frames (~0.5 s) den dominanten Thorax-Bin im 60-mm-Fenster aktualisieren */
+        /* Telemetrie-Strahl: Punkt mit größter Bewegung, Wechsel nur bei 1,5-fach besserem Wert (Hysterese).
+         * Ein Wechsel ohne Hysterese ließ das Wegsignal alle 0,5 s um bis zu 1 mm springen. */
         if (frame_count_ >= 15 && (frame_count_ % 30 == 0)) {
-            float   best_score = -1.0f;
-            uint8_t best_bin   = best_zoom_bin_;
+            float best_score = -1.0f, cur_score = 0.0f;
+            uint8_t best_bin = best_zoom_bin_;
             for (uint8_t b = 2; b < kZoomPoints - 2; b++) {
                 const float amp_sq = zoom_clutter_i_[b] * zoom_clutter_i_[b] + zoom_clutter_q_[b] * zoom_clutter_q_[b];
-                /* Kombiniere dynamische Pulsationsenergie mit hinreichender Trägeramplitude */
-                const float score = zoom_var_ema_[b] * sqrtf(amp_sq + 1.0f);
+                const float score  = zoom_var_ema_[b] * sqrtf(amp_sq + 1.0f);
+                if (b == best_zoom_bin_) cur_score = score;
                 if (score > best_score) {
                     best_score = score;
                     best_bin   = b;
                 }
             }
-            best_zoom_bin_ = best_bin;
+            if (best_bin != best_zoom_bin_ && best_score > 1.5f * cur_score) {
+                best_zoom_bin_ = best_bin;
+                beam_switched_ = true;
+            }
         }
 
-        /* Kohärentes 5-Bin Spatial Beamforming um best_zoom_bin_ (Phasen-Alignment auf Zentral-Bin) */
-        const uint8_t b0     = best_zoom_bin_;
-        const float   ref_ci = zoom_clutter_i_[b0];
-        const float   ref_cq = zoom_clutter_q_[b0];
-        const float   ref_ca = sqrtf(ref_ci * ref_ci + ref_cq * ref_cq) + 1e-3f;
+        float beam_i = 0.0f, beam_q = 0.0f, cl_i = 0.0f, cl_q = 0.0f;
+        beamform(derot_i, derot_q, beam_i, beam_q, cl_i, cl_q);
 
-        float beam_i = 0.0f;
-        float beam_q = 0.0f;
-        float w_sum  = 0.0f;
-        for (int8_t db = -2; db <= 2; db++) {
-            const int16_t idx = (int16_t)b0 + db;
-            if (idx < 0 || idx >= (int16_t)kZoomPoints) continue;
-            const float ci  = zoom_clutter_i_[idx];
-            const float cq  = zoom_clutter_q_[idx];
-            const float ca  = sqrtf(ci * ci + cq * cq) + 1e-3f;
-            /* Phasen-Rotation von Bin idx auf Referenz-Bin b0 anhand des mittleren Clutter-Vektors */
-            const float align_re = (ci * ref_ci + cq * ref_cq) / (ca * ref_ca);
-            const float align_im = (ci * ref_cq - cq * ref_ci) / (ca * ref_ca);
-            const float w        = (db == 0) ? 1.0f : ((abs(db) == 1) ? 0.75f : 0.40f);
-            const float si       = derot_i[idx] * align_re - derot_q[idx] * align_im;
-            const float sq       = derot_i[idx] * align_im + derot_q[idx] * align_re;
-            beam_i += w * si;
-            beam_q += w * sq;
-            w_sum  += w;
-        }
-        beam_i /= w_sum;
-        beam_q /= w_sum;
-
-        /* ---------------------------------------------------------------------
-         * 3. Kåsa-Zentrierung & Regularisiertes DACM Phase-Unwrapping -> µm
-         * --------------------------------------------------------------------- */
-        if (frame_count_ == 0) {
-            dc_i_ = beam_i;
-            dc_q_ = beam_q;
+        /* 3. Zentrierung + Phasenabwicklung → µm (nur Telemetrie; der Puls wird aus den Einzelpunkten berechnet) */
+        if (frame_count_ == 0 || beam_switched_) {
+            dc_i_ = cl_i;  /* nach einem Strahlwechsel vom statischen Anteil des neuen Strahls starten */
+            dc_q_ = cl_q;
+            have_prev_iq_  = false;
+            beam_switched_ = false;
         } else {
             dc_i_ += 0.002f * (beam_i - dc_i_);
             dc_q_ += 0.002f * (beam_q - dc_q_);
         }
-
         const float ci = beam_i - dc_i_;
         const float cq = beam_q - dc_q_;
         if (have_prev_iq_) {
             const float cross = prev_centered_i_ * cq - prev_centered_q_ * ci;
             const float dot   = prev_centered_i_ * ci + prev_centered_q_ * cq;
             const float mag2  = prev_centered_i_ * prev_centered_i_ + prev_centered_q_ * prev_centered_q_ + 25.0f;
-            /* Kombination aus exakt unbeschränktem atan2(cross, dot) mit Regularisierung bei kleinem Radius */
-            const float dphi  = (mag2 > 2500.0f) ? atan2f(cross, dot) : (cross / mag2);
-            cum_phase_rad_   += dphi;
+            cum_phase_rad_   += (mag2 > 2500.0f) ? atan2f(cross, dot) : (cross / mag2);
         }
         prev_centered_i_ = ci;
         prev_centered_q_ = cq;
@@ -266,20 +284,12 @@ public:
 
         const float disp_um = cum_phase_rad_ * kRadToUm;
         out_um_sample       = disp_um;
-
-        /* In Ringpuffer (PSRAM) ablegen */
-        hist_i_[hist_write_idx_]      = beam_i;
-        hist_q_[hist_write_idx_]      = beam_q;
         hist_um_[hist_write_idx_]     = disp_um;
         hist_lb_phi_[hist_write_idx_] = lb_phi;
-        hist_write_idx_               = (hist_write_idx_ + 1U) % kHistoryLen;
-        if (hist_count_ < kHistoryLen) {
-            hist_count_++;
-        }
+        hist_write_idx_ = (uint16_t)((hist_write_idx_ + 1U) % kHistoryLen);
+        if (hist_count_ < kHistoryLen) hist_count_++;
 
-        /* ---------------------------------------------------------------------
-         * 4. Subsweep 2: Simultaner Full-Room Scan (80 Bins, 0.30..2.67 m)
-         * --------------------------------------------------------------------- */
+        /* 4. Raum-Scan (Subsweep 2) */
         if (n_pts >= kTotal3SubPts) {
             const Complex16 *room_pts = &pts[1U + kZoomPoints];
             for (uint16_t r = 0; r < kRoomPoints; r++) {
@@ -301,354 +311,387 @@ public:
                 }
             }
         }
-
         frame_count_++;
     }
 
     /**
-     * @brief Führt die komplette Vital- und Raum-Auswertung auf dem aktuellen PSRAM-Gleitfenster aus.
+     * @brief Raum-Ziele + Rezoom-Empfehlung immer; Vitalwerte (valid = true) ab kHrMinWin Frames.
+     *        Etwa einmal pro Sekunde aufrufen (Verfolgung und Rezoom zählen in Reports).
      */
     bool computeVitalReport(VitalReport &rep) {
+        const uint32_t t0 = micros();
         memset(&rep, 0, sizeof(rep));
         rep.frame_count   = frame_count_;
-        rep.fs_hz         = fs_ema_hz_;
+        rep.fs_hz         = kFsHz;
         rep.temperature_c = last_temp_c_;
         rep.loopback_amp  = last_lb_amp_;
         rep.best_zoom_bin = best_zoom_bin_;
         rep.target_dist_m = (float)(zoom_start_pt_ + (int32_t)best_zoom_bin_) * kPointStepM;
-
-        /* Raum-Ziele aus Subsweep 2 bestimmen (immer verfügbar ab wenigen Frames) */
         extractRoomTargets(rep);
 
-        if (hist_count_ < 180U) { /* Mindestens 3.0 s Daten @ 60 Hz für Vital-Analyse */
+        if (hist_count_ < kHrMinWin) {
             rep.valid = false;
+            rep.compute_us = micros() - t0;
             return false;
         }
+        const uint16_t N = (hist_count_ > kHrWin) ? kHrWin : hist_count_;
+        const uint16_t start = (uint16_t)((hist_write_idx_ + kHistoryLen - N) % kHistoryLen);
 
-        const uint16_t N  = (hist_count_ > kHilbertWinLen) ? kHilbertWinLen : hist_count_;
-        const float    fs = (fs_ema_hz_ > 10.0f) ? fs_ema_hz_ : 60.0f;
-
-        /* 1. Letzte N Samples chronologisch in Arbeits-Arrays kopieren & Loopback-Jitter berechnen */
-        const uint16_t start_idx = (hist_write_idx_ + kHistoryLen - N) % kHistoryLen;
-        float lb_mean = 0.0f;
-        for (uint16_t n = 0; n < N; n++) {
-            const uint16_t idx = (start_idx + n) % kHistoryLen;
-            work_detrend_[n]   = hist_um_[idx];
-            lb_mean           += hist_lb_phi_[idx];
-        }
+        /* Loopback-Phasenstabilität */
+        float lb_mean = 0.0f, lb_var = 0.0f;
+        for (uint16_t n = 0; n < N; n++) lb_mean += hist_lb_phi_[(start + n) % kHistoryLen];
         lb_mean /= (float)N;
-        float lb_var = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
-            const uint16_t idx = (start_idx + n) % kHistoryLen;
-            const float    d   = hist_lb_phi_[idx] - lb_mean;
+            const float d = hist_lb_phi_[(start + n) % kHistoryLen] - lb_mean;
             lb_var += d * d;
         }
         rep.loopback_phase_std_mrad = sqrtf(lb_var / (float)N) * 1000.0f;
 
-        /* 2. Kåsa Circle Fit Verfeinerung auf den letzten N IQ-Samples */
-        refineKasaPhaseTrace(start_idx, N, work_detrend_);
+        /* Puls: Spektren aller Zoom-Punkte, gewichtet gemittelt */
+        const uint16_t M = (uint16_t)((N + kDecim - 1U) / kDecim);
+        float peak_hz[kZoomPoints], weight[kZoomPoints];
+        float wsum = 0.0f, best_q = -1.0f;
+        uint8_t hr_bin = 0;
+        uint32_t moving_blocks = 0, total_blocks = 0;
+        for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] = 0.0f;
+        for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
 
-        /* 3. Linearen Drift (Mittelwert + Steigung) aus dem µm-Phasensignal entfernen */
-        removeLinearTrend(work_detrend_, N);
-
-        /* 4. Atemfrequenz f_resp in [0.10 .. 0.55 Hz] (6.0 .. 33.0 BPM) mit hoher Frequenzauflösung finden */
-        float best_resp_f   = 0.22f;
-        float best_resp_pwr = -1.0f;
-        for (float f = 0.10f; f <= 0.55f; f += 0.0025f) {
-            const float pwr = goertzelPowerHann(work_detrend_, N, fs, f);
-            if (pwr > best_resp_pwr) {
-                best_resp_pwr = pwr;
-                best_resp_f   = f;
+        for (uint8_t b = 0; b < kZoomPoints; b++) {
+            binDisplacement(b, start, N, work_x_);
+            removeLinearTrend(work_x_, N);
+            float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
+            sosFiltFilt(work_x_, N);
+            moving_blocks += gateMotion(h, N);
+            /* Atem-Spektrum dieses Punkts (entzerrtes Wegsignal, dezimiert, Hann), Leistung über alle Punkte summiert */
+            for (uint16_t m = 0; m < M; m++) {
+                const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
+                dec_[m] = work_x_[(uint32_t)m * kDecim] * w;
+            }
+            for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] += goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
+            total_blocks += N / kGateBlk;
+            /* dezimieren + Hann */
+            for (uint16_t m = 0; m < M; m++) {
+                const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
+                dec_[m] = h[(uint32_t)m * kDecim] * w;
+            }
+            float pmax = 0.0f;
+            uint16_t kmax = 0;
+            for (uint16_t k = 0; k < kHrNumF; k++) {
+                spec_[k] = goertzelPower(dec_, M, kFsHz / kDecim, kHrFMin + kHrFStep * k);
+                if (spec_[k] > pmax) { pmax = spec_[k]; kmax = k; }
+            }
+            memcpy(scratch_, spec_, kHrNumF * sizeof(float));
+            std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
+            const float med = scratch_[kHrNumF / 2] + 1e-12f;
+            const float q   = pmax / med;
+            const float w   = q * q;
+            for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] += w * (spec_[k] / med);
+            wsum += w;
+            weight[b]  = w;
+            peak_hz[b] = kHrFMin + kHrFStep * kmax;
+            if (q > best_q) {
+                best_q = q;
+                hr_bin = b;
+                memcpy(best_x_, work_x_, N * sizeof(float));
+                memcpy(best_h_, h, N * sizeof(float));
             }
         }
-        rep.br_bpm        = best_resp_f * 60.0f;
-        rep.resp_depth_um = 2.0f * sqrtf(best_resp_pwr);
+        for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] /= (wsum + 1e-12f);
+        rep.hr_bin     = hr_bin;
+        rep.motion_pct = 100.0f * (float)moving_blocks / (float)(total_blocks ? total_blocks : 1U);
 
-        /* 5. Hann-gewichtete Orthogonal-Projektion der Atem-Oberwellen m = 1..6 (Sub-Bin Unterdrückung) */
-        memcpy(work_clean_, work_detrend_, N * sizeof(float));
-        projectOutRespirationHarmonics(work_clean_, N, fs, best_resp_f, kMaxHarmonics);
+        /* Kandidaten: Top 3 lokale Maxima mit ≥ 0,08 Hz Abstand, nicht am Bandrand (am Datensatz lag die häufigste
+         * Fehlspitze bei 54 /min = 0,90 Hz direkt über der Suchgrenze 0,88 Hz und wurde von vielen Punkten gestützt) */
+        int16_t cand[3] = {-1, -1, -1};
+        uint8_t n_cand  = 0;
+        for (uint8_t c = 0; c < 3; c++) {
+            int16_t bestk = -1;
+            for (uint16_t k = kHrEdgeBins; k + kHrEdgeBins < kHrNumF; k++) {
+                if (comb_[k] < comb_[k - 1] || comb_[k] < comb_[k + 1]) continue;
+                bool far = true;
+                for (uint8_t j = 0; j < n_cand; j++)
+                    if (fabsf((float)(k - cand[j]) * kHrFStep) <= 0.08f) far = false;
+                if (far && (bestk < 0 || comb_[k] > comb_[bestk])) bestk = (int16_t)k;
+            }
+            if (bestk < 0) break;
+            cand[n_cand++] = bestk;
+        }
+        if (n_cand == 0) {
+            rep.valid = false;
+            rep.compute_us = micros() - t0;
+            return false;
+        }
+        /* Atmung über alle Punkte: Spitze nicht am Bandrand, parabolisch verfeinert */
+        float fb = 0.0f, br_q = 0.0f;
+        {
+            uint16_t kb = kBrEdgeBins;
+            for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
+                if (br_comb_[k] > br_comb_[kb]) kb = k;
+            const float a = br_comb_[kb - 1], b = br_comb_[kb], c = br_comb_[kb + 1];
+            float d = 0.0f;
+            if (b >= a && b >= c && a - 2.0f * b + c < 0.0f)
+                d = std::max(-0.5f, std::min(0.5f, 0.5f * (a - c) / (a - 2.0f * b + c)));
+            fb = kBrFMin + kBrFStep * ((float)kb + d);
+            memcpy(scratch_, br_comb_, kBrNumF * sizeof(float));
+            std::nth_element(scratch_, scratch_ + kBrNumF / 2, scratch_ + kBrNumF);
+            br_q = b / (scratch_[kBrNumF / 2] + 1e-12f);
+        }
+        /* Atem-Oberwellen (m = 2..6) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
+         * und überdeckte den Puls ganz. Eine Oberwelle wird nicht entfernt (der Puls kann darauf liegen), aber ein
+         * Sprung dorthin braucht kHoldHarm statt 3 Reports. Am Datensatz mit schneller Atmung: ±8 /min von 47 auf 89 %. */
+        auto isHarm = [&](int16_t k) {
+            if (br_q < kBrMinQ) return false;
+            const float f = kHrFMin + kHrFStep * k;
+            for (uint8_t m = 2; m <= kHarmMMax; m++)
+                if (fabsf(f - (float)m * fb) <= kHarmTolHz) return true;
+            return false;
+        };
+        rep.hr_harm = isHarm(cand[0]);
+        const float raw_bpm = (kHrFMin + kHrFStep * cand[0]) * 60.0f;
+        rep.hr_spec_bpm = raw_bpm;
+        memcpy(scratch_, comb_, kHrNumF * sizeof(float));
+        std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
+        rep.zoom_snr_db = 10.0f * log10f(comb_[cand[0]] / (scratch_[kHrNumF / 2] + 1e-12f));
 
-        /* 6. Vorwärts-Rückwärts 2. Ordnung Butterworth-Bandpass [0.88 .. 3.00 Hz] (53 .. 180 BPM) */
-        bandpassCardiacZeroPhase(work_clean_, work_hr_, N, fs);
+        /* Verfolgung mit Haltezeit. Ein Abbruch der Haltezeit über die Punkt-Zustimmung wurde getestet und
+         * verworfen: Rhythmische Bewegung im Herzband wird von allen Punkten gestützt, der Puls sprang häufiger. */
+        auto agreeAt = [&](float bpm) {
+            float a = 0.0f;
+            for (uint8_t b = 0; b < kZoomPoints; b++)
+                if (fabsf(peak_hz[b] * 60.0f - bpm) <= 5.0f) a += weight[b];
+            return a / (wsum + 1e-12f);
+        };
+        if (hr_prev_ <= 0.0f) {
+            hr_prev_ = raw_bpm;
+            hr_miss_ = 0;
+        } else {
+            int16_t near = -1;
+            for (uint8_t j = 0; j < n_cand; j++) {
+                const float bpm = (kHrFMin + kHrFStep * cand[j]) * 60.0f;
+                if (comb_[cand[j]] >= 0.4f * comb_[cand[0]] && fabsf(bpm - hr_prev_) < 12.0f &&
+                    (near < 0 || comb_[cand[j]] > comb_[near]))
+                    near = cand[j];
+            }
+            if (near >= 0) {
+                hr_prev_ = 0.7f * hr_prev_ + 0.3f * (kHrFMin + kHrFStep * near) * 60.0f;
+                hr_miss_ = 0;
+            } else if (++hr_miss_ >= (rep.hr_harm ? kHoldHarm : 3U)) {
+                hr_prev_ = raw_bpm;
+                hr_miss_ = 0;
+            }
+        }
+        rep.hr_fused_bpm   = hr_prev_;
+        rep.confidence_pct = 100.0f * agreeAt(hr_prev_);
 
+        /* Herzsignal des klarsten Punkts: Amplitude, Autokorrelation, Einzelschläge */
         float hr_rms = 0.0f;
-        for (uint16_t n = 0; n < N; n++) {
-            hr_rms += work_hr_[n] * work_hr_[n];
-        }
+        for (uint16_t n = 0; n < N; n++) hr_rms += best_h_[n] * best_h_[n];
         rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)N);
-
-        /* 7. Schätzer A: Spektral + Harmonic Product Spectrum (HPS) auf [0.88 .. 2.30 Hz] (53 .. 138 BPM) */
-        float best_hr_f   = 1.15f;
-        float best_hr_scr = -1.0f;
-        float total_hr_p  = 1e-6f;
-        for (float f = 0.88f; f <= 2.30f; f += 0.005f) {
-            const float p1 = goertzelPowerHann(work_hr_, N, fs, f);
-            const float p2 = goertzelPowerHann(work_dot_diff(work_detrend_, N, fs), N, fs, 2.0f * f);
-            total_hr_p += p1;
-            const float score = p1 * (1.0f + 0.45f * sqrtf(p2 / (p1 + 1.0f)));
-            if (score > best_hr_scr) {
-                best_hr_scr = score;
-                best_hr_f   = f;
-            }
-        }
-        rep.hr_spec_bpm = best_hr_f * 60.0f;
-        const float spec_snr = best_hr_scr / (total_hr_p / 285.0f + 1e-6f);
-        rep.zoom_snr_db = 10.0f * log10f(spec_snr + 1.0f);
-
-        /* 8. Schätzer B: Normierte Autokorrelation (ACF) im Herz-Lags-Bereich [0.33 .. 1.15 s] */
-        float acf_bpm  = rep.hr_spec_bpm;
-        float acf_peak = 0.0f;
-        computeCardiacAcf(work_hr_, N, fs, acf_bpm, acf_peak);
+        float acf_bpm = hr_prev_, acf_peak = 0.0f;
+        computeCardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
         rep.hr_acf_bpm = acf_bpm;
-
-        /* 9. Schätzer C: Zeitbereichs-Herzschlag-Detektor (IBI Median & RMSSD) */
-        float ibi_bpm   = rep.hr_spec_bpm;
-        float ibi_ms    = 60000.0f / rep.hr_spec_bpm;
-        float rmssd_ms  = 0.0f;
+        float ibi_bpm = hr_prev_, ibi_ms = 60000.0f / hr_prev_, rmssd_ms = 0.0f;
         uint8_t n_beats = 0;
-        computeTimeDomainIbi(work_hr_, N, fs, ibi_bpm, ibi_ms, rmssd_ms, n_beats);
+        computeTimeDomainIbi(best_h_, N, kFsHz, ibi_bpm, ibi_ms, rmssd_ms, n_beats);
         rep.hr_ibi_bpm    = ibi_bpm;
         rep.ibi_median_ms = ibi_ms;
         rep.rmssd_ms      = rmssd_ms;
 
-        /* 10. Konfidenz-gewichtete Mehrheits-Fusion der 3 Herzfrequenz-Schätzer (Spec/HPS, ACF, IBI) */
-        const float diff_spec_acf = fabsf(rep.hr_spec_bpm - rep.hr_acf_bpm);
-        const float diff_spec_ibi = fabsf(rep.hr_spec_bpm - rep.hr_ibi_bpm);
-        const float diff_acf_ibi  = fabsf(rep.hr_acf_bpm - rep.hr_ibi_bpm);
-        if (diff_spec_acf < 6.0f && diff_spec_ibi < 8.0f) {
-            rep.hr_fused_bpm = 0.45f * rep.hr_spec_bpm + 0.35f * rep.hr_acf_bpm + 0.20f * rep.hr_ibi_bpm;
-        } else if (diff_spec_acf < 8.0f) {
-            rep.hr_fused_bpm = 0.55f * rep.hr_spec_bpm + 0.45f * rep.hr_acf_bpm;
-        } else if (diff_spec_ibi < 8.0f) {
-            rep.hr_fused_bpm = 0.55f * rep.hr_spec_bpm + 0.45f * rep.hr_ibi_bpm;
-        } else if (diff_acf_ibi < 8.0f) {
-            rep.hr_fused_bpm = 0.55f * rep.hr_acf_bpm + 0.45f * rep.hr_ibi_bpm;
-        } else {
-            rep.hr_fused_bpm = rep.hr_spec_bpm;
+        /* Atemhub am Punkt mit klarstem Puls, bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann) */
+        for (uint16_t m = 0; m < M; m++) {
+            const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
+            dec_[m] = best_x_[(uint32_t)m * kDecim] * w;
         }
+        const float best_p = goertzelPower(dec_, M, kFsHz / kDecim, fb);
+        const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
+        rep.br_bpm        = fb * 60.0f;
+        rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
 
-        float conf = 25.0f + 35.0f * fminf(1.0f, acf_peak / 0.45f)
-                   + 25.0f * fminf(1.0f, spec_snr / 8.0f)
-                   + 15.0f * fmaxf(0.0f, 1.0f - diff_spec_acf / 15.0f);
-        if (conf > 99.0f) conf = 99.0f;
-        if (conf < 5.0f)  conf = 5.0f;
-        rep.confidence_pct = conf;
-        rep.valid          = true;
+        rep.valid      = true;
+        rep.compute_us = micros() - t0;
         return true;
     }
 
 private:
     static float *allocFloat(size_t count) {
         void *p = nullptr;
-        if (psramFound()) {
-            p = ps_malloc(count * sizeof(float));
-        }
-        if (!p) {
-            p = malloc(count * sizeof(float));
-        }
-        if (p) {
-            memset(p, 0, count * sizeof(float));
-        }
+        if (psramFound()) p = ps_malloc(count * sizeof(float));
+        if (!p) p = malloc(count * sizeof(float));
+        if (p) memset(p, 0, count * sizeof(float));
         return (float *)p;
     }
 
-    /**
-     * @brief Algebraischer Kåsa-Kreisfit über die letzten N komplexen IQ-Punkte.
-     *        Wenn der Bogen groß genug ist, korrigiert er das statische Clutter-Zentrum (I0, Q0).
-     */
-    void refineKasaPhaseTrace(uint16_t start_idx, uint16_t N, float *out_um) {
-        double mean_i = 0.0, mean_q = 0.0;
-        for (uint16_t n = 0; n < N; n++) {
-            const uint16_t idx = (start_idx + n) % kHistoryLen;
-            mean_i += hist_i_[idx];
-            mean_q += hist_q_[idx];
+    /** Kohärenter 5-Punkt-Strahl um best_zoom_bin_ (für Telemetrie); cl_* = derselbe Strahl über die Clutter-Schätzung. */
+    void beamform(const float *di, const float *dq, float &bi, float &bq, float &cli, float &clq) const {
+        const uint8_t b0 = best_zoom_bin_;
+        const float ref_ci = zoom_clutter_i_[b0], ref_cq = zoom_clutter_q_[b0];
+        const float ref_ca = sqrtf(ref_ci * ref_ci + ref_cq * ref_cq) + 1e-3f;
+        float w_sum = 0.0f;
+        for (int8_t db = -2; db <= 2; db++) {
+            const int16_t idx = (int16_t)b0 + db;
+            if (idx < 0 || idx >= (int16_t)kZoomPoints) continue;
+            const float ci = zoom_clutter_i_[idx], cq = zoom_clutter_q_[idx];
+            const float ca = sqrtf(ci * ci + cq * cq) + 1e-3f;
+            const float are = (ci * ref_ci + cq * ref_cq) / (ca * ref_ca);
+            const float aim = (ci * ref_cq - cq * ref_ci) / (ca * ref_ca);
+            const float w   = (db == 0) ? 1.0f : ((abs(db) == 1) ? 0.75f : 0.40f);
+            bi  += w * (di[idx] * are - dq[idx] * aim);
+            bq  += w * (di[idx] * aim + dq[idx] * are);
+            cli += w * (ci * are - cq * aim);
+            clq += w * (ci * aim + cq * are);
+            w_sum += w;
         }
-        mean_i /= (double)N;
-        mean_q /= (double)N;
+        bi /= w_sum; bq /= w_sum; cli /= w_sum; clq /= w_sum;
+    }
 
-        double suu = 0.0, suv = 0.0, svv = 0.0, suuu = 0.0, svvv = 0.0, suvv = 0.0, svuu = 0.0;
+    /** Phase des Zoom-Punkts b um den Fenster-Mittelpunkt abwickeln → µm. */
+    void binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out) const {
+        const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
+        double mi = 0.0, mq = 0.0;
         for (uint16_t n = 0; n < N; n++) {
-            const uint16_t idx = (start_idx + n) % kHistoryLen;
-            const double u = hist_i_[idx] - mean_i;
-            const double v = hist_q_[idx] - mean_q;
-            suu  += u * u;
-            suv  += u * v;
-            svv  += v * v;
-            suuu += u * u * u;
-            svvv += v * v * v;
-            suvv += u * v * v;
-            svuu += v * u * u;
+            const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
+            mi += z[0];
+            mq += z[1];
         }
-
-        const double det = suu * svv - suv * suv;
-        const double rms_r = sqrt((suu + svv) / (double)N);
-        double center_i = mean_i;
-        double center_q = mean_q;
-
-        if (det > 1e-3 && rms_r > 15.0) {
-            const double rhs_u = 0.5 * (suuu + suvv);
-            const double rhs_v = 0.5 * (svvv + svuu);
-            const double uc    = (rhs_u * svv - rhs_v * suv) / det;
-            const double vc    = (suu * rhs_v - suv * rhs_u) / det;
-            const double rad   = sqrt(uc * uc + vc * vc + (suu + svv) / (double)N);
-            /* Nur übernehmen, wenn der geschätzte Kreisradius physikalisch plausibel ist */
-            if (rad > 0.3 * rms_r && rad < 6.0 * rms_r) {
-                center_i = mean_i + uc;
-                center_q = mean_q + vc;
+        mi /= (double)N;
+        mq /= (double)N;
+        float prev = 0.0f, acc = 0.0f;
+        for (uint16_t n = 0; n < N; n++) {
+            const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
+            const float phi = atan2f(z[1] - (float)mq, z[0] - (float)mi);
+            if (n > 0) {
+                float d = phi - prev;
+                if (d > (float)M_PI) d -= 2.0f * (float)M_PI;
+                else if (d < -(float)M_PI) d += 2.0f * (float)M_PI;
+                acc += d;
+            } else {
+                acc = phi;
             }
+            prev   = phi;
+            out[n] = acc * kRadToUm;
         }
+    }
 
-        float phi = 0.0f;
-        out_um[0] = 0.0f;
-        for (uint16_t n = 1; n < N; n++) {
-            const uint16_t idx0 = (start_idx + n - 1U) % kHistoryLen;
-            const uint16_t idx1 = (start_idx + n) % kHistoryLen;
-            const float i0 = hist_i_[idx0] - (float)center_i;
-            const float q0 = hist_q_[idx0] - (float)center_q;
-            const float i1 = hist_i_[idx1] - (float)center_i;
-            const float q1 = hist_q_[idx1] - (float)center_q;
-            const float cross = i0 * q1 - q0 * i1;
-            const float dot   = i0 * i1 + q0 * q1;
-            const float mag2  = i0 * i0 + q0 * q0 + 25.0f;
-            const float dphi  = (mag2 > 1600.0f) ? atan2f(cross, dot) : (cross / mag2);
-            phi       += dphi;
-            out_um[n]  = phi * kRadToUm;
+    /**
+     * Nullphasen-Bandpass wie scipy `sosfiltfilt` (ungerade Erweiterung um kFiltPad, Anfangszustände aus der
+     * Sprungantwort). Ergebnis: work_ext_[kFiltPad .. kFiltPad + N).
+     */
+    void sosFiltFilt(const float *x, uint16_t N) {
+        const uint16_t P = (N > kFiltPad) ? kFiltPad : (uint16_t)(N - 1U);
+        float *e = work_ext_ + (kFiltPad - P);
+        const uint32_t L = (uint32_t)N + 2U * P;
+        for (uint16_t i = 0; i < P; i++) e[i] = 2.0f * x[0] - x[P - i];
+        memcpy(e + P, x, N * sizeof(float));
+        for (uint16_t j = 0; j < P; j++) e[P + N + j] = 2.0f * x[N - 1U] - x[N - 2U - j];
+        sosPass(e, L, false);
+        sosPass(e, L, true);
+    }
+
+    /** Ein Durchlauf der vier Biquads (DF2T) in Vorwärts- oder Rückwärtsrichtung, Anfangszustand = Sprungantwort. */
+    static void sosPass(float *e, uint32_t L, bool reverse) {
+        const float x0 = reverse ? e[L - 1U] : e[0];
+        float z1[4], z2[4];
+        float level = x0;
+        for (uint8_t s = 0; s < 4; s++) {
+            const float *c = kBpSos[s];
+            const float g = (c[0] + c[1] + c[2]) / (1.0f + c[4] + c[5]);  /* DC-Verstärkung der Sektion */
+            z1[s] = (g - c[0]) * level;
+            z2[s] = (c[2] - c[5] * g) * level;
+            level *= g;
         }
+        for (uint32_t i = 0; i < L; i++) {
+            const uint32_t n = reverse ? (L - 1U - i) : i;
+            float v = e[n];
+            for (uint8_t s = 0; s < 4; s++) {
+                const float *c = kBpSos[s];
+                const float y = c[0] * v + z1[s];
+                z1[s] = c[1] * v - c[4] * y + z2[s];
+                z2[s] = c[2] * v - c[5] * y;
+                v = y;
+            }
+            e[n] = v;
+        }
+    }
+
+    /* Bewegungsdämpfung im Herzband: Effektivwert je 1-s-Block. Bezug ist das ruhige Viertel der Blöcke (nicht der
+     * Median: bei 8 s Bewegung in 15 s ist der Median selbst Bewegung). Blöcke über kGateK × Bezug bekommen die
+     * Verstärkung (Grenze/Effektivwert)^kGateP, linear zwischen den Blockmitten übergeblendet. Ein paar Sekunden
+     * Bewegung überdecken sonst 10 s sauberen Puls (am Datensatz mit eingefügter Bewegung geprüft).
+     * Rückgabe: Zahl der Blöcke über kMotionK × Bezug (Bewegung). */
+    static uint8_t gateMotion(float *h, uint16_t N) {
+        const uint8_t nb = (uint8_t)std::min<uint16_t>(N / kGateBlk, kMaxBlocks);
+        if (nb < 3) return 0;
+        float rms[kMaxBlocks], tmp[kMaxBlocks], gain[kMaxBlocks];
+        for (uint8_t k = 0; k < nb; k++) {
+            const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);
+            float s = 0.0f;
+            for (uint16_t n = a; n < e; n++) s += h[n] * h[n];
+            rms[k] = tmp[k] = sqrtf(s / (float)(e - a));
+        }
+        std::nth_element(tmp, tmp + nb / 4, tmp + nb);
+        const float ref   = tmp[nb / 4] + 1e-6f;
+        const float limit = kGateK * ref;
+        uint8_t gated = 0, moving = 0;
+        for (uint8_t k = 0; k < nb; k++) {
+            gain[k] = (rms[k] > limit) ? powf(limit / rms[k], kGateP) : 1.0f;
+            if (gain[k] < 1.0f) gated++;
+            if (rms[k] > kMotionK * ref) moving++;
+        }
+        if (!gated) return 0;
+        const float half = 0.5f * (float)kGateBlk;
+        for (uint16_t n = 0; n < N; n++) {
+            const float pos = ((float)n - half) / (float)kGateBlk;  /* Blockmitten bei 0, 1, 2, ... */
+            float g;
+            if (pos <= 0.0f) g = gain[0];
+            else if (pos >= (float)(nb - 1)) g = gain[nb - 1];
+            else {
+                const uint8_t k0 = (uint8_t)pos;
+                const float fr = pos - (float)k0;
+                g = gain[k0] + fr * (gain[k0 + 1] - gain[k0]);
+            }
+            h[n] *= g;
+        }
+        return moving;
     }
 
     static void removeLinearTrend(float *x, uint16_t N) {
         if (N < 2) return;
-        double sum_t = 0.0, sum_y = 0.0, sum_tt = 0.0, sum_ty = 0.0;
+        double sum_y = 0.0, sum_tt = 0.0, sum_ty = 0.0;
         const double half = 0.5 * (double)(N - 1U);
         for (uint16_t n = 0; n < N; n++) {
             const double t = (double)n - half;
-            const double y = x[n];
-            sum_t  += t;
-            sum_y  += y;
+            sum_y  += x[n];
             sum_tt += t * t;
-            sum_ty += t * y;
+            sum_ty += t * x[n];
         }
         const double mean_y = sum_y / (double)N;
         const double slope  = (sum_tt > 1e-6) ? (sum_ty / sum_tt) : 0.0;
-        for (uint16_t n = 0; n < N; n++) {
-            const double t = (double)n - half;
-            x[n] = (float)((double)x[n] - (mean_y + slope * t));
-        }
+        for (uint16_t n = 0; n < N; n++) x[n] = (float)((double)x[n] - (mean_y + slope * ((double)n - half)));
     }
 
-    static float goertzelPowerHann(const float *x, uint16_t N, float fs, float freq_hz) {
-        const float omega = 2.0f * (float)M_PI * freq_hz / fs;
-        const float coeff = 2.0f * cosf(omega);
-        float s0 = 0.0f, s1 = 0.0f, s2 = 0.0f;
-        const float inv_nm1 = 1.0f / (float)(N - 1U);
+    /** Goertzel-Leistung ohne Fenster (Fenster ist schon im Signal). */
+    static float goertzelPower(const float *x, uint16_t N, float fs, float freq_hz) {
+        const float coeff = 2.0f * cosf(2.0f * (float)M_PI * freq_hz / fs);
+        float s1 = 0.0f, s2 = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
-            const float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)n * inv_nm1));
-            s0 = x[n] * w + coeff * s1 - s2;
+            const float s0 = x[n] + coeff * s1 - s2;
             s2 = s1;
             s1 = s0;
         }
         const float power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-        const float norm  = 0.25f * (float)N; /* Hann-Fenster-Verstärkung */
-        return (power > 0.0f) ? (power / (norm * norm)) : 0.0f;
-    }
-
-    /**
-     * @brief Projiziert die Grundschwingung und die Oberwellen m = 1..M der Atmung
-     *        mittels Hann-gewichteter Orthogonal-Projektion aus dem Signal heraus.
-     */
-    static void projectOutRespirationHarmonics(float *x, uint16_t N, float fs, float f_resp, uint8_t max_m) {
-        const float inv_nm1 = 1.0f / (float)(N - 1U);
-        for (uint8_t m = 1; m <= max_m; m++) {
-            const float fm = (float)m * f_resp;
-            if (fm >= 2.60f) break;
-            const float omega = 2.0f * (float)M_PI * fm / fs;
-            double cc = 0.0, ss = 0.0, cs = 0.0, cx = 0.0, sx = 0.0;
-            for (uint16_t n = 0; n < N; n++) {
-                const float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)n * inv_nm1));
-                const float c = cosf(omega * (float)n);
-                const float s = sinf(omega * (float)n);
-                const float wc = w * c;
-                const float ws = w * s;
-                cc += wc * c;
-                ss += ws * s;
-                cs += wc * s;
-                cx += wc * x[n];
-                sx += ws * x[n];
-            }
-            const double det = cc * ss - cs * cs;
-            if (det > 1e-6) {
-                const float a = (float)((cx * ss - sx * cs) / det);
-                const float b = (float)((cc * sx - cs * cx) / det);
-                for (uint16_t n = 0; n < N; n++) {
-                    const float phi = omega * (float)n;
-                    x[n] -= (a * cosf(phi) + b * sinf(phi));
-                }
-            }
-        }
-    }
-
-    /**
-     * @brief Nullphasen-Bandpassfilterung für das Herzsignal [0.88 .. 3.00 Hz]:
-     *        Kombiniert 1. Ableitung (ballistokardiographische Betonung) mit gleitendem
-     *        Vorwärts-/Rückwärts-Hoch- und Tiefpass.
-     */
-    static void bandpassCardiacZeroPhase(const float *in, float *out, uint16_t N, float fs) {
-        /* Schritt 1: Hochpass durch Subtraktion eines gleitenden Mittelwerts der Länge ~0.55 s */
-        const int16_t hp_win = (int16_t)fmaxf(5.0f, roundf(0.55f * fs));
-        for (uint16_t n = 0; n < N; n++) {
-            int16_t a = (int16_t)n - hp_win / 2;
-            int16_t b = (int16_t)n + hp_win / 2;
-            if (a < 0) a = 0;
-            if (b >= (int16_t)N) b = (int16_t)N - 1;
-            float sum = 0.0f;
-            for (int16_t k = a; k <= b; k++) sum += in[k];
-            out[n] = in[n] - sum / (float)(b - a + 1);
-        }
-
-        /* Schritt 2: Tiefpass durch Vorwärts-/Rückwärts-Glättung der Länge ~0.16 s (fc ~ 3.0 Hz) */
-        const int16_t lp_win = (int16_t)fmaxf(3.0f, roundf(0.16f * fs));
-        for (uint8_t pass = 0; pass < 2; pass++) {
-            float prev = out[0];
-            for (uint16_t n = 0; n < N; n++) {
-                int16_t a = (int16_t)n - lp_win / 2;
-                int16_t b = (int16_t)n + lp_win / 2;
-                if (a < 0) a = 0;
-                if (b >= (int16_t)N) b = (int16_t)N - 1;
-                float sum = 0.0f;
-                for (int16_t k = a; k <= b; k++) sum += out[k];
-                const float cur = sum / (float)(b - a + 1);
-                if (n > 0) out[n - 1] = prev;
-                prev = cur;
-            }
-            out[N - 1] = prev;
-        }
-    }
-
-    const float *work_dot_diff(const float *x, uint16_t N, float fs) {
-        for (uint16_t n = 1; n < N; n++) {
-            work_clean_[n] = (x[n] - x[n - 1U]) * fs;
-        }
-        work_clean_[0] = work_clean_[1];
-        return work_clean_;
+        return power > 0.0f ? power : 0.0f;
     }
 
     static void computeCardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, float &out_peak) {
         float e0 = 1e-6f;
         for (uint16_t n = 0; n < N; n++) e0 += hr[n] * hr[n];
-
-        const uint16_t min_lag = (uint16_t)fmaxf(8.0f, floorf(fs * (60.0f / 170.0f)));  /* 170 BPM */
-        const uint16_t max_lag = (uint16_t)fminf((float)(N / 2U), ceilf(fs * (60.0f / 50.0f))); /* 50 BPM */
-
-        float    best_r   = -1.0f;
+        const uint16_t min_lag = (uint16_t)fmaxf(8.0f, floorf(fs * (60.0f / 170.0f)));
+        const uint16_t max_lag = (uint16_t)fminf((float)(N / 2U), ceilf(fs * (60.0f / 50.0f)));
+        float best_r = -1.0f, r_prev = 0.0f, r_curr = 0.0f;
         uint16_t best_lag = min_lag;
-        float    r_prev   = 0.0f;
-        float    r_curr   = 0.0f;
-
         for (uint16_t lag = min_lag; lag <= max_lag; lag++) {
             float s = 0.0f;
-            for (uint16_t n = 0; n + lag < N; n++) {
-                s += hr[n] * hr[n + lag];
-            }
+            for (uint16_t n = 0; n + lag < N; n++) s += hr[n] * hr[n + lag];
             const float r_next = (s / e0) * ((float)N / (float)(N - lag));
             if (lag > min_lag && r_curr > r_prev && r_curr > r_next && r_curr > best_r) {
                 best_r   = r_curr;
@@ -657,7 +700,6 @@ private:
             r_prev = r_curr;
             r_curr = r_next;
         }
-
         if (best_r > 0.05f && best_lag > 0) {
             out_peak = best_r;
             out_bpm  = (60.0f * fs) / (float)best_lag;
@@ -672,61 +714,45 @@ private:
         for (uint16_t n = 0; n < N; n++) rms += hr[n] * hr[n];
         rms = sqrtf(rms / (float)N);
         const float thresh = 0.35f * rms;
-        const uint16_t refractory = (uint16_t)roundf(0.36f * fs); /* Mindestens 360 ms Abstand (<= 166 BPM) */
+        const uint16_t refractory = (uint16_t)roundf(0.36f * fs); /* ≥ 360 ms (≤ 166 /min) */
 
-        uint16_t peak_idx[32];
+        uint16_t peak_idx[48];
         uint8_t  n_peaks = 0;
         uint16_t last_pk = 0;
-
         for (uint16_t n = 2; n + 2 < N; n++) {
-            if (hr[n] > thresh && hr[n] > hr[n - 1] && hr[n] >= hr[n + 1] &&
-                hr[n] > hr[n - 2] && hr[n] >= hr[n + 2]) {
+            if (hr[n] > thresh && hr[n] > hr[n - 1] && hr[n] >= hr[n + 1] && hr[n] > hr[n - 2] && hr[n] >= hr[n + 2]) {
                 if (n_peaks == 0 || (n - last_pk) >= refractory) {
                     peak_idx[n_peaks++] = n;
                     last_pk = n;
-                    if (n_peaks >= 32) break;
+                    if (n_peaks >= 48) break;
                 } else if (hr[n] > hr[last_pk]) {
                     peak_idx[n_peaks - 1] = n;
                     last_pk = n;
                 }
             }
         }
-
         out_beats = n_peaks;
         if (n_peaks < 4) return;
 
-        float ibis_ms[31];
+        float ibis_ms[47];
         uint8_t n_ibi = 0;
         for (uint8_t k = 1; k < n_peaks; k++) {
             const float dt_ms = ((float)(peak_idx[k] - peak_idx[k - 1]) / fs) * 1000.0f;
-            if (dt_ms >= 350.0f && dt_ms <= 1250.0f) {
-                ibis_ms[n_ibi++] = dt_ms;
-            }
+            if (dt_ms >= 350.0f && dt_ms <= 1250.0f) ibis_ms[n_ibi++] = dt_ms;
         }
         if (n_ibi < 3) return;
 
-        /* Kopie für Median-Sortierung */
-        float sorted[31];
+        float sorted[47];
         memcpy(sorted, ibis_ms, n_ibi * sizeof(float));
-        for (uint8_t i = 0; i < n_ibi; i++) {
-            for (uint8_t j = i + 1; j < n_ibi; j++) {
-                if (sorted[j] < sorted[i]) {
-                    const float tmp = sorted[i];
-                    sorted[i] = sorted[j];
-                    sorted[j] = tmp;
-                }
-            }
-        }
+        std::sort(sorted, sorted + n_ibi);
         const float median_ms = sorted[n_ibi / 2];
         out_ibi_ms = median_ms;
         out_bpm    = 60000.0f / median_ms;
 
-        /* RMSSD über benachbarte valide IBIs (Ausreißer > 25 % vom Median ausblenden) */
         float sum_sq_diff = 0.0f;
         uint8_t n_diff = 0;
         for (uint8_t k = 1; k < n_ibi; k++) {
-            if (fabsf(ibis_ms[k] - median_ms) < 0.25f * median_ms &&
-                fabsf(ibis_ms[k - 1] - median_ms) < 0.25f * median_ms) {
+            if (fabsf(ibis_ms[k] - median_ms) < 0.25f * median_ms && fabsf(ibis_ms[k - 1] - median_ms) < 0.25f * median_ms) {
                 const float d = ibis_ms[k] - ibis_ms[k - 1];
                 sum_sq_diff += d * d;
                 n_diff++;
@@ -741,49 +767,49 @@ private:
             const float score = room_amp_ema_[r] + 6.0f * room_var_ema_[r];
             const float prev  = room_amp_ema_[r - 1] + 6.0f * room_var_ema_[r - 1];
             const float next  = room_amp_ema_[r + 1] + 6.0f * room_var_ema_[r + 1];
-            if (score > 120.0f && score >= prev && score >= next) {
-                /* In Top-4 Liste nach kombinierter Energie einfügen */
+            if (score > 120.0f && score >= prev && score >= next && rep.num_room_targets < 4) {
                 const float dist_m = (float)(room_start_pt_ + (int32_t)(r * room_step_)) * kPointStepM;
-                if (rep.num_room_targets < 4) {
-                    uint8_t idx = rep.num_room_targets++;
-                    rep.room_targets[idx] = {dist_m, room_amp_ema_[r], room_var_ema_[r]};
-                }
+                rep.room_targets[rep.num_room_targets++] = {dist_m, room_amp_ema_[r], room_var_ema_[r]};
             }
         }
-
-        /* Nach Bewegungsenergie + Amplitude absteigend sortieren */
         for (uint8_t i = 0; i < rep.num_room_targets; i++) {
             for (uint8_t j = i + 1; j < rep.num_room_targets; j++) {
                 const float si = rep.room_targets[i].amplitude + 8.0f * rep.room_targets[i].motion_energy;
                 const float sj = rep.room_targets[j].amplitude + 8.0f * rep.room_targets[j].motion_energy;
-                if (sj > si) {
-                    const RoomTarget tmp = rep.room_targets[i];
-                    rep.room_targets[i]  = rep.room_targets[j];
-                    rep.room_targets[j]  = tmp;
-                }
+                if (sj > si) std::swap(rep.room_targets[i], rep.room_targets[j]);
             }
         }
 
-        /* Prüfe, ob das primäre Ziel das aktuelle 60-mm Vital-Zoom-Fenster verlassen hat */
-        const float zoom_min_m = (float)(zoom_start_pt_ + 3) * kPointStepM;
-        const float zoom_max_m = (float)(zoom_start_pt_ + (int32_t)kZoomPoints - 4) * kPointStepM;
-        rep.needs_rezoom = false;
+        /* Rezoom nur, wenn im Zoom-Fenster ±60 mm (zwei Raum-Schritte) kein bewegtes Ziel liegt, und erst nach
+         * 3 Reports in den ersten 10 s (Ziel suchen) bzw. 5 Reports danach. Jeder Rezoom löscht die 15-s-Historie.
+         * Abwägung am 2026-11-01: Ohne Toleranz wechselte der Zoom zwischen Körperstellen (Raum-Ziel 660 mm, bester
+         * Puls bei 620 mm); mit ±30 mm wollte er 20-mal von 570–630 auf 630–690 mm; mit ±150 mm bliebe ein Ziel bei
+         * 0,68 m neben einem Fenster bei 0,50–0,56 m hängen. Am Körperrand (Fenster 500–560 mm, Brust 580–620 mm)
+         * lieferte der Puls live trotzdem 100 % im Bereich ±8 /min. */
+        const float zoom_min_m = (float)(zoom_start_pt_ + 3) * kPointStepM - 0.06f;
+        const float zoom_max_m = (float)(zoom_start_pt_ + (int32_t)kZoomPoints - 4) * kPointStepM + 0.06f;
+        rep.needs_rezoom              = false;
         rep.recommended_zoom_start_pt = zoom_start_pt_;
-
-        if (rep.num_room_targets > 0 && rep.room_targets[0].motion_energy > 12.0f) {
-            const float primary_m = rep.room_targets[0].dist_m;
-            if (primary_m < zoom_min_m || primary_m > zoom_max_m) {
-                out_of_window_frames_++;
-                if (out_of_window_frames_ >= 3) { /* ~3 s außerhalb -> Auto-Rezoom empfehlen */
-                    int32_t new_start = (int32_t)roundf(primary_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
-                    if (new_start < 80) new_start = 80; /* >= 0.20 m */
-                    rep.needs_rezoom              = true;
-                    rep.recommended_zoom_start_pt = new_start;
-                    out_of_window_frames_         = 0;
-                }
-            } else {
-                out_of_window_frames_ = 0;
-            }
+        if (rep.num_room_targets == 0 || rep.room_targets[0].motion_energy <= 12.0f) {
+            out_of_window_frames_ = 0;
+            return;
+        }
+        bool near = false;
+        for (uint8_t i = 0; i < rep.num_room_targets; i++) {
+            const RoomTarget &t = rep.room_targets[i];
+            if (t.motion_energy > 12.0f && t.dist_m >= zoom_min_m && t.dist_m <= zoom_max_m) near = true;
+        }
+        if (near) {
+            out_of_window_frames_ = 0;
+            return;
+        }
+        const uint16_t needed = (frame_count_ < 600U) ? 3U : 5U;
+        if (++out_of_window_frames_ >= needed) {
+            int32_t new_start = (int32_t)roundf(rep.room_targets[0].dist_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
+            if (new_start < 80) new_start = 80; /* ≥ 0,20 m */
+            rep.needs_rezoom              = true;
+            rep.recommended_zoom_start_pt = new_start;
+            out_of_window_frames_         = 0;
         }
     }
 
@@ -794,34 +820,40 @@ private:
     uint32_t frame_count_          = 0;
     uint16_t hist_write_idx_       = 0;
     uint16_t hist_count_           = 0;
-    float    fs_ema_hz_            = 60.0f;
     int16_t  last_temp_c_          = 0;
     float    last_lb_amp_          = 0.0f;
     float    cum_phase_rad_        = 0.0f;
     float    prev_centered_i_      = 0.0f;
     float    prev_centered_q_      = 0.0f;
     bool     have_prev_iq_         = false;
+    bool     beam_switched_        = false;
     float    dc_i_                 = 0.0f;
     float    dc_q_                 = 0.0f;
     uint8_t  best_zoom_bin_        = 12;
     uint16_t out_of_window_frames_ = 0;
+    float    hr_prev_              = 0.0f;
+    uint8_t  hr_miss_              = 0;
 
     float zoom_clutter_i_[kZoomPoints] = {};
     float zoom_clutter_q_[kZoomPoints] = {};
     float zoom_var_ema_[kZoomPoints]   = {};
-
     float room_clutter_i_[kRoomPoints] = {};
     float room_clutter_q_[kRoomPoints] = {};
     float room_amp_ema_[kRoomPoints]   = {};
     float room_var_ema_[kRoomPoints]   = {};
 
-    float *hist_i_       = nullptr;
-    float *hist_q_       = nullptr;
-    float *hist_um_      = nullptr;
-    float *hist_lb_phi_  = nullptr;
-    float *work_detrend_ = nullptr;
-    float *work_clean_   = nullptr;
-    float *work_hr_      = nullptr;
+    float *hist_zoom_   = nullptr;  /* [kZoomPoints][kHistoryLen][I,Q], derotiert, je Punkt ein Ring */
+    float *hist_um_     = nullptr;
+    float *hist_lb_phi_ = nullptr;
+    float *work_x_      = nullptr;
+    float *work_ext_    = nullptr;  /* sosfiltfilt mit Rand: kHrWin + 2 * kFiltPad */
+    float *best_x_      = nullptr;
+    float *best_h_      = nullptr;
+    float *dec_         = nullptr;
+    float *spec_        = nullptr;
+    float *comb_        = nullptr;
+    float *scratch_     = nullptr;
+    float *br_comb_     = nullptr;
 };
 
 } /* namespace a121_dsp */
