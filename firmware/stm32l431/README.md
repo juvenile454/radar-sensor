@@ -1,8 +1,12 @@
 # STM32L431 (A121-Board): Exploration Server aus dem Acconeer-SDK
 
-Stand 2026-10-31, ~23:50: **gebaut und geflasht.** Am Gerät geprüft: Firmware startet (Debug-Log auf Kanal B),
-USB antwortet nicht mehr als Server. **Noch offen:** Test über den ESP32 (Schritte unten).
-Image: `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin` (SHA256 `5dfefa8f…3827`).
+Stand 2026-11-01: **gebaut, geflasht und über den ESP32 am Gerät geprüft** (`srv_info`, `stm_reset`, `iq3`, `doppler`,
+`bridge` + exptool; Ergebnisse und zwei behobene ESP32-Bugs in `docs/HARDWARE.md`, „ESP32-Test am Gerät 2026-11-01“).
+Mobil (rote Ader statt A121-USB) ist noch nicht geprüft.
+**Gehärtet am 2026-11-01:** Der Server startet bei jedem UART-Fehler neu. Vorher machte ein Noise- oder Overrun-Fehler ihn taub,
+bis RESET gedrückt wurde; neu gestartet hat er nur bei einem Break. Am Gerät mit absichtlichem Baudfehler geprüft.
+Image: `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin` (SHA256 `b29e328d…1757`);
+Stand vom 2026-10-31 als `…_lpuart1_2026-10-31.bin` (SHA256 `5dfefa8f…3827`).
 
 ## Ziel
 
@@ -41,12 +45,14 @@ python3 firmware/stm32l431/build_server.py --variant lpuart1
 ```
 
 - `original` baut das SDK unverändert. Ergebnis 2026-10-31: **bitgleich** zum vorgebauten Image im SDK, die Umgebung stimmt also.
-- `lpuart1` kopiert das SDK nach `build/lpuart1/` (gitignored), ändert sechs Stellen (jede nur, wenn der Originaltext genau
+- `lpuart1` kopiert das SDK nach `build/lpuart1/` (gitignored), ändert sieben Stellen (jede nur, wenn der Originaltext genau
   einmal vorkommt) und legt `src/xm125_lpuart1_link.c` dazu:
   - `main.h`: `EXPLORATION_SERVER_UART_HANDLE` = `hlpuart1`, Pin-Namen `SERVER_UART_RX/TX` (= PB10/PB11)
   - `main.c`: `xm125_lpuart1_init()` vor `acconeer_main()` (gibt I2C2 frei, startet LPUART1 mit 115 200 Baud, ohne RTS/CTS)
   - `stm32l4xx_hal_msp.c`: SDK-`HAL_UART_Msp(De)Init` umbenannt; unsere Version macht LPUART1 und reicht den Rest weiter
   - `acc_exploration_server_stm32.c`: Warten auf das Ende eines Host-Breaks auf PB10 statt PA3
+  - `acc_exploration_server_stm32.c`: `HAL_UART_ErrorCallback` startet bei jedem Fehler neu, nicht nur bei einem Framing-Error.
+    Im DMA-Modus empfängt die HAL nach jedem Fehler nicht mehr.
   - `makefile`: unsere Datei zum Server-Target
 - Ausgabe: `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_<variante>.bin` + `.sha256`.
 - Baudraten 115 200 bis 2 000 000 (LPUART1 an 80 MHz PCLK1). `printf`-Logs bleiben auf USART1/PA9.
@@ -70,7 +76,7 @@ Danach antwortet der Server **nicht mehr über USB**; PC-Tools laufen über die 
    nach einem Reset) kommen über PA9.
 3. ESP32: `srv_info`, dann `iq3 10`, `doppler 5`, `stm_reset`; am PC `bridge` + exptool.
 4. Erst danach mobil: A121-USB ab, rote Ader an (nie beides gleichzeitig, HARDWARE.md „Stromversorgung“).
-Erst dann gilt der ESP32-Weg als geprüft.
+Schritte 1–3 erledigt am 2026-11-01; Schritt 4 offen.
 
 ## Weitere Dateien hier
 

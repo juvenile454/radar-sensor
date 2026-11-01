@@ -43,9 +43,14 @@ static int rgbPin = 48;  // DevKitC-1 v1.0: 48, v1.1: 38 — mit "led <pin>" ums
 static bool uartBridge = false;
 static String line;
 
-// Wer nutzt gerade GPIO15/16? Beim Start I2C (Wire ist im Leerlauf und treibt nichts).
-enum class Link { I2C, SRV };
-static Link g_link = Link::I2C;
+// Wer nutzt gerade GPIO15/16? Beim Start niemand (beide hochohmig): Schon Wire.begin() erzeugt Pegelwechsel
+// auf SCL, und die landen bei der LPUART1-Server-Firmware auf PB10 (RX). Danach war der Server am 2026-11-01
+// zweimal taub (Neustart des ESP32), bis die RESET-Taste am A121 gedrückt wurde. I2C startet beim ersten
+// I2C-Befehl, die Server-UART beim ersten Server-Befehl.
+enum class Link { NONE, I2C, SRV };
+static Link g_link = Link::NONE;
+
+static const char *linkName() { return g_link == Link::I2C ? "i2c" : g_link == Link::SRV ? "srv" : "frei"; }
 
 static a121_srv::ExplorationServerClient g_srv(SrvUart, PIN_SRV_RX, PIN_SRV_TX);
 static a121_dsp::UltimateEspDsp g_dsp;
@@ -62,7 +67,7 @@ static void startI2c() {
 // Serial2 selbst startet g_srv.begin() beim ersten Verbindungsversuch.
 static void useSrvLink() {
   if (g_link == Link::SRV) return;
-  Wire.end();
+  if (g_link == Link::I2C) Wire.end();
   pinMode(PIN_SDA, INPUT);
   pinMode(PIN_SCL, INPUT);
   g_link = Link::SRV;
@@ -72,13 +77,17 @@ static void useSrvLink() {
 // und jede I2C-Übertragung des ESP32 würde dagegen arbeiten.
 static void useI2cLink() {
   if (g_link == Link::I2C) return;
-  g_srv.release();
+  if (g_link == Link::SRV) g_srv.release();
   startI2c();
   g_link = Link::I2C;
 }
 
 static bool requireI2c() {
   if (g_link == Link::I2C) return true;
+  if (g_link == Link::NONE) {  // erster I2C-Befehl nach dem Start
+    useI2cLink();
+    return true;
+  }
   Serial.println("GPIO15/16 sind gerade Server-UART. 'link i2c' schaltet um – nur sinnvoll, wenn auf dem STM32");
   Serial.println("eine i2c_*-Firmware läuft (sonst treibt der Server die SDA-Ader).");
   return false;
@@ -99,7 +108,8 @@ static void cmdBus() {
   Serial.printf("SDA (GPIO%d) = %d, SCL (GPIO%d) = %d, MCU_INT = %d, WAKE_UP = %d, UART-RX (GPIO%d) = %d\n",
                 PIN_SDA, gpio_get_level((gpio_num_t)PIN_SDA), PIN_SCL, gpio_get_level((gpio_num_t)PIN_SCL),
                 digitalRead(PIN_INT), digitalRead(PIN_WAKE), PIN_UART_RX, gpio_get_level((gpio_num_t)PIN_UART_RX));
-  Serial.printf("Link auf GPIO15/16: %s\n", g_link == Link::I2C ? "I2C" : "Server-UART (Serial2)");
+  Serial.printf("Link auf GPIO15/16: %s\n",
+                g_link == Link::I2C ? "I2C" : g_link == Link::SRV ? "Server-UART (Serial2)" : "frei (hochohmig)");
   Serial.println("Erwartet mit versorgtem A121: SDA = SCL = 1 (Pull-ups auf dem A121-Board, UART-Ruhepegel ebenfalls 1).");
 }
 
@@ -127,7 +137,7 @@ static void startDebugUart() {
 
 static void cmdProbe() {
   if (g_link == Link::I2C) Wire.end();
-  else g_srv.release();  // nächster Server-Befehl startet Serial2 neu
+  else if (g_link == Link::SRV) g_srv.release();  // nächster Server-Befehl startet Serial2 neu
   Serial1.end();
   pinMode(PIN_WAKE, INPUT);
   for (int pin : {PIN_SDA, PIN_SCL, PIN_WAKE, PIN_INT, PIN_UART_TX, PIN_UART_RX}) probePin(pin);
@@ -488,7 +498,8 @@ static bool ensureServerConnected() {
     return true;
   }
   // Kein I2C-Gegentest: Läuft doch der Server, würde der ESP32 gegen PB11 auf der SDA-Ader treiben.
-  Serial.println("FEHLER: Keine Antwort vom Exploration Server auf GPIO15/16 (115200 und Zielbaudrate).");
+  Serial.println("FEHLER: Keine Antwort vom Exploration Server auf GPIO15/16 (nach Break-Reset, 115200 Baud).");
+  Serial.println("        Server taub (Break wirkt nicht)? RESET-Taste am A121 drücken und erneut versuchen.");
   Serial.println("        Läuft auf dem STM32 noch eine i2c_*-Firmware? Dann 'link i2c' und 'scan'.");
   return false;
 }
@@ -506,14 +517,12 @@ static void cmdSrvInfo() {
 
 static void cmdStmReset() {
   useSrvLink();
-  Serial.println("Sende 15-ms UART-Break auf GPIO16 (-> PB10)...");
-  g_srv.resetStm32ViaBreak();
-  delay(600);  // Bootzeit des Servers
-  String sysInfo;
+  Serial.println("Sende 15-ms UART-Break auf GPIO16 (-> PB10) und verbinde neu...");
+  String sysInfo;  // connectAndNegotiateBaud() schickt den Break selbst
   if (g_srv.connectAndNegotiateBaud(A121_BAUD, &sysInfo)) {
     Serial.printf("Server antwortet @ %lu Baud: %s\n", (unsigned long)g_srv.currentBaud(), sysInfo.c_str());
   } else {
-    Serial.println("Break gesendet, Server antwortet nicht (Neustart per Break bei dieser Firmware ungeprüft).");
+    Serial.println("Break gesendet, Server antwortet nicht. RESET-Taste am A121 drücken.");
   }
 }
 
@@ -699,6 +708,7 @@ static void cmdBridge() {
   g_srv.connectAndNegotiateBaud(A121_BAUD);
   String hostLine;
   uint8_t rxBuf[1024];
+  uint8_t txBuf[512];
 
   while (true) {
     while (SrvUart.available()) {
@@ -707,33 +717,39 @@ static void cmdBridge() {
       size_t n = SrvUart.readBytes(rxBuf, avail);
       Serial.write(rxBuf, n);
     }
+    // Host → Server blockweise weiterreichen; jede abgeschlossene Zeile vorher auf Steuerbefehle prüfen.
     while (Serial.available()) {
-      char c = (char)Serial.read();
-      SrvUart.write((uint8_t)c);
-      if (c == '\n') {
+      size_t n = Serial.read(txBuf, min((size_t)Serial.available(), sizeof(txBuf)));
+      size_t from = 0;
+      for (size_t i = 0; i < n; i++) {
+        char c = (char)txBuf[i];
+        if (c != '\n') {
+          if (c != '\r' && hostLine.length() < 256) hostLine += c;
+          continue;
+        }
         if (hostLine.indexOf("+++EXIT") >= 0) {
           Serial.println("\nBridge beendet.");
           return;
         }
-        int bIdx = hostLine.indexOf("\"set_uart_baudrate\"");
-        if (bIdx >= 0) {
+        SrvUart.write(txBuf + from, i + 1 - from);
+        from = i + 1;
+        uint32_t newBaud = 0;
+        if (hostLine.indexOf("\"set_uart_baudrate\"") >= 0) {
           int rIdx = hostLine.indexOf("\"baudrate\":");
-          if (rIdx >= 0) {
-            uint32_t newBaud = (uint32_t)strtoul(hostLine.c_str() + rIdx + 11, nullptr, 10);
-            if (newBaud >= 9600 && newBaud <= 3000000) {
-              // Kurz warten bis ACK vom STM32 durchgereicht wurde, dann ESP32-UART nachziehen
-              uint32_t t0 = millis();
-              while ((millis() - t0) < 40) {
-                while (SrvUart.available()) Serial.write(SrvUart.read());
-              }
-              g_srv.begin(newBaud);
-            }
-          }
+          if (rIdx >= 0) newBaud = (uint32_t)strtoul(hostLine.c_str() + rIdx + 11, nullptr, 10);
         }
         hostLine = "";
-      } else if (c != '\r' && hostLine.length() < 256) {
-        hostLine += c;
+        if (newBaud >= 9600 && newBaud <= 3000000) {
+          // Befehl ganz raus, ACK vom STM32 durchreichen, dann ESP32-UART nachziehen
+          SrvUart.flush();
+          uint32_t t0 = millis();
+          while ((millis() - t0) < 40) {
+            while (SrvUart.available()) Serial.write(SrvUart.read());
+          }
+          g_srv.begin(newBaud);
+        }
       }
+      if (from < n) SrvUart.write(txBuf + from, n - from);
     }
   }
 }
@@ -796,7 +812,7 @@ static void handle(String cmd) {
   cmd.trim();
   if (isI2cCommand(cmd) && !requireI2c()) return;
   if (cmd == "help" || cmd.isEmpty()) help();
-  else if (cmd == "link") Serial.printf("Link: %s\n", g_link == Link::I2C ? "i2c" : "srv");
+  else if (cmd == "link") Serial.printf("Link: %s\n", linkName());
   else if (cmd == "link i2c") { useI2cLink(); Serial.println("Link: i2c (GPIO15 SDA, GPIO16 SCL)"); }
   else if (cmd == "link srv") { useSrvLink(); Serial.println("Link: srv (GPIO15 RX, GPIO16 TX; UART startet beim ersten Server-Befehl)"); }
   else if (cmd == "info") cmdInfo();
@@ -880,10 +896,13 @@ static void handle(String cmd) {
 }
 
 void setup() {
+  // Standard sind 256 Bytes, und HWCDC verwirft alles darüber stillschweigend. Ein exptool-setup-Befehl
+  // ist ~460 Bytes lang und kam in der Bridge sonst ohne Zeilenende an (2026-11-01 am Gerät gesehen).
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   pinMode(PIN_WAKE, INPUT);  // nie dauerhaft treiben: auf dem Board treibt der CH342 (DTR0) WAKE_UP
   pinMode(PIN_INT, INPUT_PULLDOWN);
-  startI2c();  // Start mit 'link i2c'; Server-Befehle schalten selbst auf 'link srv'
+  // GPIO15/16 bleiben hochohmig (Link 'frei'), s. g_link.
   // GPIO4 nie treiben: Ruhepegel 3,3 V würde einen unversorgten A121 über RXD speisen, und der CH342
   // treibt dieselbe Leitung (PA10) über R9.
   pinMode(PIN_UART_TX, INPUT);

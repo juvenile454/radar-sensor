@@ -73,6 +73,18 @@ LPUART1_EDITS: list[tuple[str, str, str]] = [
         "HAL_GPIO_ReadPin(SERVER_UART_RX_GPIO_Port, SERVER_UART_RX_Pin)",
     ),
     (
+        # Härtung (2026-11-01): Im DMA-Modus bricht die ST-HAL bei JEDEM UART-Fehler (Noise, Overrun, Parity,
+        # Framing) den Empfang ab und schaltet die Fehler-Interrupts ab. Das SDK startet nur bei einem Framing-
+        # Error (Break) neu, nach jedem anderen Fehler bleibt der Server taub, bis RESET gedrückt wird.
+        # Deshalb Neustart bei jedem Fehler. Ein Break wirkt weiter wie vorher.
+        "Src/applications/acc_exploration_server_stm32.c",
+        "\t\t/* Check framing error bit to detect break condition */\n"
+        "\t\tif ((huart->ErrorCode & HAL_UART_ERROR_FE) == HAL_UART_ERROR_FE)\n",
+        "\t\t/* radar-sensor: Neustart bei jedem Fehler (Break = Framing-Error, aber auch Noise/Overrun),\n"
+        "\t\t   weil die HAL im DMA-Modus danach nicht mehr empfängt. */\n"
+        "\t\tif (huart->ErrorCode != HAL_UART_ERROR_NONE)\n",
+    ),
+    (
         "makefile",
         "\tacc_exploration_server_stm32.c \\\n",
         "\tacc_exploration_server_stm32.c \\\n\txm125_lpuart1_link.c \\\n",

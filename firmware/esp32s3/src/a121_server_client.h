@@ -83,6 +83,7 @@ public:
         if (!rx_buf_allocated_) {
             uart_.end();                     /* Puffergröße lässt sich nur bei gestoppter UART setzen */
             uart_.setRxBufferSize(32768);
+            uart_.setTxBufferSize(4096);     /* sonst blockiert write(), bis im 128-Byte-FIFO Platz ist */
             rx_buf_allocated_ = true;
             uart_.begin(current_baud_, SERIAL_8N1, rx_pin_, tx_pin_);
         } else {
@@ -120,19 +121,19 @@ public:
 
     /**
      * @brief Verbindet sich mit dem Server und schaltet ihn auf `target_baud`.
-     *        1. Versuch auf der zuletzt genutzten Baudrate (läuft der Server schon, kein Reset).
-     *        2. Sonst Break-Reset und Neuversuch auf 115200 bis zu ~2,5 s (Bootzeit).
+     *        Immer erst Break-Reset, dann Handshake auf 115200 (bis ~2,5 s Bootzeit).
+     *        Kein Versuch auf einer geratenen Baudrate: Bytes mit falscher Baudrate erzeugen am STM32
+     *        Noise-/Overrun-Fehler; die HAL bricht dann den DMA-Empfang ab, und der SDK-Server startet nur
+     *        bei einem Framing-Error neu. Er bleibt taub, bis RESET gedrückt wird (2026-11-01 dreimal am Gerät).
      */
     bool connectAndNegotiateBaud(uint32_t target_baud = 921600, String *out_sys_info = nullptr) {
         String resp;
-        bool ok = tryHandshake(current_baud_, resp);
-        if (!ok) {
-            resetStm32ViaBreak();
-            delay(400);
-            const uint32_t t0 = millis();
-            while (!ok && (millis() - t0) < 2500) {
-                ok = tryHandshake(115200U, resp);
-            }
+        bool ok = false;
+        resetStm32ViaBreak();
+        delay(400);
+        const uint32_t t0 = millis();
+        while (!ok && (millis() - t0) < 2500) {
+            ok = tryHandshake(115200U, resp);
         }
         if (!ok) return false;
         if (out_sys_info) *out_sys_info = resp;

@@ -248,7 +248,7 @@ Tag 1 (2026-10-30): Sensor auf die Testperson gerichtet (Abstand nicht gemessen)
 - Mit `vital 450 850` (`FIXED_STRENGTH = -25 dB`, `PROFILE_1`, `step_length = 1`, `leakage_cancel = 0`) am 2026-10-31
   vollständig gelöst: 100 % Trefferquote auf der Brust bei 37,1 Hz über ESP32-I2C (`host/a121_esp_vital.py`).
 
-**Aktuelle Firmware auf dem A121 (Stand 2026-10-31, ~23:50):** **`acc_exploration_server_a121-v1.13.0_lpuart1.bin`** (SHA256 `5dfefa8f…3827`, eigener Build aus dem Acconeer-SDK, s. u.) mit Freigabe des Projektinhabers über Kanal A geflasht (100 %). Server nur auf LPUART1 = SDA/SCL-Adern; **USB Kanal A und B antworten nicht als Server** (geprüft). Nach RESET kommt auf Kanal B (921 600 Baud, PA9) „Acconeer Exploration Server“ → Firmware startet, Break-Warteschleife wird verlassen. Der LPUART1-Weg zum ESP32 ist noch **nicht** getestet. Vorher: `acc_exploration_server_a121_usart1_esp32.bin` (bis 23:50). Für `vital`/`auto`/`zoom` (I2C) muss wieder `i2c_distance_detector.bin` (`a121-v1.12.0`, 109 816 Bytes) geflasht werden. Hinweis zum USB-Flashen bei gestecktem (stromlosem) ESP32-Kabel ohne rote Ader: Durch die ESD-Schutzdioden des stromlosen ESP32-S3 an den Signalleitungen verschluckt der CH342 beim Richtungswechsel (`STM32 TX → CH342 RX`) deterministisch das allererste Startbit (`8,68 µs` bei 115 200 8E1), sodass `ACK 0x79` als `0xDE`, `NACK 0x1F` als `0xFC` und `GET_ID 79 01 04 35 79` als `de c0 b0 a3 ff` dekodiert werden, während der Hinweg (`CH342 TX → STM32 RX`) inkl. Hardware-Paritäts- und XOR-Prüfsummen zu 100 % bitexakt bleibt.
+**Aktuelle Firmware auf dem A121 (Stand 2026-11-01, ~08:40):** **`acc_exploration_server_a121-v1.13.0_lpuart1.bin`**, gehärtet (SHA256 `b29e328d…1757`, Neustart bei jedem Server-UART-Fehler, s. „Härtung 2026-11-01“), ersetzt den Stand vom 2026-10-31 (`5dfefa8f…3827`, aufbewahrt als `…_lpuart1_2026-10-31.bin`). Eigener Build aus dem Acconeer-SDK, s. u., mit Freigabe des Projektinhabers über Kanal A geflasht (100 %). Server nur auf LPUART1 = SDA/SCL-Adern; **USB Kanal A und B antworten nicht als Server** (geprüft). Nach RESET kommt auf Kanal B (921 600 Baud, PA9) „Acconeer Exploration Server“ → Firmware startet, Break-Warteschleife wird verlassen. Der LPUART1-Weg zum ESP32 ist seit 2026-11-01 am Gerät geprüft (s. „ESP32-Test am Gerät 2026-11-01“). Vorher: `acc_exploration_server_a121_usart1_esp32.bin` (bis 23:50). Für `vital`/`auto`/`zoom` (I2C) muss wieder `i2c_distance_detector.bin` (`a121-v1.12.0`, 109 816 Bytes) geflasht werden. Hinweis zum USB-Flashen bei gestecktem (stromlosem) ESP32-Kabel ohne rote Ader: Durch die ESD-Schutzdioden des stromlosen ESP32-S3 an den Signalleitungen verschluckt der CH342 beim Richtungswechsel (`STM32 TX → CH342 RX`) deterministisch das allererste Startbit (`8,68 µs` bei 115 200 8E1), sodass `ACK 0x79` als `0xDE`, `NACK 0x1F` als `0xFC` und `GET_ID 79 01 04 35 79` als `de c0 b0 a3 ff` dekodiert werden, während der Hinweg (`CH342 TX → STM32 RX`) inkl. Hardware-Paritäts- und XOR-Prüfsummen zu 100 % bitexakt bleibt.
 
 ### Voller A121 Sparse-IQ & 3-Subsweep Zugriff über ESP32-S3 (`USART1`, 2026-10-31)
 
@@ -260,14 +260,14 @@ Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-
    - Erzeugt deterministisch `~/Data/radar-sensor/acc_exploration_server_a121_usart1_esp32.bin` (`109 008` Bytes, SHA256 `dd1226c4ac60d73fc6488f6ebd1447302a06d17c19d0312f8a2a209dffda2fc6`, 25 verifizierte Instruktions-/Vektor-Patches).
    - Legt den Exploration Server mit voller DMA-Unterstützung (`DMA1_Channel5` RX / `DMA1_Channel4` TX, `IRQ 14/15/37`, `GPIO_PULLUP` auf `PA9`/`PA10`, `UART_HWCONTROL_NONE`) direkt auf `USART1` (`GPIO5`/`GPIO4` am ESP32-S3) und unterstützt Baudraten von `115 200` bis `2 000 000` Baud sowie Soft-Reset per UART-Break.
 2. **ESP32-S3 Dual-Stack-Firmware (`firmware/esp32s3/src/main.cpp`, `a121_server_client.h`, `a121_esp_dsp.h`):**
-   - **Umgestellt am 2026-10-31 (Abend, nur kompiliert, nicht am Gerät geprüft):** Der Server-Link läuft über `Serial2` auf den
+   - **Umgestellt am 2026-10-31 (Abend), am Gerät geprüft am 2026-11-01:** Der Server-Link läuft über `Serial2` auf den
      SDA/SCL-Adern (`GPIO15` RX ← PB11, `GPIO16` TX → PB10) und braucht die geplante LPUART1-Server-Firmware aus dem SDK
-     (`firmware/stm32l431/README.md`). Mit der derzeit geflashten USART1-Variante spricht der ESP32 nicht mehr.
-     `link i2c|srv` legt fest, wer GPIO15/16 nutzt; Server-Befehle schalten selbst auf `srv`, I2C-Befehle sind im `srv`-Modus gesperrt
+     (`firmware/stm32l431/README.md`). Mit der USART1-Variante spricht der ESP32 nicht mehr.
+     Nach dem Start sind GPIO15/16 hochohmig (`link` = frei). `link i2c|srv` legt fest, wer GPIO15/16 nutzt; Server-Befehle schalten selbst auf `srv`, I2C-Befehle sind im `srv`-Modus gesperrt
      (der Server treibt die SDA-Ader push-pull). `uart` empfängt die Debug-Logs nur noch auf GPIO5, GPIO4 bleibt hochohmig.
    - Behält alle bestehenden I2C-Befehle (`vital`, `zoom`, `auto`, `dist`, `cfg`, `ver`, `scan`) bei und ergänzt den Sparse-IQ-Stack:
      - `srv_info`: Verbindet sich auf `GPIO15`/`GPIO16` (schaltet von 115 200 auf 921 600 Baud hoch) und liest `get_system_info` & `get_sensor_info`.
-     - `stm_reset`: Sendet ein 15-ms UART-Break auf `GPIO16` (`PB10`). Bei der USART1-Variante setzte der Framing-Error den STM32 zurück (am PC über Kanal B bestätigt); beim SDK-Neubau ungeprüft.
+     - `stm_reset`: Sendet ein 15-ms UART-Break auf `GPIO16` (`PB10`). Der Framing-Error setzt den STM32 zurück (USART1-Variante und SDK-Neubau, beide über Kanal B bestätigt). Jeder Server-Connect des ESP32 beginnt seit 2026-11-01 mit diesem Break.
      - `iq3 [sek] [start_mm]`: Startet die **3-Subsweep Sparse-IQ Session @ 60 Hz** (Subsweep 0 On-Chip Loopback + Subsweep 1 2,5-mm Vital-Zoom + Subsweep 2 Raum-Scan 0,30–2,67 m, 80 × 30 mm) und berechnet direkt auf dem ESP32-S3 (im 8 MB Octal-PSRAM) Loopback-Phasenderotation, 5-Bin Beamforming, Kåsa-Kreisfit + DACM-Mikrometer-Demodulation, gleitende 7-s Hann-Hilbert Atem-Oberwellen-Projektion ($m=1\dots 6$), Tri-Modale Herzfrequenz (Spektral/HPS + Autokorrelation + Zeitbereichs-IBI/RMSSD) sowie automatischen Schnell-Rezoom (`@REZOOM`).
      - `doppler [sek] [mm] [hz]`: Aktiviert `continuous_sweep_mode=true` + `double_buffering=true` (64 Sweeps/Frame @ bis zu 4 000 Hz) für kohärente Mikro-Doppler-/Vibrationsmessungen.
      - `bridge`: Transparente USB-CDC ↔ Server-UART Bridge (inkl. automatischer Baudraten-Synchronisation), sodass PC-Skripte wie `host/a121_ultimate_vital.py` auch direkt durch den ESP32-S3 streamen können.
@@ -285,7 +285,7 @@ Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-
   `iq3`-Preset 300 Frames @ 60,0 Hz, 420 B/Frame. `doppler`-Preset (CSM + Double Buffering, 64×4 @ 2000 Hz)
   60 Frames @ 31 Hz, 1024 B/Frame. Keine Flags (saturated/delayed/calibration_needed).
 - Ein früherer Hänger (keine Antwort auf allen Baudraten, kein Reset per Framing-Error) ließ sich nur mit der RESET-Taste
-  lösen und trat danach nicht wieder auf. Die Ursache ist offen.
+  lösen und trat danach nicht wieder auf. Wahrscheinliche Ursache: s. „Bug 1“ beim ESP32-Test 2026-11-01.
 
 **Offenes Hardware-Risiko vor dem ESP32-Betrieb über USART1:** Laut Schaltplan hängt PA10 (`DEBUG_RX`, Stecker Pin 8)
 nicht nur an ESP32 GPIO4, sondern über **R9 = 22 Ω direkt am CH342 TXD1**. Der CH342 läuft immer mit (5V-Netz) und
@@ -312,9 +312,61 @@ den Server statt auf USART1 auf die I2C-Leitungen legen.
     Baudraten-Umschaltung und Break-Reset (`HAL_UART_ErrorCallback`) nutzen `hlpuart1`; die Break-Abfrage beim Start liest GPIOB Bit 10.
   - In diesem Build: Server nur auf LPUART1 (USB Kanal A antwortet nicht mehr), `printf`-Logs weiter auf USART1/PA9
     (CH342 Kanal B und ESP32 GPIO5 lesen mit), I2C2 wird nach dem SDK-Init wieder abgeschaltet.
-- ESP32-Seite umgestellt und kompiliert, nicht am Gerät geprüft.
+- ESP32-Seite umgestellt; am Gerät geprüft am 2026-11-01 (s. u.).
 - Zustand am Gerät 2026-10-31, ~23 Uhr: Die geflashte USART1-Variante antwortet auf keiner Baudrate (Kanal A und B), also derselbe
   Hänger wie oben. Vor weiteren Tests RESET-Taste am A121.
+
+**ESP32-Test am Gerät 2026-11-01 (A121 am PC-USB, rote Ader ab, ESP32 am nativen USB `…12:34:56:78:9A:BC`):**
+- Ergebnis: Der LPUART1-Server läuft über die SDA/SCL-Adern. Geprüft mit der ESP32-Firmware vom 2026-11-01 (mit den Fixes unten):
+  - `srv_info`: `a121-v1.13.0`, `hw` xm125, `max_baudrate` 2 000 000, Sensor verbunden; der ESP32 schaltet selbst auf 921 600 Baud.
+  - `stm_reset`: Der Break auf GPIO16 setzt den STM32 zurück (Kanal B: „Acconeer Exploration Server“ + „Waiting for host line
+    break“), danach verbindet der ESP32 neu. Ein Connect dauert ≈ 0,4 s.
+  - `iq3 10`: 583 Frames in 10 s (58 Hz, Soll 60), keine Sättigung, keine `frame_timeout`, `@REZOOM` läuft.
+    In jeder Sekunde, in der `computeVitalReport()` rechnet, entsteht eine Lücke von 190–320 ms zwischen zwei Frames.
+    Die Frames gehen dabei nicht verloren, sie stauen sich im 32-KB-UART-Puffer. Das sollte man noch optimieren.
+    Die `@VITAL`-Werte sind **nicht bewertet**: Es gab keine Referenzmessung, und es saß niemand gezielt vor dem Sensor.
+  - `doppler 5`: 156 Frames in 5 s (31 Hz, 64 Sweeps @ 2000 Hz), keine Warnungen.
+  - `bridge` + exptool 7.18.2 am PC (`a121.Client.open(serial_port=…)`, Standard: Umschaltung auf 2 000 000 Baud):
+    Setup mit Kalibrierung ok, 90 Frames 16 × 60 @ 30,09 Hz, keine Flags. `+++EXIT` beendet die Bridge.
+  - Zwei ESP32-Neustarts hintereinander (esptool-Hard-Reset wie beim Flashen) bei laufendem Server auf 921 600 Baud
+    → `srv_info` ging jedes Mal ohne RESET-Taste.
+- **Bug 1, behoben (ESP32): Server nach ESP32-Neustart taub.** Der Client versuchte den ersten Handshake auf der zuletzt
+  gemerkten Baudrate (nach dem Start 921 600), der frisch gestartete Server hört aber auf 115 200. Die falschen Bytes erzeugen am
+  STM32 Noise- bzw. Overrun-Fehler. Im DMA-Modus bricht die ST-HAL dann bei **jedem** UART-Fehler den Empfang ab und schaltet
+  die Fehler-Interrupts ab. `HAL_UART_ErrorCallback` des SDK startet aber nur bei einem Framing-Error neu. Folge: Der Server
+  bleibt taub, auch ein Break hilft nicht mehr, nur die RESET-Taste. Am Gerät dreimal gesehen (Einstecken am Morgen, zweimal
+  nach dem ESP32-Flashen). Die USB-Variante merkt davon nichts, weil exptool immer auf 115 200 beginnt. Wahrscheinlich war das
+  auch der frühere Hänger der USART1-Variante, nachgewiesen ist das nicht.
+  Fix: `connectAndNegotiateBaud()` schickt jetzt immer zuerst den Break (der Framing-Error löst sicher einen Neustart aus)
+  und spricht dann nur 115 200. Dazu stehen GPIO15/16 nach dem Start hochohmig (Link „frei“). I2C startet erst beim ersten
+  I2C-Befehl, damit `Wire.begin()` beim Booten keine Flanken auf PB10 legt.
+  Die eigentliche Schwachstelle im STM32 ist inzwischen ebenfalls behoben, s. „Härtung 2026-11-01“.
+- **Bug 2, behoben (ESP32): exptool-`setup_session` lief in der Bridge in einen Timeout.** HWCDC (USB des ESP32, Arduino 2.0.17)
+  hat einen 256-Byte-Empfangspuffer und verwirft alles darüber ohne Meldung. Die Bridge schrieb byteweise auf eine UART ohne
+  Sendepuffer (nur das 128-Byte-FIFO). Der exptool-Setup-Befehl ist 464 Bytes lang, mehr als 384, und so ging das Zeilenende
+  verloren. Nachweis: In 64-Byte-Stücken gesendet, nahm der Server denselben Befehl an. Fix: `Serial.setRxBufferSize(4096)`,
+  `setTxBufferSize(4096)` für die Server-UART, und die Bridge reicht blockweise weiter.
+
+**Härtung 2026-11-01 (STM32, mit Freigabe des Projektinhabers geflasht ~08:40):** 7. Edit in `build_server.py`. `HAL_UART_ErrorCallback`
+startet jetzt bei **jedem** Fehler der Server-UART neu (`ErrorCode != HAL_UART_ERROR_NONE` statt nur Framing-Error).
+- Image `acc_exploration_server_a121-v1.13.0_lpuart1.bin`, 109 760 Bytes, SHA256
+  `b29e328d52eeeafc97e28e89051cb8ee74d527fb6a17a706b39ef1488cbc1757`. Die Linker-Warnung „LOAD segment with RWX permissions“
+  kommt auch beim bitgleichen `original`-Build, ist also nicht neu.
+- Am ELF geprüft: LTO hat den Callback an allen drei Aufrufstellen eingebettet (`UART_DMAAbortOnError`, `UART_DMAError`,
+  `HAL_UART_IRQHandler`). Überall steht jetzt `huart == &hlpuart1` und `ErrorCode (+0x88) != 0`, danach folgt `NVIC_SystemReset`.
+- Am Gerät geprüft:
+  - Normalbetrieb wie vorher: `srv_info`; `iq3 10` mit 575 Frames (57 Hz, ohne Sättigung); `doppler 5` mit 31 Hz; exptool über
+    `bridge` mit 90 Frames bei 30,03 Hz. Auf Kanal B kamen nur die erwarteten Neustarts, je einer pro Connect durch den Break.
+    Während der Messungen startete der STM32 kein einziges Mal neu.
+  - Absichtlicher Baudfehler: Über die Bridge wurde der Server auf 115 200 gestellt, die Bridge blieb auf 921 600 (Trick:
+    `"baudrate" : 115200` mit Leerzeichen erkennt die Bridge nicht). Danach kamen dreimal `get_system_info` mit der falschen Rate.
+    Ergebnis: Der STM32 startete nach 0,1 s neu (Kanal B: „Acconeer Exploration Server“ ohne „Waiting for host line break“, also
+    durch den Fehler und nicht durch einen Break) und war danach wieder erreichbar. Mit der alten Firmware blieb er in genau
+    diesem Fall dreimal taub.
+  - Von außen nicht zu sehen ist, welcher Fehler den Neustart ausgelöst hat (Framing oder Noise).
+- Nebenwirkung: Eine echte Störung mitten in einer Messung startet den STM32 jetzt neu, statt ihn taub zu machen. Die laufende
+  Session ist dann weg. Der ESP32-Client merkt das an `frame_timeout` und muss neu verbinden; ein automatisches Neuverbinden
+  während `iq3`/`doppler` gibt es noch nicht.
 
 Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`
