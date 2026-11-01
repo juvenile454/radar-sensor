@@ -135,4 +135,16 @@ class LiveStoreTest {
         s.clear()
         assertEquals(0, s.snapshot().refT.size)
     }
+
+    /** V5.1: Atemzüge (@BREATH) als Kurve, Zustand (@STATE) zuletzt. */
+    @Test fun atemzuegeUndZustand() {
+        val s = LiveStore()
+        s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,1000,14,1.0,0,1.0,0,0,1572", "@STATE,1000,2,1000",
+               "@BREATH,5000,300,4000,2100,15.0", "@BREATH,9100,546,4100,2200,14.8")
+        val snap = s.snapshot()
+        assertEquals(listOf(15.0f, 14.8f), snap.breathRate.toList())
+        assertEquals(2, snap.breathT.size)
+        assertEquals(2, snap.lastState?.state)
+        assertEquals(2200f, snap.lastBreath?.depthUm)
+    }
 }

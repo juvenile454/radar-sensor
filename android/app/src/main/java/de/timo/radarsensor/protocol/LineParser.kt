@@ -97,6 +97,8 @@ object LineParser {
                     brState = p.getOrNull(9)?.toIntOrNull(),
                     nEff = p.getOrNull(14)?.toFloatOrNull(),
                 )
+            "@STATE" -> MeasState(p[1].toLong(), p[2].toInt(), p[3].toLong())
+            "@BREATH" -> Breath(p[1].toLong(), p[2].toLong(), p[3].toLong(), p[4].toFloat(), p[5].toFloat())
             "@IQ3_START" ->
                 Iq3Start(p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p.getOrNull(4)?.let { it != "0" } ?: false)
             "@REZOOM" -> Rezoom(p[1].toFloat(), p[2].toFloat())

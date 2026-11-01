@@ -1,6 +1,7 @@
 package de.timo.radarsensor.live
 
 import de.timo.radarsensor.reference.HrMeasurement
+import de.timo.radarsensor.protocol.Breath
 import de.timo.radarsensor.protocol.Doppler
 import de.timo.radarsensor.protocol.DopplerStart
 import de.timo.radarsensor.protocol.Dsp
@@ -11,6 +12,7 @@ import de.timo.radarsensor.protocol.Hello
 import de.timo.radarsensor.protocol.Iq3
 import de.timo.radarsensor.protocol.Iq3Start
 import de.timo.radarsensor.protocol.Malformed
+import de.timo.radarsensor.protocol.MeasState
 import de.timo.radarsensor.protocol.Raw
 import de.timo.radarsensor.protocol.Recal
 import de.timo.radarsensor.protocol.Reconnect
@@ -90,6 +92,11 @@ class LiveSnapshot(
     val dspComputeMs: FloatArray,
     val dspMotion: FloatArray,
     val lastDsp: Dsp?,
+    /** Zustand der Messung (@STATE, V3.5) und Atemzüge (@BREATH, V3.4) */
+    val lastState: MeasState?,
+    val breathT: FloatArray,
+    val breathRate: FloatArray,
+    val lastBreath: Breath?,
     /** EKG-Gurt (V0.1): Puls auf derselben Zeitachse wie vitalT */
     val refT: FloatArray,
     val refHr: FloatArray,
@@ -194,6 +201,10 @@ class LiveStore(
     private val vSnr = FloatRing(vitalCapacity)
     private val vRmssd = FloatRing(vitalCapacity)
     private var lastVital: Vital? = null
+    private var lastState: MeasState? = null
+    private val bT = FloatRing(vitalCapacity)
+    private val bRate = FloatRing(vitalCapacity)
+    private var lastBreath: Breath? = null
     private val refT = FloatRing(vitalCapacity)
     private val refHr = FloatRing(vitalCapacity)
     private var lastRef: HrMeasurement? = null
@@ -255,6 +266,12 @@ class LiveStore(
                 }
             }
             is Vital -> onVital(msg)
+            is MeasState -> lastState = msg
+            is Breath -> {
+                lastBreath = msg
+                bT.add(time(msg.tick, msg.tMs))
+                bRate.add(msg.ratePerMin)
+            }
             is Dsp -> {
                 // Atemzustand (V1.4): Beginn und Ende von „angehalten" in die Ereignisliste
                 val wasApnea = lastDsp?.brState == Dsp.BR_APNEA
@@ -374,7 +391,7 @@ class LiveStore(
         tOffset = 0f
         tMax = 0f
         lastDataNs = NO_DATA
-        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, refT, refHr, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
+        listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, bT, bRate, refT, refHr, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
             .forEach { it.clear() }
         iqSaturated = 0
         iqDelayed = 0
@@ -392,6 +409,8 @@ class LiveStore(
         lastVital = null
         lastDsp = null
         lastRef = null
+        lastState = null
+        lastBreath = null
         dopplerStart = null
         lastDoppler = null
         sessMeta = null
@@ -538,6 +557,10 @@ class LiveStore(
                 dspComputeMs = dCompute.toArray(),
                 dspMotion = dMotion.toArray(),
                 lastDsp = lastDsp,
+                lastState = lastState,
+                breathT = bT.toArray(),
+                breathRate = bRate.toArray(),
+                lastBreath = lastBreath,
                 refT = refT.toArray(),
                 refHr = refHr.toArray(),
                 lastRef = lastRef,

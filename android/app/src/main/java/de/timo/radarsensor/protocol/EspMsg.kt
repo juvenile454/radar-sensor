@@ -255,6 +255,45 @@ data class Text(
 ) : EspMsg
 
 /** `@…`-Zeile mit unbekanntem Tag (neuere Firmware) */
+/**
+ * `@STATE,t_ms,zustand,seit_ms` (V3.5, 1 Hz): Zustand der Messung (0 keine Person, 1 Suche, 2 Erfassung, 3 gültig,
+ * 4 Bewegung, 5 Apnoe) und wie lange er schon besteht.
+ */
+data class MeasState(
+    val tMs: Long,
+    val state: Int,
+    val sinceMs: Long,
+) : EspMsg {
+    companion object {
+        const val NO_PERSON = 0
+        const val SEARCH = 1
+        const val ACQUIRE = 2
+        const val VALID = 3
+        const val MOTION = 4
+        const val APNEA = 5
+
+        fun name(state: Int): String =
+            when (state) {
+                NO_PERSON -> "keine Person"
+                SEARCH -> "Suche"
+                ACQUIRE -> "Erfassung"
+                VALID -> "gültig"
+                MOTION -> "Bewegung"
+                APNEA -> "Apnoe"
+                else -> "unbekannt ($state)"
+            }
+    }
+}
+
+/** `@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate` je Atemzug (V3.4): Abstand zur vorigen Spitze, Tiefe, Rate /min. */
+data class Breath(
+    val tMs: Long,
+    val tick: Long,
+    val intervalMs: Long,
+    val depthUm: Float,
+    val ratePerMin: Float,
+) : EspMsg
+
 data class UnknownTag(
     val tag: String,
     val line: String,

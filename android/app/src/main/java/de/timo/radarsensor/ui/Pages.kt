@@ -38,6 +38,8 @@ import de.timo.radarsensor.core.LinkStats
 import de.timo.radarsensor.core.RadarController
 import de.timo.radarsensor.live.EventKind
 import de.timo.radarsensor.live.LiveSnapshot
+import de.timo.radarsensor.live.deviation
+import de.timo.radarsensor.live.pulseQuality
 import de.timo.radarsensor.protocol.Dsp
 import de.timo.radarsensor.record.MetronomeSchedule
 import de.timo.radarsensor.record.Recorder
@@ -70,13 +72,15 @@ fun OverviewPage(
 ) = Page {
     val v = s.lastVital
     val t = s.room?.targets?.firstOrNull()
+    val q = pulseQuality(v, s.lastDsp, s.lastState)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Stat("Atmung", f1(v?.breathingBpm?.takeIf { it > 0 }) + " /min", color = Pal.c1)
         Stat(
             "Puls-Kandidat",
             f0(v?.hrFusedBpm?.takeIf { it > 0 }) + " /min",
-            color = Pal.c2,
-            sub = "Konfidenz ${f0(v?.confidencePct)} % · ohne Referenz",
+            color = if (q.grey) Pal.axis else Pal.c2,
+            sub = "Konfidenz ${f0(v?.confidencePct)} % · ${q.stateText}" +
+                (s.lastRef?.let { " · Gurt ${it.bpm}" } ?: " · ohne Referenz"),
         )
         Stat("Ziel", if (t != null) "%.2f m".format(t.distMm / 1000f) else "–", sub = t?.let { if (it.moving) "bewegt" else "ruhig" })
         Stat("Atemtiefe", f0(v?.respDepthUm) + " µm")
@@ -183,6 +187,17 @@ fun VitalPage(s: LiveSnapshot) =
         val xw = window.toFloat()
         val v = s.lastVital
         ReferencePanel()
+        // Gütezustand (V5.1): Puls grau bei Konfidenz < 50 %, Bewegung oder ohne gültige Messung
+        val q = pulseQuality(v, s.lastDsp, s.lastState)
+        Labeled("Zustand", q.stateText + (q.reason?.let { " · Puls grau: $it" } ?: ""))
+        Labeled(
+            "Puls",
+            f0(v?.hrFusedBpm?.takeIf { it > 0 }) + " /min" + (if (q.grey) " (unsicher)" else "") +
+                (s.lastRef?.let { " · Gurt ${it.bpm} /min" } ?: ""),
+        )
+        deviation(s.vitalT, s.vitalHr, s.refT, s.refHr, windowS = 60f)?.let { d ->
+            Labeled("Radar − Gurt", "zuletzt %+.0f /min · Median |Δ| %.1f /min (%d Werte, 60 s)".format(d.last, d.medianAbs, d.n))
+        }
         Text(
             if (s.lastRef != null) {
                 "Gurt als Referenz: Abweichung gilt nur für diese Sitzung, keine allgemeine Genauigkeitsaussage."
@@ -192,7 +207,14 @@ fun VitalPage(s: LiveSnapshot) =
             fontSize = 11.sp,
             color = Pal.warn,
         )
-        LineChart("Atmung", listOf(Series(s.vitalT, s.vitalBr, Pal.c1, "/min")), xWindow = xw, unit = "/min", skipNonPositive = true)
+        LineChart(
+            "Atmung",
+            listOf(Series(s.vitalT, s.vitalBr, Pal.c1, "Spektrum"), Series(s.breathT, s.breathRate, Pal.c3, "je Atemzug", dots = true)),
+            xWindow = xw,
+            unit = "/min",
+            skipNonPositive = true,
+        )
+        s.lastBreath?.let { b -> Labeled("Letzter Atemzug", "${b.intervalMs} ms · ${f0(b.depthUm)} µm · ${f1(b.ratePerMin)} /min") }
         LineChart(
             "Puls-Kandidaten",
             listOf(
@@ -227,7 +249,8 @@ fun VitalPage(s: LiveSnapshot) =
         s.lastDsp?.let { d ->
             Dsp.breathStateText(d.brState)?.let { Labeled("Atemzustand", it) }
             Labeled("DSP", "gültig ${if (d.valid) "ja" else "nein"} · Punkt ${d.hrBin} · Oberwelle ${if (d.hrOnHarmonic) "ja" else "nein"}" +
-                (d.pointAgreePct?.let { " · Punkte einig ${f0(it)} %" } ?: ""))
+                (d.pointAgreePct?.let { " · Punkte einig ${f0(it)} %" } ?: "") +
+                (d.nEff?.let { " · N_eff ${f1(it)}" } ?: ""))
         }
     }
 

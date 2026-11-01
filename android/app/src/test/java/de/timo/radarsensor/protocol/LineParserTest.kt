@@ -132,6 +132,28 @@ class LineParserTest {
         assertEquals(1.4f, komb.nEff)
     }
 
+    /** V3.5/V5.1: Zustand der Messung je Report. */
+    @Test fun messZustand() {
+        val m = parse<MeasState>("@STATE,12000,2,4000")
+        assertEquals(12000L, m.tMs)
+        assertEquals(MeasState.ACQUIRE, m.state)
+        assertEquals(4000L, m.sinceMs)
+        assertEquals("Erfassung", MeasState.name(2))
+        assertEquals("keine Person", MeasState.name(0))
+        assertEquals("Apnoe", MeasState.name(5))
+        assertEquals("unbekannt (9)", MeasState.name(9))
+    }
+
+    /** V3.4/V5.1: ein Atemzug. */
+    @Test fun atemzug() {
+        val b = parse<Breath>("@BREATH,15000,900,4100,2300,14.6")
+        assertEquals(15000L, b.tMs)
+        assertEquals(900L, b.tick)
+        assertEquals(4100L, b.intervalMs)
+        assertEquals(2300f, b.depthUm)
+        assertEquals(14.6f, b.ratePerMin)
+    }
+
     @Test fun atemzustandText() {
         assertEquals("normal", Dsp.breathStateText(0))
         assertEquals("keine Atemspitze", Dsp.breathStateText(1))

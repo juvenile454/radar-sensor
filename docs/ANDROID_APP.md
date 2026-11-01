@@ -46,8 +46,8 @@ Tabs: Übersicht, Signal, Raum, Vital, Doppler, Experten, Diagnose, Konsole, Auf
 | `iq3` | `@ROOM` (Rauschen, Ziele: Abstand, Stärke, Bewegung, bewegt) | 1 Hz | Raum: Zielmarker; Übersicht: Hauptziel |
 | `iq3` | `@VITAL` (Atmung, Puls fused/Spektrum/AKF/IBI, IBI-Median, RMSSD, Konfidenz, Atemtiefe, Herz-Amplitude, SNR, Loopback-Phasenrauschen, Zielabstand, Anzahl Ziele) | 1 Hz | Übersicht/Vital; Puls **immer als „Kandidat“** mit Konfidenz |
 | `iq3` | `@DSP` (gültig, Punkt, Konfidenz, Rechenzeit, Bewegungsanteil, Oberwelle, Punkt-Einigkeit, Atemzustand 0–4, je Report verspätete / gesättigte Frames und tick-Lücken, Frame-Stand des Schnappschusses; mit Schalter `A121_DSP_COMBINE` zusätzlich die effektive Punktzahl, V3.1) | 1 Hz | Vital + Diagnose, Atemzustand im Vital-Tab, „angehalten" als Ereignis |
-| `iq3` | `@STATE,t_ms,zustand,seit_ms` (0 keine Person, 1 Suche, 2 Erfassung, 3 gültig, 4 Bewegung, 5 Apnoe; V3.5) | 1 Hz | Gütezustand im Vital-Tab (V5.1) |
-| `iq3` | `@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate` je Atemzug (Abstand zur vorigen Spitze, Tiefe Spitze − Tal, Rate = 60 / Median der letzten 4 Abstände; nur in Erfassung/gültig/Apnoe; V3.4) | je Atemzug | Atmung Atemzug für Atemzug im Vital-Tab (V5.1); bis dahin `UnknownTag` |
+| `iq3` | `@STATE,t_ms,zustand,seit_ms` (0 keine Person, 1 Suche, 2 Erfassung, 3 gültig, 4 Bewegung, 5 Apnoe; V3.5) | 1 Hz | Gütezustand in Übersicht und Vital-Tab (V5.1): Zustandstext („Erfassung läuft x s", „gültig seit x s"), Puls grau bei Konfidenz < 50 %, Bewegung oder ohne gültige Messung |
+| `iq3` | `@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate` je Atemzug (Abstand zur vorigen Spitze, Tiefe Spitze − Tal, Rate = 60 / Median der letzten 4 Abstände; nur in Erfassung/gültig/Apnoe; V3.4) | je Atemzug | Atmung Atemzug für Atemzug im Vital-Tab (V5.1, Punkte „je Atemzug" im Atem-Diagramm, letzter Atemzug als Zeile) |
 | `iq3` | `@IQ3_START`, `@REZOOM`, `@RECAL` (Neu-Kalibrierung nach `calibration_needed`), `@RECONNECT`, `@WARN` (u. a. `dsp_busy`: Report ausgefallen, `dsp_late`: Report zu spät, ungültig), `FEHLER…`, `@END` | Ereignis | Ereignisleiste, Diagnose |
 | `doppler` | `@DOPPLER_START`, `@DOPPLER` (mit Frame, tick) | ~31 Hz | Doppler |
 | `sess …` | `@SESS_META`, `@SESS_SUB`, `@PEAK`, `@AMP`, `@SESS_STAT`, `@SESS_END` | je Session | Experten |
@@ -148,6 +148,9 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
 ## Offen
 
 - BLE-Transport; Akkuverbrauch am Handy messen.
+- Gütezustand (V5.1): Logik (Puls grau, Zustandstext, Abweichung Radar − Gurt über 60 s, Paare ±2 s) und Parser
+  `@STATE`/`@BREATH` am PC getestet; Anzeige (Pages.kt) nicht übersetzt. Abnahme „Screenshot je Zustand aus einer
+  Wiedergabe" offen (Handy oder Emulator).
 - EKG-Gurt, Marker, Metronom (V0.1/V0.2): Parser, Recorder-Dateien, Metronom-Takt und Referenzkurve am PC getestet;
   BLE-Client und Metronom gegen die Android-Klassen (API 34) übersetzt; Controller, Debug-Befehle und Oberfläche
   nicht übersetzt (kein Android-SDK in der Cloud-Umgebung). Offen am Handy (nur mit Freigabe): 10 min `iq3 0 raw` mit
