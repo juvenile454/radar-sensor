@@ -172,8 +172,12 @@ mit keinem Verfahren), bei Atem-Resten im Herzband 0,58 (0,44–0,82) — halbie
 Reports mit RMSSD (≥ 90 % gültige Schläge) z. B. `base` 17 → 64 %, `tachy` 3 → 75 %, `tief` 20 → 85 %; RMSSD
 gemessen / wahr näher an 1 (`tachy` 1,30 → 0,98); Puls-MAE `brady` 2,8 → 3,2, `tief` 0,6 → 0,3. `tief` verwirft dabei
 den vorläufigen 6-s-Wert 40,3 /min (wahr 71), den der Standard gelten lässt: Dessen IBI-Bestätigung rechnet mit der
-Sperrzeit des Kandidaten (0,6 × 60 / 40 s), überspringt Schläge und bestätigt so den falschen Wert (offener Fehler im
-Standard, AUDIT_VITAL-Ledger).
+Sperrzeit des Kandidaten (0,6 × 60 / 40 s), überspringt Schläge und bestätigt so den falschen Wert. Die Bestätigung
+bleibt so (eine Sperrzeit unabhängig vom Kandidaten oder nur die AKF senkte im Prüfstand den Anteil richtiger
+vorläufiger Werte 83 → 70 % oder verschob den ersten Wert in vier Szenarien); der Prüfstand zählt dafür ehrlich
+`erst_ok_s` (erster Wert ≤ 5 /min daneben) und `frueh_falsch_n` (Werte > 10 /min daneben in den ersten 15 s), mit dem
+Stand als Grenze: `tief` 7 s / 1 falscher Wert (Konfidenz 28 %, also grau), `brady` 14 s / 6 (doppelter Puls 8–13 s,
+Konfidenz 18–43 %), sonst 0.
 
 **Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
 jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start

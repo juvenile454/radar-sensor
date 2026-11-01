@@ -64,6 +64,30 @@ class ConfStatsTest(unittest.TestCase):
         self.assertEqual(st["n_falsch"], 3)
 
 
+class EarlyValueTest(unittest.TestCase):
+    """Abschluss-Review I1: erst_s zählt den ersten gültigen Report, auch wenn er falsch ist. Dazu: erster richtiger
+    Report (≤ 5 /min) und falsche Reports (> 10 /min) in den ersten 15 s."""
+
+    def test_metrics(self):
+        t = np.array([5.0, 6.0, 7.0, 8.0, 9.0, 16.0, 17.0])
+        valid = np.array([False, True, True, True, True, True, True])
+        err = np.array([np.nan, 30.0, 6.0, 2.0, 1.0, 20.0, 1.0])
+        m = vital_sim.early_metrics(t, valid, err)
+        self.assertEqual(m["erst_ok_s"], 8.0)
+        self.assertEqual(m["frueh_falsch_n"], 1)   # 6 s; 16 s liegt nach den ersten 15 s
+
+    def test_never_correct(self):
+        m = vital_sim.early_metrics(np.array([6.0]), np.array([True]), np.array([40.0]))
+        self.assertTrue(math.isnan(m["erst_ok_s"]))
+        self.assertEqual(m["frueh_falsch_n"], 1)
+
+    def test_limits_pin_known_early_errors(self):
+        lim = {(s, k): (op, x) for s, xs in vital_sim.LIMITS.items() for k, op, x in xs}
+        self.assertEqual(lim[("tief", "frueh_falsch_n")], ("<=", 1))   # 40,3 statt 71 nach 6 s (3. Atem-Oberwelle)
+        self.assertEqual(lim[("base", "frueh_falsch_n")], ("<=", 0))
+        self.assertIn(("tief", "erst_ok_s"), lim)
+
+
 class SceneTest(unittest.TestCase):
     def test_niemand_has_no_echo_in_zoom_window(self):
         """Ohne Person bleiben im Zoom-Fenster (0,61–0,67 m) nur Rauschen und die Ausläufer ferner Echos."""

@@ -253,9 +253,16 @@ PERSON_FREE = ("leer", "niemand")
 # die stärkste Spitze dort auf 2 × Puls oder am Bandrand, Autokorrelation/Einzelschläge bestätigen sie nicht, der
 # vorläufige Wert wird verworfen; Grenze dort wie vor V2.4 (8 s).
 FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0, "takt6": 10.0}
+# Abschluss-Review I1: erster richtiger Wert (≤ 5 /min) und falsche Werte (> 10 /min) in den ersten 15 s, Stand der
+# Messung als Grenze (keine Ziele): brady meldet 8–13 s den doppelten Puls (98,6, Konfidenz 18–43 %), tief nach 6 s die
+# 3. Atem-Oberwelle (40,3 statt 71, Konfidenz 28 %); Autokorrelation und Einzelschläge sehen auf demselben Signal dasselbe
+FIRST_OK_S = {"base": 8.0, "harm4": 8.0, "brady": 14.0, "tief": 7.0, "tachy6": 8.0, "takt6": 10.0}
+EARLY_WRONG_N = {"brady": 6, "tief": 1}
 for _scen in LIMITS:
     if _scen not in PERSON_FREE + ("alle",):
         LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
+        LIMITS[_scen].append(("erst_ok_s", "<=", FIRST_OK_S.get(_scen, 6.0)))
+        LIMITS[_scen].append(("frueh_falsch_n", "<=", EARLY_WRONG_N.get(_scen, 0)))
 # V3.5: Zustand BEWEGUNG im Bewegungsabschnitt (beweg), sonst nirgends
 LIMITS["beweg"].append(("zustand_beweg_n", ">=", 5.0))
 for _scen in LIMITS:
@@ -499,6 +506,14 @@ def truth_at(tr, t_end, win=15.0):
     return hr, float(tr["rr"][m].mean()), rmssd
 
 
+def early_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray) -> dict:
+    """Erster richtiger Report (Fehler ≤ 5 /min) und falsche Reports (> 10 /min) in den ersten 15 s (Abschluss-Review
+    I1: erst_s zählt den ersten gültigen Report, auch einen falschen)."""
+    ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
+    bad = valid & (np.nan_to_num(err, nan=0.0) > 10.0) & (t_s <= 15.0)
+    return {"erst_ok_s": float(t_s[ok][0]) if ok.any() else np.nan, "frueh_falsch_n": int(bad.sum())}
+
+
 def conf_stats(conf: np.ndarray, err: np.ndarray) -> dict:
     """Konfidenz-Median der falschen (> 10 /min) und der richtigen (≤ 5 /min) Reports. Keine falschen Reports →
     konf_falsch = 0 (nichts war falsch hoch bewertet)."""
@@ -570,6 +585,7 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         "spruenge": count_jumps(d["hr"], v),   # V3.2: Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports
     }
     res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
+    res.update(early_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0])))
     # Zustand BEWEGUNG (V3.5): Reports im Bewegungsabschnitt (bis 15 s danach, so lange liegt er im Fenster) und außerhalb
     mot = SCENARIOS[name][1].get("motion")
     in_mot = (d["t_s"] > mot[0]) & (d["t_s"] <= mot[1] + 15.0) if mot else np.zeros(len(d["t_s"]), bool)
