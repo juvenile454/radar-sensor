@@ -435,5 +435,103 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(out.split(), ["2", "1"])
 
 
+class FastAtan2Test(unittest.TestCase):
+    """V2.2 (B13): Polynom statt atan2f beim Abwickeln (21 600 Aufrufe je Report); Fehler ≤ 1 · 10⁻⁴ rad."""
+
+    def test_grid_against_atan2(self):
+        out = run_cpp("""
+        double worst = 0;
+        for (int i = -200; i <= 200; i++)
+            for (int j = -200; j <= 200; j++) {
+                const float y = i * 7.3f, x = j * 5.1f + 0.37f;
+                const double e = fabs((double)fastAtan2(y, x) - atan2((double)y, (double)x));
+                if (e > worst) worst = e;
+            }
+        const float tiny[][2] = {{1e-6f, 1.0f}, {1.0f, 1e-6f}, {-1.0f, -1e-6f}, {0.0f, -1.0f}, {-1e-6f, -1.0f}};
+        for (auto &t : tiny) {
+            const double e = fabs((double)fastAtan2(t[0], t[1]) - atan2((double)t[0], (double)t[1]));
+            if (e > worst) worst = e;
+        }
+        printf("%.3g %.3f", worst, fastAtan2(0.0f, 0.0f));""")
+        worst, zero = out.split()
+        self.assertLessEqual(float(worst), 1e-4)
+        self.assertEqual(float(zero), 0.0)
+
+
+class RealFftTest(unittest.TestCase):
+    """V2.2: reelle FFT (1024 Punkte, nullaufgefüllt) in a121_fft.h; Leistung je Bin wie numpy."""
+
+    def test_power_matches_numpy(self):
+        import numpy as np
+        out = run_cpp("""
+        static a121_fft::RealFft<1024> fft;
+        static float x[225], p[513];
+        for (int n = 0; n < 225; n++) x[n] = 3.0f * sinf(0.37f * n) + 0.5f * cosf(1.91f * n + 0.2f) + 0.01f * (n % 7);
+        fft.power(x, 225, p, 513);
+        for (int k = 0; k < 513; k++) printf("%.9g\\n", p[k]);""")
+        got = np.array([float(v) for v in out.split()])
+        n = np.arange(225)
+        x = (3.0 * np.sin(0.37 * n) + 0.5 * np.cos(1.91 * n + 0.2) + 0.01 * (n % 7)).astype(np.float32).astype(float)
+        want = np.abs(np.fft.rfft(x, 1024)) ** 2
+        self.assertEqual(got.size, 513)
+        self.assertLess(np.max(np.abs(got - want)) / want.max(), 2e-6)
+
+    def test_fewer_output_bins(self):
+        out = run_cpp("""
+        static a121_fft::RealFft<1024> fft;
+        static float x[10] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, p[4] = {-1, -1, -1, -1};
+        fft.power(x, 10, p, 3);
+        printf("%.6f %.6f %.6f %.1f", p[0], p[1], p[2], p[3]);""")
+        self.assertEqual(out.split(), ["1.000000", "1.000000", "1.000000", "-1.0"])
+
+
+class LinearTrendTest(unittest.TestCase):
+    """V2.2: Trend in float mit geschlossenem Σt² (vorher double, auf dem ESP32-S3 in Software)."""
+
+    def test_large_offset_ramp(self):
+        import numpy as np
+        out = run_cpp("""
+        static float x[900];
+        for (int n = 0; n < 900; n++) x[n] = 8000.0f + 3.1f * n + 40.0f * sinf(0.21f * n);
+        removeLinearTrend(x, 900);
+        for (int n = 0; n < 900; n++) printf("%.6g\\n", x[n]);""")
+        got = np.array([float(v) for v in out.split()])
+        n = np.arange(900)
+        x = (8000.0 + 3.1 * n + 40.0 * np.sin(0.21 * n)).astype(np.float32).astype(float)
+        want = x - np.polyval(np.polyfit(n, x, 1), n)
+        self.assertLess(np.max(np.abs(got - want)), 0.01)   # µm
+
+
+class RefinedPeakTest(unittest.TestCase):
+    """V2.2: Spektrum im FFT-Raster (0,0146 Hz), Spitze parabolisch verfeinert: ein Puls zwischen zwei Rasterpunkten
+    wird auf ±0,1 /min getroffen (vorher Raster 0,6 /min ohne Verfeinerung)."""
+
+    def test_pulse_between_bins(self):
+        out = run_cpp("""
+        static Complex16 pts[kTotal3SubPts];
+        static UltimateEspDsp d; d.begin(244, 120, kRoomStep);
+        float um; VitalReport r = {};
+        for (uint32_t k = 0; k < 900; k++) {
+            const float t = k / 60.0f;
+            const float ph = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * 1.2067f * t);
+            pts[0].real = 2000; pts[0].imag = 0;
+            for (int b = 0; b < kZoomPoints; b++) {
+                const float a = ph * (1.0f - 0.02f * b) + 0.1f * b;
+                pts[1 + b].real = (int16_t)(1500 * cosf(a) + 3 * sinf(k * 1.7f + b));
+                pts[1 + b].imag = (int16_t)(1500 * sinf(a) + 3 * cosf(k * 2.3f + b));
+            }
+            for (int q = 0; q < kRoomPoints; q++) {
+                pts[1 + kZoomPoints + q].real = (int16_t)((q == 20 ? 900 : 60) * cosf(0.3f * q + (q == 20 ? ph : 0)));
+                pts[1 + kZoomPoints + q].imag = (int16_t)((q == 20 ? 900 : 60) * sinf(0.3f * q + (q == 20 ? ph : 0)));
+            }
+            d.pushFrame(pts, kTotal3SubPts, 20, 0, um);
+        }
+        d.computeVitalReport(r);
+        printf("%d %.3f", r.valid, r.hr_spec_bpm);""")
+        valid, bpm = out.split()
+        self.assertEqual(valid, "1")
+        self.assertAlmostEqual(float(bpm), 1.2067 * 60, delta=0.1)
+
+
 if __name__ == "__main__":
     unittest.main()

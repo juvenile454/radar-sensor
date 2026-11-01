@@ -553,7 +553,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                 print(f"{nm:8s} {SCENARIOS[nm][0]:32s} {r['gueltig']:>7s} {r['erst_s']:4.0f}s {r['hr_mae']:7.1f}   {r['hr_p5']:5.0f} %"
                       f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms ({r['rmssd_anteil']:3.0f} %) {r['konf']:4.0f}"
                       f" {kf}  {extra}")
-            print(f"Rechenzeit je Report am PC (Median): {r['us'] / 1000:.1f} ms (ESP32 live: ≈ 270–320 ms)")
+            print(f"Rechenzeit je Report am PC (Median): {r['us'] / 1000:.1f} ms (ESP32 live vor V2.2: ≈ 270–320 ms)")
         results["alle"] = pooled(results)
         p = results["alle"]
         print(f"Alle Szenarien mit Person: Konfidenz-Median bei > 10 /min Fehler {p['konf_falsch']:.0f} % "

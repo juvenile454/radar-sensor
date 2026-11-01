@@ -20,8 +20,8 @@ import vital_sim  # noqa: E402
 
 
 def worsen_header(src: str) -> str:
-    """Absichtlich verschlechterter Header: Suchband beginnt erst bei 1,25 Hz (75 /min), Puls 72 fällt heraus."""
-    return re.sub(r"(kHrFMin\s*=\s*)[0-9.]+f", r"\g<1>1.25f", src, count=1)
+    """Absichtlich verschlechterter Header: Suchband beginnt erst bei Bin 85 (1,25 Hz, 75 /min), Puls 72 fällt heraus."""
+    return re.sub(r"(kHrK0\s*=\s*)[0-9]+U", r"\g<1>85U", src, count=1)
 
 
 class CheckLimitsTest(unittest.TestCase):

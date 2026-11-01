@@ -8,8 +8,9 @@
  *      und 3 s, in denen der Report aus seinem Schnappschuss rechnet, während weiter Frames ankommen; V2.1).
  *   3. Puls: pro Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Fit, circleCenter) abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
  *      0,6–5,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
- *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) für
- *      0,64–3,03 Hz; Spitzen zählen nur zwischen 0,67 und 3,00 Hz (40–180 /min, V1.2; vorher 55–136).
+ *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Hann, reelle FFT (1024 Punkte, a121_fft.h, V2.2;
+ *      vorher Goertzel je Frequenz), Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) für 0,645–3,03 Hz; Spitzen zählen nur
+ *      zwischen 0,674 und 3,003 Hz (40–180 /min, V1.2; vorher 55–136), parabolisch verfeinert. Phase per fastAtan2.
  *      Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
  *      Punkte mit klarem Puls zählen mehr. Atem-Oberwellen werden im Spektrum NICHT herausprojiziert: Liegt der Puls
  *      nahe m × Atemfrequenz, entfernt die Projektion den Herzanteil mit (am Datensatz: 13–42 % statt 61–89 % Treffer).
@@ -54,6 +55,8 @@
 
 #include <algorithm>
 
+#include "a121_fft.h"
+
 namespace a121_dsp {
 
 static constexpr float kRadarFreqHz  = 60.5e9f;
@@ -74,16 +77,23 @@ static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
 static constexpr uint16_t kSnapMaxLag  = kHistoryLen - kHrWin;  /* höchstens so viele Frames nach dem Schnappschuss */
 static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
-static constexpr float    kHrFMin      = 0.64f;  /* 38 /min; mit 3 gesperrten Randschritten Suche ab 0,67 Hz = 40 /min (V1.2) */
-static constexpr float    kHrFStep     = 0.01f;  /* 0,6 /min (feiner bringt bei 15-s-Fenster nichts, am Datensatz geprüft) */
-static constexpr uint16_t kHrNumF      = 240U;   /* 0,64 .. 3,03 Hz, gesucht 0,67 .. 3,00 Hz (40–180 /min) */
+/* Spektren (V2.2, B13): reelle FFT der auf 15 Hz dezimierten Folge (≤ 225 Werte, Hann, auf 1024 nullaufgefüllt) statt
+ * Goertzel je Frequenz; Raster 15 Hz / 1024 = 0,0146 Hz (0,88 /min), Spitzen parabolisch verfeinert. Vorher Puls im
+ * 0,01-Hz-Raster ohne Verfeinerung, Atmung im 0,005-Hz-Raster. Die Grenzen in Hz bleiben wie vorher. */
+static constexpr uint16_t kFftN        = 1024U;
+static constexpr float    kFftDf       = kFsHz / (float)kDecim / (float)kFftN;
+static constexpr uint16_t kHrK0        = 44U;    /* erster Bin des Pulsspektrums (0,645 Hz) */
+static constexpr float    kHrFMin      = (float)kHrK0 * kFftDf;
+static constexpr float    kHrFStep     = kFftDf;
+static constexpr uint16_t kHrNumF      = 164U;   /* Bins 44 .. 207 (0,645 .. 3,032 Hz); gesucht 46 .. 205 = 40,4–180,2 /min */
 static constexpr float    kHarm2W      = 0.5f;   /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) (2. Herz-Oberwelle) */
-static constexpr uint16_t kHr2Off      = (uint16_t)(kHrFMin / kHrFStep + 0.5f);  /* 2f_k = f_(kHr2Off + 2k) */
-static constexpr float    kHr2MaxHz    = 5.0f;   /* 2f über der Bandpass-Grenze nicht rechnen (Rechenzeit, V1.2) */
-static constexpr float    kBrFMin      = 0.10f;  /* Atem-Spektrum über alle Zoom-Punkte: 0,10 .. 0,60 Hz */
-static constexpr float    kBrFStep     = 0.005f;
-static constexpr uint16_t kBrNumF      = 101U;
-static constexpr uint16_t kBrEdgeBins  = 3U;     /* Atem-Spitze nicht am Bandrand (früher oft 6 /min) */
+static constexpr float    kHr2MaxHz    = 5.0f;   /* 2f über der Bandpass-Grenze zählt nicht (V1.2) */
+static constexpr uint16_t kHr2MaxBin   = (uint16_t)(kHr2MaxHz / kFftDf);  /* 341 = 4,995 Hz */
+static constexpr uint16_t kBrK0        = 7U;     /* Atem-Spektrum über alle Zoom-Punkte: Bins 7 .. 40 = 0,103 .. 0,586 Hz */
+static constexpr float    kBrFMin      = (float)kBrK0 * kFftDf;
+static constexpr float    kBrFStep     = kFftDf;
+static constexpr uint16_t kBrNumF      = 34U;
+static constexpr uint16_t kBrEdgeBins  = 1U;     /* Atem-Spitze nicht am Bandrand (früher oft 6 /min): 0,117 .. 0,571 Hz */
 static constexpr float    kBrMinQ      = 2.0f;   /* Atem-Spitze/Median: darunter keine Oberwellen-Prüfung */
 static constexpr float    kHarmTolHz   = 0.04f;  /* Puls-Kandidat gilt als Atem-Oberwelle, wenn |f − m·f_Atem| ≤ 0,04 Hz */
 static constexpr uint8_t  kHarmMMax    = 8U;     /* geprüfte Oberwellen m = 2 .. 8 (V1.3) */
@@ -119,7 +129,7 @@ static constexpr float    kGateK       = 1.25f;  /* Grenze = 1,25 × Effektivwer
 static constexpr float    kGateP       = 3.0f;   /* Verstärkung darüber (Grenze/Effektivwert)^3: Bewegung fällt praktisch heraus */
 static constexpr float    kMotionK     = 3.0f;   /* für motion_pct: Block > 3 × ruhiges Viertel gilt als Bewegung */
 static constexpr uint8_t  kMaxBlocks   = kHrWin / kGateBlk;
-static constexpr uint16_t kHrEdgeBins  = 3U;     /* Spitzen in den äußeren 3 Frequenzschritten zählen nicht (Leckage vom Bandrand) */
+static constexpr uint16_t kHrEdgeBins  = 2U;     /* Spitzen in den äußeren 2 Bins (0,03 Hz) zählen nicht (Leckage vom Bandrand) */
 static constexpr uint8_t  kMaxRoomTargets = 8U;  /* gemeldete Raum-Ziele (die stärksten) */
 static constexpr float    kRoomDetK    = 2.0f;   /* Raum-Ziel: Amplitude oder Bewegung ≥ 2 × Rauschpegel */
 static constexpr float    kRoomMoveK   = 3.0f;   /* bewegt: Bewegung ≥ 3 × Bewegungs-Rauschpegel */
@@ -134,6 +144,40 @@ static constexpr float kBpSos[4][6] = {
     {1.0f, -2.0f, 1.0f, 1.0f, -1.8687365868947912f, 0.8744518329372326f},
     {1.0f, -2.0f, 1.0f, 1.0f, -1.9571506605508442f, 0.9612033138279775f},
 };
+
+/**
+ * atan2 als Polynom (V2.2, B13): atan(a) für a = min/max ∈ [0, 1] nach Abramowitz/Stegun 4.4.49 (Fehler ≤ 1 · 10⁻⁵ rad),
+ * dann auf den Quadranten gespiegelt. Beim Abwickeln 21 600 Aufrufe je Report; atan2f kostet auf dem ESP32-S3 ein
+ * Vielfaches. 10⁻⁵ rad ≈ 0,004 µm Weg.
+ */
+static inline float fastAtan2(float y, float x) {
+    const float ax = fabsf(x), ay = fabsf(y);
+    const float mx = ax > ay ? ax : ay, mn = ax > ay ? ay : ax;
+    if (!(mx > 0.0f)) return 0.0f;
+    const float a = mn / mx, z = a * a;
+    float r = a * (0.99997726f + z * (-0.33262347f + z * (0.19354346f + z * (-0.11643287f + z * (0.05265332f + z * -0.01172120f)))));
+    if (ay > ax) r = 1.57079633f - r;
+    if (x < 0.0f) r = 3.14159265f - r;
+    return (y < 0.0f) ? -r : r;
+}
+
+/**
+ * Linearen Trend entfernen (kleinste Quadrate) in float (V2.2; vorher double, das der ESP32-S3 in Software rechnet):
+ * Σt² = N(N² − 1)/12 geschlossen, Summen um x[0] verschoben, damit float reicht.
+ */
+inline void removeLinearTrend(float *x, uint16_t N) {
+    if (N < 2) return;
+    const float half = 0.5f * (float)(N - 1U), x0 = x[0];
+    float sum_y = 0.0f, sum_ty = 0.0f;
+    for (uint16_t n = 0; n < N; n++) {
+        const float y = x[n] - x0;
+        sum_y += y;
+        sum_ty += ((float)n - half) * y;
+    }
+    const float sum_tt = (float)N * ((float)N * (float)N - 1.0f) / 12.0f;
+    const float mean = x0 + sum_y / (float)N, slope = sum_ty / sum_tt;
+    for (uint16_t n = 0; n < N; n++) x[n] -= mean + slope * ((float)n - half);
+}
 
 /**
  * Kreismittelpunkt der IQ-Werte eines Zoom-Punkts im Fenster: Kåsa-Fit in Bullock-Form (algebraisch, ein 2×2-System).
@@ -624,7 +668,7 @@ public:
             best_h_      = allocFloat(kHrWin);
             br_x_        = allocFloat(kHrWin);
             dec_         = allocFloat(kHrWin / kDecim + 1U);
-            spec_        = allocFloat(kHrNumF);
+            spec_        = allocFloat(kHr2MaxBin + 1U);
             sum_         = allocFloat(kHrNumF);
             comb_        = allocFloat(kHrNumF);
             scratch_     = allocFloat(kHrNumF);
@@ -902,6 +946,7 @@ public:
         uint32_t moving_blocks = 0, total_blocks = 0;
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] = 0.0f;
         for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
+        const float *hann = hannWindow(M);
 
         for (uint8_t b = 0; b < kZoomPoints; b++) {
             bool short_arc = false;
@@ -916,13 +961,11 @@ public:
              * Ungewichtet überdeckte ihr Tieftonanteil die Atmung (am Datensatz 2026-11-01 Punkte mit |z| 120–300,
              * 140–240 Phasensprünge in 15 s, 8–11 mm "Hub"; die starken Punkte zeigten sauber 17 /min). */
             const float wa = amp_c * amp_c;
-            for (uint16_t m = 0; m < M; m++) {
-                const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
-                dec_[m] = work_x_[(uint32_t)m * kDecim] * w;
-            }
+            for (uint16_t m = 0; m < M; m++) dec_[m] = work_x_[(uint32_t)m * kDecim] * hann[m];
+            fft_.power(dec_, M, spec_, kBrK0 + kBrNumF);
             float br_energy = 0.0f;
             for (uint16_t k = 0; k < kBrNumF; k++) {
-                const float pk = goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
+                const float pk = spec_[kBrK0 + k];
                 br_comb_[k] += wa * pk;
                 br_energy += pk;
             }
@@ -935,22 +978,15 @@ public:
             }
             total_blocks += N / kGateBlk;
             /* dezimieren + Hann */
-            for (uint16_t m = 0; m < M; m++) {
-                const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
-                dec_[m] = h[(uint32_t)m * kDecim] * w;
-            }
+            for (uint16_t m = 0; m < M; m++) dec_[m] = h[(uint32_t)m * kDecim] * hann[m];
             /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f): Ein Herzschlag ist ein kurzer Impuls mit kräftiger 2. Oberwelle,
-             * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). 2f_k liegt bis 1,5 Hz im selben Raster,
-             * darüber im 0,02-Hz-Raster bis kHr2MaxHz (Plan: Raster oberhalb 3 Hz vergröbern). */
+             * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). Im FFT-Raster liegt 2f genau auf Bin 2k. */
             float pmax = 0.0f;
             uint16_t kmax = 0;
-            for (uint16_t k = 0; k < kHrNumF; k++) spec_[k] = goertzelPower(dec_, M, kFsHz / kDecim, kHrFMin + kHrFStep * k);
+            fft_.power(dec_, M, spec_, kHr2MaxBin + 1U);
             for (uint16_t k = 0; k < kHrNumF; k++) {
-                const uint32_t k2 = (uint32_t)kHr2Off + 2U * k;
-                const float f2 = 2.0f * (kHrFMin + kHrFStep * k);
-                const float p2 = (k2 < kHrNumF) ? spec_[k2]
-                                 : (f2 <= kHr2MaxHz ? goertzelPower(dec_, M, kFsHz / kDecim, f2) : 0.0f);
-                sum_[k] = spec_[k] + kHarm2W * p2;
+                const uint16_t k1 = (uint16_t)(kHrK0 + k), k2 = (uint16_t)(2U * k1);
+                sum_[k] = spec_[k1] + kHarm2W * (k2 <= kHr2MaxBin ? spec_[k2] : 0.0f);
                 if (sum_[k] > pmax) { pmax = sum_[k]; kmax = k; }
             }
             memcpy(scratch_, sum_, kHrNumF * sizeof(float));
@@ -1083,8 +1119,19 @@ public:
                 std::swap(cs[r], cs[r - 1U]);
                 std::swap(cand[r], cand[r - 1U]);
             }
-        rep.hr_harm = isHarmHz(binHz(cand[0]));
-        const float raw_bpm = binHz(cand[0]) * 60.0f;
+        /* Kandidaten-Frequenz parabolisch zwischen den Bins verfeinert (V2.2; Kandidaten sind lokale Maxima von S) */
+        float cf[3] = {0.0f, 0.0f, 0.0f};
+        for (uint8_t j = 0; j < n_cand; j++) {
+            const int16_t k = cand[j];
+            float d = 0.0f;
+            if (k > 0 && k + 1 < (int16_t)kHrNumF) {
+                const float a = comb_[k - 1], b = comb_[k], c = comb_[k + 1], den = a - 2.0f * b + c;
+                if (b >= a && b >= c && den < 0.0f) d = std::max(-0.5f, std::min(0.5f, 0.5f * (a - c) / den));
+            }
+            cf[j] = binHz(k) + kHrFStep * d;
+        }
+        rep.hr_harm = isHarmHz(cf[0]);
+        const float raw_bpm = cf[0] * 60.0f;
         rep.hr_spec_bpm = raw_bpm;
         memcpy(scratch_, comb_, kHrNumF * sizeof(float));
         std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
@@ -1108,12 +1155,12 @@ public:
         } else {
             int16_t near = -1;
             for (uint8_t j = 0; j < n_cand; j++) {
-                const float bpm = binHz(cand[j]) * 60.0f;
+                const float bpm = cf[j] * 60.0f;
                 if (cs[j] >= kNearMinRel * cs[0] && fabsf(bpm - hr_prev_) < 12.0f && (near < 0 || cs[j] > cs[near]))
                     near = (int16_t)j;
             }
             if (near >= 0) {
-                hr_prev_ = 0.7f * hr_prev_ + 0.3f * binHz(cand[near]) * 60.0f;
+                hr_prev_ = 0.7f * hr_prev_ + 0.3f * cf[near] * 60.0f;
                 hr_miss_ = 0;
             } else if (++hr_miss_ >= (rep.hr_harm ? kHoldHarm : 3U)) {
                 hr_prev_ = raw_bpm;
@@ -1126,14 +1173,14 @@ public:
             if (harmOrder(hr_prev_ / 60.0f) != 0 && harmOrder(hr_prev_ / 60.0f) <= kHarmLowMax) {
                 const float s_tr = sAtBpm(hr_prev_) * harmPenalty(hr_prev_ / 60.0f);
                 for (uint8_t j = 0; j < n_cand; j++) {
-                    const float bpm = binHz(cand[j]) * 60.0f;
-                    if (!isHarmHz(binHz(cand[j])) && fabsf(bpm - hr_prev_) >= 12.0f && cs[j] >= 0.5f * s_tr &&
+                    const float bpm = cf[j] * 60.0f;
+                    if (!isHarmHz(cf[j]) && fabsf(bpm - hr_prev_) >= 12.0f && cs[j] >= 0.5f * s_tr &&
                         (alt < 0 || cs[j] > cs[alt]))
                         alt = (int16_t)j;
                 }
             }
             if (alt >= 0 && ++alt_count_ >= kAltReports) {
-                hr_prev_   = binHz(cand[alt]) * 60.0f;
+                hr_prev_   = cf[alt] * 60.0f;
                 hr_miss_   = 0;
                 alt_count_ = 0;
             } else if (alt < 0) {
@@ -1164,10 +1211,7 @@ public:
 
         /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
          * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19) */
-        for (uint16_t m = 0; m < M; m++) {
-            const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
-            dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * w;
-        }
+        for (uint16_t m = 0; m < M; m++) dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * hann[m];
         const float best_p = (fb > 0.0f) ? goertzelPower(dec_, M, kFsHz / kDecim, fb) : 0.0f;
         const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
         rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
@@ -1205,6 +1249,16 @@ public:
 
 private:
     static uint16_t sat16(uint32_t v) { return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v; }
+
+    /** Hann-Fenster der Länge M (dezimierte Folge); neu gerechnet nur, wenn sich M ändert (Fensteraufbau), V2.2. */
+    const float *hannWindow(uint16_t M) {
+        if (M != hann_m_) {
+            for (uint16_t m = 0; m < M; m++)
+                hann_[m] = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
+            hann_m_ = M;
+        }
+        return hann_;
+    }
 
     static float *allocFloat(size_t count) {
         void *p = nullptr;
@@ -1245,7 +1299,7 @@ private:
         for (uint16_t n = 0; n < N; n++) {
             const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
             const float di = z[0] - ci, dq = z[1] - cq;
-            const float phi = atan2f(dq, di);
+            const float phi = fastAtan2(dq, di);
             const float r2 = di * di + dq * dq;
             r_sum += sqrtf(r2);
             r2_sum += r2;
@@ -1390,21 +1444,6 @@ private:
         return moving;
     }
 
-    static void removeLinearTrend(float *x, uint16_t N) {
-        if (N < 2) return;
-        double sum_y = 0.0, sum_tt = 0.0, sum_ty = 0.0;
-        const double half = 0.5 * (double)(N - 1U);
-        for (uint16_t n = 0; n < N; n++) {
-            const double t = (double)n - half;
-            sum_y  += x[n];
-            sum_tt += t * t;
-            sum_ty += t * x[n];
-        }
-        const double mean_y = sum_y / (double)N;
-        const double slope  = (sum_tt > 1e-6) ? (sum_ty / sum_tt) : 0.0;
-        for (uint16_t n = 0; n < N; n++) x[n] = (float)((double)x[n] - (mean_y + slope * ((double)n - half)));
-    }
-
     /** Goertzel-Leistung ohne Fenster (Fenster ist schon im Signal). */
     static float goertzelPower(const float *x, uint16_t N, float fs, float freq_hz) {
         const float coeff = 2.0f * cosf(2.0f * (float)M_PI * freq_hz / fs);
@@ -1537,6 +1576,9 @@ private:
     uint32_t tot_delayed_ = 0, tot_sat_ = 0, tot_tickgap_ = 0;    /* Sensor-Zähler seit begin() (V1.5, Summen seit V2.1) */
     uint32_t prev_delayed_ = 0, prev_sat_ = 0, prev_tickgap_ = 0; /* … beim zuletzt gerechneten Report */
     ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
+    a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
+    float    hann_[kHrWin / kDecim + 1U] = {};
+    uint16_t hann_m_ = 0;
     uint32_t last_tick_ = 0;
     bool     have_last_tick_ = false;
     uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated je Frame der Historie */
