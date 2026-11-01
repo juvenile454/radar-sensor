@@ -222,7 +222,8 @@ class CombineBenchTest(unittest.TestCase):
     """V3.1 (Schalter A121_DSP_COMBINE): ein kombinierter Kanal statt Einzelspektren, NUR SIMULATION. Abnahme laut Plan
     „MAE ≤ heute bei ≤ 50 % Rechenzeit". Bekannte Abweichung, festgehalten: Der kombinierte Kanal ist atemlastig, im
     6-s-Fenster liegt die stärkste Spitze bei step und tief auf einer niedrigen Atem-Oberwelle (verworfen), der erste
-    Wert kommt dort nach 7 statt 6 s."""
+    Wert kommt dort nach 7 statt 6 s (bei step ist er auch der erste richtige, daher zusätzlich erst_ok_s; tief hat dafür
+    ohnehin 7 s als Grenze)."""
 
     SCEN = ["--scen", "base", "brady", "step", "tief"]
     DEFINE = "A121_DSP_COMBINE"
@@ -240,7 +241,8 @@ class CombineBenchTest(unittest.TestCase):
         viol_std, ms_std = self.bench()
         viol, ms = self.bench("--define", self.DEFINE)
         self.assertEqual(viol_std, [])
-        self.assertEqual(viol, ["VERLETZT step: erst_s = 7.0, Grenze <= 6.0", "VERLETZT tief: erst_s = 7.0, Grenze <= 6.0"])
+        self.assertEqual(viol, ["VERLETZT step: erst_ok_s = 7.0, Grenze <= 6.0", "VERLETZT step: erst_s = 7.0, Grenze <= 6.0",
+                                "VERLETZT tief: erst_s = 7.0, Grenze <= 6.0"])
         self.assertLessEqual(ms, 0.5 * ms_std)
 
 
