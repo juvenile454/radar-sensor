@@ -280,6 +280,14 @@ Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-
        Jede Sekunde `@SESS_STAT`, am Ende `@SESS_END` mit UART-Fehlern und Rückstau. Die Ausgabe ist gedrosselt
        (`peak` ≤ 100/s, `amp` ≤ 10/s), damit der ESP32 nie hinter den Datenstrom fällt. Höchstens 4096 Punkte pro Frame.
      - `gpio [0|1|z] [0|1|z]`: Liest oder schaltet `MISC_GPIO0` (`GPIO6` ↔ `PB1`, braun) und `MISC_GPIO1` (`GPIO7` ↔ `PA4`, grau).
+     - **App-Protokoll `proto=1` (seit 2026-11-01, Firmware `2026-11-01-app1`, nur ergänzt, PC-Skripte laufen unverändert):**
+       `hello` → `@HELLO,proto=1,fw=…,build=…,link=…,server=…,mac=…,up_ms=…,modes=…` (`up_ms` zeigt, ob der ESP32 neu
+       gestartet ist). `@IQ3` und `@DOPPLER` haben hinten Frame-Zähler und Sensor-`tick`. `iq3 [sek] [start_mm] raw`
+       schickt je Frame zusätzlich `@RAW,frame,tick,n,<Base64>` (105 komplexe int16, ≈ 35 kB/s statt ≈ 5 kB/s).
+       Nach 3 Frame-Timeouts verbindet der ESP32 den Server neu (`@RECONNECT,t_ms,versuch,ok`, danach beginnt `tick`
+       von vorn). Strg+R (0x12) während eines Streams startet den Server zum Test absichtlich neu.
+     - Port-Öffnen setzt den ESP32 nicht zurück; nur DTR = 0 bei RTS = 1 löst einen Reset aus (am PC geprüft). PC-Skripte
+       öffnen deshalb mit den Standardwerten, die App setzt nur DTR und fasst RTS nie an.
 
 **Am Gerät geprüft (2026-10-31, nur PC über CH342 Kanal B, ESP32 nicht angeschlossen):**
 - Server `a121-v1.12.0`, `max_baudrate` 2 000 000. exptool mit 921 600 Baud: 16/16 Sessions nach Reset ok, je 100 Frames @ 100 Hz.
@@ -515,6 +523,13 @@ USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO4
   **IN-OUT am 2026-10-30 geschlossen (selbst gelötet):** 5Vin–GND = 4,74 V bei USB-Versorgung.
   Regeln seitdem: nie USB + externe 5 V gleichzeitig; bei gesteckter roter Ader A121 nicht zusätzlich per USB-C.
   Übergangsweise am PC: A121 per eigenem USB-C versorgen, rote Ader ab, Signale + GND bleiben.
+- **Geprüft 2026-11-01 am Galaxy S26 Ultra:** nativer USB-Port des ESP32 per C-auf-C-Kabel am Handy → Handy ist
+  Stromquelle + Host, alle Power-LEDs (ESP32 und A121) an, ESP32 als `303a:1001` (CDC-ACM + JTAG) erkannt. Die
+  USB-C-Buchse des Nachbaus braucht also keinen OTG-Adapter. Datenfluss mit der App geprüft: 31,7 min `iq3 … raw`
+  über USB ohne Frameverlust (`docs/ANDROID_APP.md`). Abziehen startet den ESP32 neu (er hängt am Handy-Strom); das
+  Handy lädt währenddessen nicht, Verbrauch nicht gemessen.
+- Nie beide USB-Ports des ESP32 gleichzeitig anschließen (z. B. Handy + PC): Mit geschlossener IN-OUT-Brücke könnten
+  zwei 5-V-Quellen verbunden sein (nicht gemessen).
 - Motoren (späterer Scanner) immer separat versorgen; nur GND gemeinsam.
 
 ## Pico (zurückgestellt)

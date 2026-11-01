@@ -20,6 +20,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <driver/gpio.h>
+#include <mbedtls/base64.h>
 
 #include "a121_esp_dsp.h"
 #include "a121_server_client.h"
@@ -42,6 +43,12 @@ static const uint8_t A121_ADDR = 0x52;
 static const int PIN_SRV_RX = PIN_SDA;  // GPIO15 ← STM32 PB11 (LPUART1_TX), orange Ader
 static const int PIN_SRV_TX = PIN_SCL;  // GPIO16 → STM32 PB10 (LPUART1_RX), grüne Ader
 static HardwareSerial &SrvUart = Serial2;
+
+// Stand der Firmware für '@HELLO' (App/PC erkennen damit Protokoll und Fähigkeiten, docs/ANDROID_APP.md).
+// proto 1: @IQ3 mit Frame-Zähler + Sensor-tick, @RAW, @RECONNECT, @DOPPLER mit Frame-Zähler + tick.
+static const char *FW_VERSION = "2026-11-01-app1";
+static const int PROTO_VERSION = 1;
+static String g_serverVersion = "-";  // rss_version der letzten erfolgreichen Server-Verbindung
 
 static int rgbPin = 48;  // DevKitC-1 v1.0: 48, v1.1: 38 — mit "led <pin>" umstellbar
 static bool uartBridge = false;
@@ -496,10 +503,20 @@ static void cmdVer() {
 // Voller A121 Exploration-Server & On-Device Sparse-IQ DSP Modus (LPUART1 über SDA/SCL-Adern)
 // ============================================================================
 
+// rss_version aus der get_system_info-Antwort merken (für '@HELLO')
+static void rememberServerVersion(const String &sysInfo) {
+  int i = sysInfo.indexOf("\"rss_version\":\"");
+  if (i < 0) return;
+  i += 15;
+  int e = sysInfo.indexOf('"', i);
+  if (e > i) g_serverVersion = sysInfo.substring(i, e);
+}
+
 static bool ensureServerConnected() {
   useSrvLink();
   String sysInfo;
   if (g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo)) {
+    rememberServerVersion(sysInfo);
     return true;
   }
   // Kein I2C-Gegentest: Läuft doch der Server, würde der ESP32 gegen PB11 auf der SDA-Ader treiben.
@@ -525,15 +542,78 @@ static void cmdStmReset() {
   Serial.println("Sende 15-ms UART-Break auf GPIO16 (-> PB10) und verbinde neu...");
   String sysInfo;  // connectAndNegotiateBaud() schickt den Break selbst
   if (g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo)) {
+    rememberServerVersion(sysInfo);
     Serial.printf("Server antwortet @ %lu Baud: %s\n", (unsigned long)g_srv.currentBaud(), sysInfo.c_str());
   } else {
     Serial.println("Break gesendet, Server antwortet nicht. RESET-Taste am A121 drücken.");
   }
 }
 
+// Maschinenlesbare Kennung für App und PC-Skripte. Verbindet nicht mit dem Server (das würde ihn per Break neu starten);
+// 'server' ist der Stand der letzten Verbindung, '-' vor der ersten.
+static void cmdHello() {
+  // MAC in derselben Schreibweise wie die USB-Seriennummer (EC:DA:...), damit App/PC das Gerät zuordnen können
+  const uint64_t mac = ESP.getEfuseMac();
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", (unsigned)(mac & 0xFF), (unsigned)((mac >> 8) & 0xFF),
+           (unsigned)((mac >> 16) & 0xFF), (unsigned)((mac >> 24) & 0xFF), (unsigned)((mac >> 32) & 0xFF),
+           (unsigned)((mac >> 40) & 0xFF));
+  Serial.printf("@HELLO,proto=%d,fw=%s,build=%s %s,link=%s,server=%s,mac=%s,up_ms=%lu,modes=iq3 doppler sess bridge i2c\n",
+                PROTO_VERSION, FW_VERSION, __DATE__, __TIME__, linkName(), g_serverVersion.c_str(), macStr,
+                (unsigned long)millis());
+}
+
+// Eingabe während eines Streams (iq3, doppler): 0x12 (Strg+R) startet den Server absichtlich per Break neu, damit sich
+// das Neuverbinden prüfen lässt; jedes andere Zeichen beendet den Stream (wie bisher).
+enum class StreamInput { NONE, STOP, TEST_SERVER_RESET };
+
+static StreamInput pollStreamInput() {
+  if (!Serial.available()) return StreamInput::NONE;
+  bool stop = false, reset = false;
+  while (Serial.available()) {
+    if (Serial.read() == 0x12) reset = true;
+    else stop = true;
+  }
+  return stop ? StreamInput::STOP : reset ? StreamInput::TEST_SERVER_RESET : StreamInput::NONE;
+}
+
+// Neuverbinden nach Serververlust (STM32-Neustart durch eine UART-Störung, s. docs/HARDWARE.md): nach so vielen
+// Frame-Timeouts in Folge (je 500 ms) neu verbinden, bei Misserfolg alle kReconnectRetryMs erneut.
+static const uint32_t kLostAfterTimeouts = 3;
+static const uint32_t kReconnectRetryMs = 2000;
+
+struct ReconnectState {
+  uint32_t consecTimeouts = 0;
+  uint32_t count = 0;
+  uint32_t lastTryMs = 0;
+  bool tried = false;
+};
+
+// Nach einem Frame-Timeout aufrufen. Gibt true zurück, wenn die Session neu läuft.
+static bool handleFrameTimeout(ReconnectState &rs, const a121_srv::SessionSpec &spec, uint32_t tMs) {
+  Serial.println("@WARN,frame_timeout");
+  if (++rs.consecTimeouts < kLostAfterTimeouts) return false;
+  if (rs.tried && (millis() - rs.lastTryMs) < kReconnectRetryMs) return false;
+  rs.tried = true;
+  rs.lastTryMs = millis();
+  rs.count++;
+  String sysInfo;
+  const bool ok = g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo) && g_srv.setupSession(spec) && g_srv.startStreaming();
+  if (ok) {
+    rememberServerVersion(sysInfo);
+    rs.consecTimeouts = 0;
+    rs.tried = false;
+  }
+  // @RECONNECT,t_ms,versuch,ok
+  Serial.printf("@RECONNECT,%lu,%lu,%u\n", (unsigned long)tMs, (unsigned long)rs.count, (unsigned)ok);
+  return ok;
+}
+
 // 3-Subsweep Sparse-IQ Session (Sub 0 Loopback + Sub 1 2.5-mm Vital-Zoom + Sub 2 Raum-Scan)
-// mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom
-static void cmdIq3(uint32_t durationSec, int32_t startMm) {
+// mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom.
+// raw = true: zusätzlich je Frame '@RAW,frame,tick,n,<Base64>' mit den unveränderten Punkten vom Server
+// (n komplexe int16-Paare real, imag, Little Endian; Reihenfolge Loopback, 24 Zoom-Punkte, 80 Raum-Punkte).
+static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   if (!ensureServerConnected()) return;
 
   int32_t zoomStartPt = (int32_t)lroundf((float)constrain(startMm, 200, 2200) / 2.5f);
@@ -553,9 +633,10 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
     return;
   }
 
-  Serial.printf("@IQ3_START,%ld,%ld,60.0\n",
+  // @IQ3_START,zoom_start_mm,zoom_end_mm,frame_rate,raw
+  Serial.printf("@IQ3_START,%ld,%ld,60.0,%u\n",
                 (long)(zoomStartPt * 25 / 10),
-                (long)((zoomStartPt + a121_dsp::kZoomPoints) * 25 / 10));
+                (long)((zoomStartPt + a121_dsp::kZoomPoints) * 25 / 10), (unsigned)raw);
   led(0, 40, 20);
 
   a121_dsp::Complex16 pts[a121_dsp::kTotal3SubPts];
@@ -567,43 +648,65 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
   // Frames gebündelt, ein Zeittakt würde dann Profile überspringen.
   static const uint32_t kRoomProfEvery = 12;
   static char roomLine[a121_dsp::kRoomLineMax];
+  static char rawB64[((a121_dsp::kTotal3SubPts * sizeof(a121_dsp::Complex16) + 2) / 3) * 4 + 1];
   uint32_t nFrames = 0;
+  ReconnectState rs;
 
   while (true) {
-    if (Serial.available()) {
-      while (Serial.available()) Serial.read();
-      break;
+    const StreamInput in = pollStreamInput();
+    if (in == StreamInput::STOP) break;
+    if (in == StreamInput::TEST_SERVER_RESET) {
+      Serial.println("@WARN,test_server_reset");
+      g_srv.resetStm32ViaBreak();
     }
     if (durationSec > 0 && (millis() - tStart) >= durationSec * 1000UL) {
       break;
     }
 
     if (!g_srv.readStreamFrame(pts, a121_dsp::kTotal3SubPts, meta, 500)) {
-      Serial.println("@WARN,frame_timeout");
+      if (handleFrameTimeout(rs, spec, millis() - tStart)) {
+        g_dsp.setZoomStartPoint(zoomStartPt);  // Lücke im Signal: Verlauf neu beginnen (wie beim Rezoom)
+        lastFrameUs = micros();
+      }
       continue;
     }
+    rs.consecTimeouts = 0;
 
     uint32_t nowUs = micros();
     float dtS = (float)(nowUs - lastFrameUs) * 1.0e-6f;
     lastFrameUs = nowUs;
 
     uint16_t nPts = meta.payload_bytes / sizeof(a121_dsp::Complex16);
+    if (nPts > a121_dsp::kTotal3SubPts) nPts = a121_dsp::kTotal3SubPts;  // readStreamFrame liest höchstens so viele
     float dispUm = 0.0f;
     g_dsp.pushFrame(pts, nPts, meta.temperature_c, dtS, dispUm);
 
     const float lbAmp = sqrtf((float)pts[0].real * pts[0].real + (float)pts[0].imag * pts[0].imag);
     const uint16_t b0 = 1U + (a121_dsp::kZoomPoints / 2U);
     const float zAmp  = sqrtf((float)pts[b0].real * pts[b0].real + (float)pts[b0].imag * pts[b0].imag);
+    const uint32_t frameNo = nFrames++;
 
-    Serial.printf("@IQ3,%lu,%d,%.1f,%.2f,%.1f,%u\n",
+    // @IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated,frame,tick (frame/tick seit proto 1)
+    Serial.printf("@IQ3,%lu,%d,%.1f,%.2f,%.1f,%u,%lu,%lu\n",
                   (unsigned long)(millis() - tStart),
                   (int)meta.temperature_c,
                   lbAmp,
                   dispUm,
                   zAmp,
-                  (unsigned)meta.data_saturated);
+                  (unsigned)meta.data_saturated,
+                  (unsigned long)frameNo,
+                  (unsigned long)meta.tick);
 
-    if (++nFrames % kRoomProfEvery == 0) {
+    if (raw) {
+      size_t olen = 0;
+      mbedtls_base64_encode((unsigned char *)rawB64, sizeof(rawB64), &olen, (const unsigned char *)pts,
+                            (size_t)nPts * sizeof(a121_dsp::Complex16));
+      Serial.printf("@RAW,%lu,%lu,%u,", (unsigned long)frameNo, (unsigned long)meta.tick, (unsigned)nPts);
+      Serial.write((const uint8_t *)rawB64, olen);
+      Serial.print('\n');
+    }
+
+    if (nFrames % kRoomProfEvery == 0) {
       a121_dsp::formatRoomProfileLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, g_dsp);
       Serial.println(roomLine);
     }
@@ -681,15 +784,23 @@ static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) 
   a121_dsp::Complex16 pts[kTotalPts];
   a121_srv::FrameMeta meta = {};
   uint32_t tStart = millis();
+  uint32_t nFrames = 0;
+  ReconnectState rs;
 
   while (true) {
-    if (Serial.available()) {
-      while (Serial.available()) Serial.read();
-      break;
+    const StreamInput in = pollStreamInput();
+    if (in == StreamInput::STOP) break;
+    if (in == StreamInput::TEST_SERVER_RESET) {
+      Serial.println("@WARN,test_server_reset");
+      g_srv.resetStm32ViaBreak();
     }
     if (durationSec > 0 && (millis() - tStart) >= durationSec * 1000UL) break;
 
-    if (!g_srv.readStreamFrame(pts, kTotalPts, meta, 500)) continue;
+    if (!g_srv.readStreamFrame(pts, kTotalPts, meta, 500)) {
+      handleFrameTimeout(rs, spec, millis() - tStart);
+      continue;
+    }
+    rs.consecTimeouts = 0;
 
     // Kohärente Mittelung über die 4 Nachbar-Bins pro Sweep & Differenzphasen-Geschwindigkeit
     float meanI = 0.0f, meanQ = 0.0f;
@@ -716,8 +827,10 @@ static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) 
     }
     float rmsVelMmS = sqrtf(velSumSq / (float)(kSweeps - 1U));
     float amp = sqrtf(meanI * meanI + meanQ * meanQ) / (float)(kSweeps * kPtsPerSweep);
-    Serial.printf("@DOPPLER,%lu,%.2f,%.1f,%d\n",
-                  (unsigned long)(millis() - tStart), rmsVelMmS, amp, (int)meta.temperature_c);
+    // @DOPPLER,t_ms,v_rms_mm_s,amp,temp,frame,tick (frame/tick seit proto 1)
+    Serial.printf("@DOPPLER,%lu,%.2f,%.1f,%d,%lu,%lu\n",
+                  (unsigned long)(millis() - tStart), rmsVelMmS, amp, (int)meta.temperature_c,
+                  (unsigned long)nFrames++, (unsigned long)meta.tick);
   }
 
   g_srv.stopStreaming();
@@ -844,10 +957,14 @@ static void help() {
       "  --- Modus A: Exploration Server (LPUART1, GPIO16 TX -> PB10, GPIO15 RX <- PB11) ---\n"
       "  srv_info              Server verbinden (2 Mbaud) & Info lesen (schaltet auf 'link srv')\n"
       "  stm_reset             15-ms UART-Break auf GPIO16 (Neustart des Servers, je nach Firmware)\n"
-      "  iq3 [sek] [start_mm]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
-      "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm)\n"
-      "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL 1/s\n"
+      "  iq3 [sek] [start_mm] [raw]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
+      "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm; 0 s = endlos)\n"
+      "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL 1/s,\n"
+      "                        mit 'raw' zusätzlich @RAW je Frame (105 IQ-Punkte, Base64, ≈ 35 kB/s)\n"
       "  doppler [sek] [mm] [hz] Continuous Sweep Mode (CSM) + Double Buffering Mikro-Doppler (Standard: 15 s, 500 mm, 2000 Hz)\n"
+      "                        Streams: beliebiges Zeichen beendet; Strg+R (0x12) startet den Server zum Test neu\n"
+      "                        (Neuverbinden, @RECONNECT)\n"
+      "  hello                 Kennung für App/PC: @HELLO,proto=..,fw=..,link=..,server=..\n"
       "  sess ...              Beliebige Sparse-IQ-Session einstellen + auf dem ESP32 auswerten ('sess help')\n"
       "  bridge                Transparente USB <-> Server-UART Bridge für PC-Tools (Beenden: +++EXIT)\n"
       "  --- Modus B: I2C Distance Detector (I2C2 GPIO15/GPIO16 @ 0x52, nur bei 'link i2c') ---\n"
@@ -884,10 +1001,13 @@ static void handle(String cmd) {
   else if (cmd == "ver") cmdVer();
   else if (cmd == "srv_info") cmdSrvInfo();
   else if (cmd == "stm_reset") cmdStmReset();
+  else if (cmd == "hello") cmdHello();
   else if (cmd.startsWith("iq3")) {
     int sek = 60, startMm = 500;
+    const bool raw = cmd.endsWith(" raw");
+    if (raw) cmd.remove(cmd.length() - 4);
     sscanf(cmd.c_str(), "iq3 %d %d", &sek, &startMm);
-    cmdIq3(sek < 0 ? 0 : (uint32_t)sek, startMm);
+    cmdIq3(sek < 0 ? 0 : (uint32_t)sek, startMm, raw);
   } else if (cmd.startsWith("doppler")) {
     int sek = 15, distMm = 500;
     float rateHz = 2000.0f;
