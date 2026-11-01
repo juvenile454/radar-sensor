@@ -199,5 +199,82 @@ class RemoveBreathHarmonicsTest(unittest.TestCase):
         self.assertLess(rms, 0.01)
 
 
+class BreathAmplitudeTest(unittest.TestCase):
+    """Atem-Amplitude je Report: Spitze-Spitze des 1-s-Mittels über die letzten 10 s, Trend entfernt (V1.4)."""
+
+    def amp(self, expr: str) -> float:
+        return float(run_cpp(f"""
+        static float x[900];
+        for (int n = 0; n < 900; n++) {{ const float t = n / 60.0f; x[n] = {expr}; }}
+        printf("%.3f", breathAmplitude(x, 900, 60.0f));"""))
+
+    def test_breathing_gives_about_peak_to_peak(self):
+        for rate in (0.1, 0.25, 0.4):  # 6, 15, 24 /min
+            a = self.amp(f"1000 * sinf(6.2832f * {rate}f * t)")
+            self.assertGreater(a, 1000.0, rate)
+            self.assertLess(a, 2000.0, rate)
+
+    def test_held_breath_with_heartbeat_and_drift(self):
+        # angehalten: Lage driftet 40 µm/s, Herzschlag 100 µm Spitze-Spitze bei 76 /min
+        a = self.amp("40.0f * t + 50 * sinf(6.2832f * 1.267f * t)")
+        self.assertLess(a, 40.0)
+
+
+class BreathStateTest(unittest.TestCase):
+    """Atemzustand (V1.4): 0 normal, 1 keine Atemspitze, 2 angehalten (< 10 % des 60-s-Medians, 10 s lang),
+    3 Bewegung (> 50 %), 4 flach (< 70 % des Medians, 10 s lang)."""
+
+    def states(self, steps: str) -> list[int]:
+        """steps: C++-Ausdrücke für (amp, peak, motion) je Sekunde k; Ausgabe Zustand je Sekunde."""
+        out = run_cpp(f"""
+        BreathStateTracker bs; bs.reset();
+        for (int k = 0; k < 120; k++) {{
+            float amp, motion; bool peak; {steps};
+            printf("%u ", (unsigned)bs.update(amp, peak, motion));
+        }}""")
+        return [int(v) for v in out.split()]
+
+    def test_apnea_after_ten_seconds_without_breath(self):
+        # 40 s Atmung, ab k = 40 nichts mehr; das 10-s-Fenster ist ab k = 50 frei von Atmung (Amplitude 30)
+        st = self.states("amp = (k < 50) ? 2000.0f : 30.0f; peak = true; motion = 0")
+        self.assertNotIn(2, st[:50])
+        self.assertEqual(st[50], 2)   # 10 s nach dem letzten Atemzug
+        self.assertEqual(set(st[50:]), {2})   # bleibt, auch wenn das Anhalten länger als 30 s dauert
+
+    def test_breath_returns(self):
+        st = self.states("amp = (k >= 50 && k < 65) ? 30.0f : 2000.0f; peak = true; motion = 0")
+        self.assertEqual(st[60], 2)
+        self.assertEqual(st[65], 0)
+
+    def test_shallow(self):
+        st = self.states("amp = (k < 40) ? 2000.0f : 1000.0f; peak = true; motion = 0")
+        self.assertEqual(st[39], 0)
+        self.assertEqual(st[40], 4)
+
+    def test_motion_and_no_peak(self):
+        st = self.states("amp = 2000.0f; peak = (k < 30); motion = (k >= 60) ? 70.0f : 0.0f")
+        self.assertEqual(st[20], 0)
+        self.assertEqual(st[40], 1)
+        self.assertEqual(st[70], 3)
+
+    def test_no_apnea_before_reference(self):
+        st = self.states("amp = 30.0f; peak = true; motion = 0")
+        self.assertNotIn(2, st)
+
+    def test_unknown_amplitude_is_no_peak(self):
+        st = self.states("amp = (k < 30) ? 2000.0f : -1.0f; peak = true; motion = 0")
+        self.assertEqual(st[40], 1)
+
+
+class DspLineTest(unittest.TestCase):
+    def test_br_state_after_point_agree(self):
+        out = run_cpp('VitalReport r = {}; r.point_agree_pct = 55; r.br_state = 2; char b[256];'
+                      'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
+        f = out.split(",")
+        self.assertEqual(f[0], "@DSP")
+        self.assertEqual(f[8], "55")
+        self.assertEqual(f[9], "2")
+
+
 if __name__ == "__main__":
     unittest.main()

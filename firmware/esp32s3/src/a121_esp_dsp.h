@@ -97,6 +97,18 @@ static constexpr float    kPulseHeldDb = 8.0f;   /* Atem angehalten: Pulsspitze 
 static constexpr float    kEchoSpreadMax = 0.4f; /* sauberes Echo: Abstand zum Kreismittelpunkt streut < 40 % (Rauschen ≈ 52 %) */
 static constexpr float    kBreathMinUm = 100.0f; /* Lebenszeichen: Atemhub ≥ 100 µm Spitze-Spitze am Atem-Punkt */
 static constexpr uint8_t  kHoldHarm    = 10U;    /* Sprung auf eine Oberwelle erst nach 10 Reports (sonst 3) */
+/* Atemzustand (V1.4, B9): Amplitude je Report = Spitze-Spitze des 1-s-Mittels über die letzten 10 s am Atem-Punkt
+ * (Trend entfernt), Bezug = Median der letzten 60 Werte. Ein 1-s-Effektivwert (Plan) hängt bei 4–10 s Atemperiode von
+ * der Phase ab; 10 s enthalten eine ganze Periode bis 6 /min (5 s verloren bei 6 /min bis zur Hälfte). */
+static constexpr float    kBrAmpWinS   = 10.0f;
+static constexpr uint8_t  kBrRingLen   = 60U;
+static constexpr uint8_t  kBrMinRing   = 10U;    /* Median erst ab 10 Werten */
+static constexpr float    kApneaRel    = 0.10f;  /* angehalten: ≥ 90 % unter dem Median */
+static constexpr float    kShallowRel  = 0.70f;  /* flach: ≥ 30 % darunter */
+static constexpr uint8_t  kBrLowReports = 1U;    /* „seit ≥ 10 s": ein niedriger Wert, das Fenster ist schon 10 s lang */
+static constexpr float    kBrMotionPct = 50.0f;  /* Zustand Bewegung ab motion_pct > 50 */
+static constexpr uint8_t  kBrStateNormal = 0U, kBrStateNoPeak = 1U, kBrStateApnea = 2U, kBrStateMotion = 3U,
+                          kBrStateShallow = 4U;
 static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
 static constexpr uint16_t kGateBlk     = 60U;    /* Bewegungsdämpfung: 1-s-Blöcke im Herzband */
 static constexpr float    kGateK       = 1.25f;  /* Grenze = 1,25 × Effektivwert des ruhigen Viertels der Blöcke */
@@ -297,6 +309,88 @@ inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath
     }
 }
 
+/** Atem-Amplitude (µm): Spitze-Spitze des gleitenden 1-s-Mittels über die letzten kBrAmpWinS von x, nach Abzug
+ *  einer Geraden (Lage-Drift beim Anhalten). < 0: zu wenig Daten. Das 1-s-Mittel dämpft den Herzschlag (76 /min auf
+ *  ≈ 20 %), die Atmung (15 /min) kaum. */
+inline float breathAmplitude(const float *x, uint16_t N, float fs) {
+    const uint16_t W = (uint16_t)(fs + 0.5f);
+    uint16_t L = (uint16_t)(kBrAmpWinS * fs + 0.5f);
+    if (L > N) L = N;
+    if (L < W + 2U) return -1.0f;
+    const float *s = x + (N - L);
+    const uint16_t M = (uint16_t)(L - W + 1U);
+    float sy = 0.0f, sjy = 0.0f, run = 0.0f;
+    for (uint16_t n = 0; n < W; n++) run += s[n];
+    for (uint16_t j = 0; j < M; j++) {
+        if (j > 0) run += s[j + W - 1U] - s[j - 1U];
+        const float y = run / (float)W;
+        sy += y;
+        sjy += (float)j * y;
+    }
+    const float jm = 0.5f * (float)(M - 1U), sjj = (float)M * ((float)M * (float)M - 1.0f) / 12.0f;
+    const float slope = (sjj > 0.0f) ? (sjy - jm * sy) / sjj : 0.0f, icpt = sy / (float)M - slope * jm;
+    float lo = 0.0f, hi = 0.0f;
+    run = 0.0f;
+    for (uint16_t n = 0; n < W; n++) run += s[n];
+    for (uint16_t j = 0; j < M; j++) {
+        if (j > 0) run += s[j + W - 1U] - s[j - 1U];
+        const float r = run / (float)W - (icpt + slope * (float)j);
+        if (j == 0 || r < lo) lo = r;
+        if (j == 0 || r > hi) hi = r;
+    }
+    return hi - lo;
+}
+
+/** Atemzustand je Report (V1.4): 0 normal, 1 keine Atemspitze (oder kein sauberes Echo, amp < 0), 2 angehalten /
+ *  Apnoe (Amplitude < 10 % des Medians der letzten 60 Werte, kBrLowReports in Folge), 3 Bewegung (motion_pct > 50),
+ *  4 flach (< 70 %, ebenso lange). Während 2 und 3 wächst der Bezug nicht mit: Ein langes Anhalten oder Bewegen
+ *  verschöbe sonst den Median. */
+class BreathStateTracker {
+public:
+    void reset() {
+        n_ = idx_ = apnea_cnt_ = shallow_cnt_ = 0;
+        state_ = kBrStateNormal;
+    }
+    uint8_t update(float amp_um, bool breath_peak, float motion_pct) {
+        uint8_t st;
+        if (motion_pct > kBrMotionPct) {
+            apnea_cnt_ = shallow_cnt_ = 0;
+            st = kBrStateMotion;
+        } else if (amp_um < 0.0f) {
+            apnea_cnt_ = shallow_cnt_ = 0;
+            st = kBrStateNoPeak;
+        } else {
+            const float med = (n_ >= kBrMinRing) ? median() : -1.0f;
+            apnea_cnt_   = (med > 0.0f && amp_um < kApneaRel * med) ? inc(apnea_cnt_) : 0;
+            shallow_cnt_ = (med > 0.0f && amp_um < kShallowRel * med) ? inc(shallow_cnt_) : 0;
+            if (apnea_cnt_ >= kBrLowReports) st = kBrStateApnea;
+            else if (!breath_peak) st = kBrStateNoPeak;
+            else if (shallow_cnt_ >= kBrLowReports) st = kBrStateShallow;
+            else st = kBrStateNormal;
+            if (st != kBrStateApnea) {
+                ring_[idx_] = amp_um;
+                idx_ = (uint8_t)((idx_ + 1U) % kBrRingLen);
+                if (n_ < kBrRingLen) n_++;
+            }
+        }
+        state_ = st;
+        return st;
+    }
+    uint8_t state() const { return state_; }
+    float median() const {
+        if (n_ == 0) return -1.0f;
+        float tmp[kBrRingLen];
+        memcpy(tmp, ring_, n_ * sizeof(float));
+        std::nth_element(tmp, tmp + n_ / 2, tmp + n_);
+        return tmp[n_ / 2];
+    }
+
+private:
+    static uint8_t inc(uint8_t c) { return c < 255U ? (uint8_t)(c + 1U) : c; }
+    float   ring_[kBrRingLen] = {};
+    uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, state_ = kBrStateNormal;
+};
+
 struct Complex16 {
     int16_t real;
     int16_t imag;
@@ -357,6 +451,7 @@ struct VitalReport {
     float    rmssd_ms;
     float    confidence_pct;   /* signalQuality(): Spitzenhöhe, Oberwelle, Einigkeit der Schätzer, Bewegung, Sprung */
     float    point_agree_pct;  /* frühere Konfidenz: gewichteter Anteil der Zoom-Punkte mit eigener Spitze ±5 /min */
+    uint8_t  br_state;         /* Atemzustand (BreathStateTracker): 0 normal, 1 keine Spitze, 2 angehalten, 3 Bewegung, 4 flach */
     uint8_t  hr_bin;           /* Zoom-Punkt mit klarstem Puls */
     uint32_t compute_us;       /* Rechenzeit dieses Reports */
     bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
@@ -418,6 +513,7 @@ public:
         hr_miss_              = 0;
         alt_count_            = 0;
         hr_hist_n_            = 0;
+        br_track_.reset();
 
         memset(zoom_clutter_i_, 0, sizeof(zoom_clutter_i_));
         memset(zoom_clutter_q_, 0, sizeof(zoom_clutter_q_));
@@ -709,6 +805,11 @@ public:
             std::nth_element(scratch_, scratch_ + kBrNumF / 2, scratch_ + kBrNumF);
             br_q = b / (scratch_[kBrNumF / 2] + 1e-12f);
         }
+        /* Atemzustand (V1.4) am Atem-Punkt; vor der Pulssuche, damit auch ein Report ohne Pulskandidat ihn trägt */
+        const bool echo_ok = br_bin >= 0;
+        rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= kBrMinQ && fb > 0.0f,
+                                        rep.motion_pct);
+        const bool breath_held = rep.br_state == kBrStateApnea;
         /* Atem-Oberwellen (m = 2..8) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
          * und überdeckte den Puls ganz. Kandidaten auf m ≥ 4 bekommen bei der Wahl S × 0,5 (der Puls kann darauf liegen,
          * live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5), ein Sprung dorthin braucht kHoldHarm statt 3 Reports, und die
@@ -877,14 +978,13 @@ public:
 
         /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
          * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19) */
-        const bool echo_ok = br_bin >= 0;
         for (uint16_t m = 0; m < M; m++) {
             const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
             dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * w;
         }
         const float best_p = (fb > 0.0f) ? goertzelPower(dec_, M, kFsHz / kDecim, fb) : 0.0f;
         const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
-        rep.br_bpm        = fb * 60.0f;
+        rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
         rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
 
         /* Konfidenz (V1.3) */
@@ -906,7 +1006,7 @@ public:
          * ≥ 100 µm Hub am Atem-Punkt) oder bei angehaltenem Atem mit deutlicher Pulsspitze; dazu höchstens 30 %
          * Bewegung im Fenster. Die Atemspitze allein reicht nicht: Rausch-Punkte erzeugen auch ohne Person Spitzen. */
         const bool breath_ok  = echo_ok && br_q >= kBrMinQ && rep.resp_depth_um >= kBreathMinUm;
-        const bool held_pulse = echo_ok && breath_held_ && qi.peak_db >= kPulseHeldDb;
+        const bool held_pulse = echo_ok && breath_held && qi.peak_db >= kPulseHeldDb;
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
         rep.compute_us = micros() - t0;
         return rep.valid;
@@ -1293,7 +1393,7 @@ private:
     float    hr_prev_              = 0.0f;
     uint8_t  hr_miss_              = 0;
     uint8_t  alt_count_            = 0;     /* Reports in Folge mit Alternative zur Oberwelle */
-    bool     breath_held_          = false; /* Atem angehalten (V1.4, br_state); bis dahin immer false */
+    BreathStateTracker br_track_;           /* Atemzustand (V1.4) */
     float    hr_hist_[5]           = {};    /* hr_fused der letzten 5 Reports (Sprung-Abschlag) */
     uint8_t  hr_hist_n_            = 0;
 
@@ -1359,7 +1459,7 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
 /*
  * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
  * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
- *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct
+ *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct,br_state
  *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
  *          target_mm,n_room
  *   @REZOOM,zoom_start_mm,zoom_end_mm
@@ -1371,9 +1471,9 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
-    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f", (unsigned long)t_ms, (unsigned)ok,
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u", (unsigned long)t_ms, (unsigned)ok,
                              (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us, rep.motion_pct,
-                             (unsigned)rep.hr_harm, rep.point_agree_pct),
+                             (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state),
                     cap);
 }
 

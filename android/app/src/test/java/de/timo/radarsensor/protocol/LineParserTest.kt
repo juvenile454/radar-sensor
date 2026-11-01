@@ -111,6 +111,21 @@ class LineParserTest {
         assertEquals(true, alt.valid)
         assertEquals(57, alt.hrBin)
         assertEquals(0f, alt.motionPct)
+        assertEquals(null, alt.brState)
+        // V1.3/V1.4: point_agree_pct und br_state hinten angehängt
+        val neu = parse<Dsp>("@DSP,1009,1,5,72.0,300000,0,0,55,2")
+        assertEquals(55f, neu.pointAgreePct)
+        assertEquals(2, neu.brState)
+    }
+
+    @Test fun atemzustandText() {
+        assertEquals("normal", Dsp.breathStateText(0))
+        assertEquals("keine Atemspitze", Dsp.breathStateText(1))
+        assertEquals("angehalten", Dsp.breathStateText(2))
+        assertEquals("Bewegung", Dsp.breathStateText(3))
+        assertEquals("flach", Dsp.breathStateText(4))
+        assertEquals(null, Dsp.breathStateText(null))
+        assertEquals("unbekannt (7)", Dsp.breathStateText(7))
     }
 
     @Test fun ereignisse() {

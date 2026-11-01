@@ -187,7 +187,9 @@ class SyntheticRecordingTest(unittest.TestCase):
         self.assertGreater(r["hr"]["n"], 80)
         self.assertLess(r["hr"]["mae"], 5.0)
         self.assertGreater(r["br"]["n"], 50)
-        self.assertIn("apnea", r)  # Anhalte-Marker vorhanden; ausgewertet, sobald @DSP br_state hat (V1.4)
+        self.assertEqual(r["apnea"]["detected"], 1)  # @DSP br_state (V1.4): Anhalten erkannt, ≤ 12 s, kein Fehlalarm
+        self.assertLessEqual(r["apnea"]["delays_s"][0], 12.0)
+        self.assertEqual(r["apnea"]["false_alarms"], 0)
         self.assertIn("Puls", ve.format_report("sim", r))
 
     def test_replay_unchanged_header_gives_same_numbers(self):

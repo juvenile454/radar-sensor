@@ -52,6 +52,20 @@ class LiveStoreTest {
         assertEquals(11.6f, c.seconds(400, 11_610), 1e-6f)
     }
 
+    @Test fun atemAngehaltenAlsEreignis() {
+        val s = LiveStore()
+        s.feed(
+            "@IQ3_START,500,560,60.0,0",
+            "@DSP,1000,1,5,72.0,300000,0,0,55,0",
+            "@DSP,2000,1,5,72.0,300000,0,0,55,2",
+            "@DSP,3000,1,5,72.0,300000,0,0,55,2",
+            "@DSP,4000,1,5,72.0,300000,0,0,55,0",
+        )
+        val br = s.snapshot().events.filter { it.kind == EventKind.BREATH }.map { it.text }
+        assertEquals(listOf("Atem angehalten", "Atmung wieder da"), br)
+        assertEquals(0, s.snapshot().lastDsp?.brState)
+    }
+
     @Test fun ereignisseUndEnde() {
         val s = LiveStore()
         s.feed(

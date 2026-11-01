@@ -38,6 +38,7 @@ import de.timo.radarsensor.core.LinkStats
 import de.timo.radarsensor.core.RadarController
 import de.timo.radarsensor.live.EventKind
 import de.timo.radarsensor.live.LiveSnapshot
+import de.timo.radarsensor.protocol.Dsp
 import de.timo.radarsensor.record.Recorder
 import de.timo.radarsensor.transport.ReplayTransport
 import java.io.File
@@ -48,6 +49,7 @@ private fun LiveSnapshot.markers(): List<Marker> =
             EventKind.REZOOM -> Marker(it.tS, Pal.warn)
             EventKind.RECONNECT -> Marker(it.tS, Pal.bad)
             EventKind.WARN, EventKind.ERROR -> Marker(it.tS, Pal.c4)
+            EventKind.BREATH -> Marker(it.tS, Pal.c1)
             else -> null
         }
     }
@@ -212,7 +214,9 @@ fun VitalPage(s: LiveSnapshot) =
             Labeled("Zielabstand / Ziele", "%.2f m / %d".format(v.targetDistMm / 1000f, v.roomTargets))
         }
         s.lastDsp?.let { d ->
-            Labeled("DSP", "gültig ${if (d.valid) "ja" else "nein"} · Punkt ${d.hrBin} · Oberwelle ${if (d.hrOnHarmonic) "ja" else "nein"}")
+            Dsp.breathStateText(d.brState)?.let { Labeled("Atemzustand", it) }
+            Labeled("DSP", "gültig ${if (d.valid) "ja" else "nein"} · Punkt ${d.hrBin} · Oberwelle ${if (d.hrOnHarmonic) "ja" else "nein"}" +
+                (d.pointAgreePct?.let { " · Punkte einig ${f0(it)} %" } ?: ""))
         }
     }
 
@@ -293,6 +297,7 @@ fun DiagPage(
             when (e.kind) {
                 EventKind.ERROR, EventKind.RECONNECT -> Pal.bad
                 EventKind.WARN, EventKind.REZOOM -> Pal.warn
+                EventKind.BREATH -> Pal.c1
                 else -> Pal.axis
             }
         Text("%7.1f s  %s".format(e.tS, e.text), fontSize = 11.sp, color = c, fontFamily = FontFamily.Monospace)

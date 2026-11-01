@@ -213,15 +213,17 @@ SCENARIOS = {
 # Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
 # Spielraum (Anteil −3 Prozentpunkte, MAE +0,5 /min, Reaktion +1 s). Jede DSP-Aufgabe verschärft, was sie verbessert.
 LIMITS = {
-    "base":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5)],                  # V1.3
+    "base":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0)],  # V1.4
     "harm4":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("konf", "<=", 60.0)],  # V1.3
-    "step":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.2), ("reaktion_s", "<=", 10.0), ("br_mae", "<=", 0.5)],  # V1.3
+    "step":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.2), ("reaktion_s", "<=", 10.0), ("br_mae", "<=", 0.5),
+                ("apnoe_fehl", "<=", 0)],                                                                 # V1.4
     "brady":   [("hr_p5", ">=", 91.0), ("hr_mae", "<=", 3.7), ("br_mae", "<=", 0.6)],                  # V1.2/V1.3
     "tachy":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.4), ("br_mae", "<=", 0.5)],                  # V1.3
-    "flach":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.6)],                  # V1.1
-    "tief":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.5)],                  # V1.1
+    "flach":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.6), ("apnoe_fehl", "<=", 0)],  # V1.4
+    "tief":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0)],  # V1.4
     "beweg":   [("hr_p5", ">=", 95.0), ("hr_mae", "<=", 1.3), ("br_mae", "<=", 0.7)],                  # V1.3
-    "anhalt":  [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 1.3)],                  # V1.3
+    "anhalt":  [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.9), ("br_mae", "<=", 1.3), ("apnoe_verzug_s", "<=", 12.0),
+                ("apnoe_fehl", "<=", 0)],                                                                 # V1.4
     "leer":    [("n_valid", "<=", 0)],                                                                    # V1.3
     "niemand": [("n_valid", "<=", 0)],                                                                    # V1.3
     "tachy6":  [("konf_falsch", "<=", 60.0)],                                                             # V1.3
@@ -479,7 +481,8 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     v = d["valid"] > 0
     tru = np.array([truth_at(tr, x) for x in d["t_s"]])
     e_hr = np.abs(d["hr"] - tru[:, 0])[v]
-    e_br = np.abs(d["br"] - tru[:, 1])[v]
+    # Atem-MAE ohne Reports im Zustand „angehalten" (br_state 2, dort meldet die DSP bewusst 0 statt einer Rate)
+    e_br = np.where(np.nan_to_num(d["br_state"], nan=-1) == 2, np.nan, np.abs(d["br"] - tru[:, 1]))[v]
     if not v.any():  # kein gültiger Report (Szenarien ohne Person): Kennzahlen NaN ohne Warnungen
         e_hr = e_br = np.array([np.nan])
     res = {
@@ -497,6 +500,14 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
         ok = (d["t_s"] >= 70) & v & (np.abs(d["hr"] - 90) <= 5)
         res["reaktion_s"] = float(d["t_s"][ok][0] - 70.0) if ok.any() else np.nan
+    # Atemzustand (V1.4): Verzug bis Zustand 2 ab Beginn des Anhaltens, Fehlalarme außerhalb (vital_eval.apnea_eval)
+    from vital_eval import apnea_eval
+    hold = SCENARIOS[name][1].get("hold")
+    holds = [(hold[0] * 1000.0, hold[1] * 1000.0)] if hold else []
+    ap = apnea_eval(d["t_ms"], np.nan_to_num(d["br_state"], nan=-1), holds)
+    res["apnoe_fehl"] = ap["false_alarms"]
+    if holds:
+        res["apnoe_verzug_s"] = ap["delays_s"][0] if ap["delays_s"] else np.nan
     if name == "anhalt":  # gemeldete Atemfrequenz, während der Atem ganz angehalten ist (Fenster 45–60 s)
         m = (d["t_s"] >= 55) & (d["t_s"] <= 62) & v
         res["atem_beim_anhalten"] = np.round(d["br"][m], 1).tolist()
@@ -528,7 +539,9 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                 if "reaktion_s" in r:
                     extra = f"Reaktion {r['reaktion_s']:.0f} s"
                 if "atem_beim_anhalten" in r:
-                    extra = f"Atem beim Anhalten {r['atem_beim_anhalten']}"
+                    extra = f"Atem beim Anhalten {r['atem_beim_anhalten']}, angehalten erkannt nach {r['apnoe_verzug_s']:.0f} s"
+                if r.get("apnoe_fehl"):
+                    extra += f" Apnoe-Fehlalarme {r['apnoe_fehl']}"
                 kf = f"{r['konf_falsch']:7.0f}" if r["n_falsch"] else "      –"
                 print(f"{nm:8s} {SCENARIOS[nm][0]:32s} {r['gueltig']:>7s} {r['erst_s']:4.0f}s {r['hr_mae']:7.1f}   {r['hr_p5']:5.0f} %"
                       f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms {r['konf']:4.0f}"

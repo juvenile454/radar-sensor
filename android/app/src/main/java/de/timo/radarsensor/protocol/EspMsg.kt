@@ -101,7 +101,10 @@ data class Vital(
     val roomTargets: Int,
 ) : EspMsg
 
-/** `@DSP,t_ms,gültig,punkt,konfidenz,rechenzeit_us,bewegung_pct,hr_harm` (1 Hz) */
+/**
+ * `@DSP,t_ms,gültig,punkt,konfidenz,rechenzeit_us,bewegung_pct,hr_harm,point_agree_pct,br_state` (1 Hz).
+ * Ältere Firmware schickt weniger Felder; fehlende hinten sind null.
+ */
 data class Dsp(
     val tMs: Long,
     val valid: Boolean,
@@ -110,7 +113,26 @@ data class Dsp(
     val computeUs: Long,
     val motionPct: Float,
     val hrOnHarmonic: Boolean,
-) : EspMsg
+    /** frühere Konfidenz: Anteil der Zoom-Punkte mit eigener Spitze ±5 /min (Diagnose, V1.3) */
+    val pointAgreePct: Float? = null,
+    /** Atemzustand (V1.4): 0 normal, 1 keine Atemspitze, 2 angehalten, 3 Bewegung, 4 flach */
+    val brState: Int? = null,
+) : EspMsg {
+    companion object {
+        const val BR_APNEA = 2
+
+        fun breathStateText(state: Int?): String? =
+            when (state) {
+                null -> null
+                0 -> "normal"
+                1 -> "keine Atemspitze"
+                2 -> "angehalten"
+                3 -> "Bewegung"
+                4 -> "flach"
+                else -> "unbekannt ($state)"
+            }
+    }
+}
 
 /** `@REZOOM,start_mm,end_mm` */
 data class Rezoom(

@@ -37,7 +37,7 @@ enum class StreamMode(
     SESS("sess"),
 }
 
-enum class EventKind { START, REZOOM, RECONNECT, WARN, ERROR, END, INFO }
+enum class EventKind { START, REZOOM, RECONNECT, WARN, ERROR, END, INFO, BREATH }
 
 data class StreamEvent(
     val tS: Float,
@@ -244,6 +244,11 @@ class LiveStore(
             }
             is Vital -> onVital(msg)
             is Dsp -> {
+                // Atemzustand (V1.4): Beginn und Ende von „angehalten" in die Ereignisliste
+                val wasApnea = lastDsp?.brState == Dsp.BR_APNEA
+                val isApnea = msg.brState == Dsp.BR_APNEA
+                if (isApnea && !wasApnea) event(EventKind.BREATH, "Atem angehalten")
+                if (wasApnea && !isApnea && msg.brState != null) event(EventKind.BREATH, "Atmung wieder da")
                 lastDsp = msg
                 dT.add(if (lastRoomT.isNaN()) time(null, msg.tMs) else lastRoomT)
                 dCompute.add(msg.computeUs / 1000f)

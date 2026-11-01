@@ -92,6 +92,8 @@ object LineParser {
                     computeUs = p[5].toLong(),
                     motionPct = p.getOrNull(6)?.toFloat() ?: 0f,
                     hrOnHarmonic = p.getOrNull(7)?.let { it != "0" } ?: false,
+                    pointAgreePct = p.getOrNull(8)?.toFloatOrNull(),
+                    brState = p.getOrNull(9)?.toIntOrNull(),
                 )
             "@IQ3_START" ->
                 Iq3Start(p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p.getOrNull(4)?.let { it != "0" } ?: false)
