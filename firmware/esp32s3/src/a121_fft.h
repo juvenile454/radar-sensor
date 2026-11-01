@@ -1,6 +1,6 @@
 /**
  * @file a121_fft.h
- * @brief Reelle FFT (Radix 2, float) für die Spektren der Vital-DSP (V2.2, B13).
+ * @brief Reelle FFT (Radix 2, float) für die Spektren der Vital-DSP (V2.2, B13); komplexe FFT für V3.3.
  *
  * Portabel und ohne Bibliothek, damit ESP32-S3, PC-Nachrechnung und Handy (NDK) dieselbe Rechnung haben. Ersetzt die
  * Goertzel-Summen je Frequenz: N reelle Werte (nullaufgefüllt) → komplexe FFT der Länge N/2 über z[n] = x[2n] + j x[2n+1],
@@ -93,6 +93,72 @@ private:
     float tw_re_[kHalf], tw_im_[kHalf];
     uint16_t rev_[kHalf];
     float re_[kHalf], im_[kHalf];
+};
+
+/**
+ * Komplexe FFT in place (Radix 2, Zerlegung im Zeitbereich) für das analytische Signal der Oberwellen-Führung (V3.3).
+ * Vorwärts mit e^{-j2πkn/N}, rückwärts mit e^{+j2πkn/N} und 1/N. Drehfaktoren und Bit-Umkehr im Konstruktor.
+ */
+template <uint16_t N>
+class ComplexFft {
+    static_assert(N >= 4 && (N & (N - 1U)) == 0, "N muss eine Zweierpotenz sein");
+
+public:
+    ComplexFft() {
+        for (uint16_t k = 0; k < N / 2U; k++) {
+            const double a = -2.0 * M_PI * (double)k / (double)N;
+            tw_re_[k] = (float)cos(a);
+            tw_im_[k] = (float)sin(a);
+        }
+        uint16_t bits = 0;
+        while ((1U << bits) < N) bits++;
+        for (uint16_t i = 0; i < N; i++) {
+            uint16_t r = 0;
+            for (uint16_t b = 0; b < bits; b++)
+                if (i & (1U << b)) r |= (uint16_t)(1U << (bits - 1U - b));
+            rev_[i] = r;
+        }
+    }
+
+    void transform(float *re, float *im, bool inverse) const {
+        for (uint16_t i = 0; i < N; i++) {
+            const uint16_t r = rev_[i];
+            if (r > i) {
+                const float tr = re[i], ti = im[i];
+                re[i] = re[r];
+                im[i] = im[r];
+                re[r] = tr;
+                im[r] = ti;
+            }
+        }
+        const float sgn = inverse ? -1.0f : 1.0f;
+        for (uint16_t size = 2; size <= N; size = (uint16_t)(size * 2U)) {
+            const uint16_t h = size / 2U, step = (uint16_t)(N / size);
+            for (uint16_t i = 0; i < N; i = (uint16_t)(i + size)) {
+                for (uint16_t j = 0; j < h; j++) {
+                    const float wr = tw_re_[j * step], wi = sgn * tw_im_[j * step];
+                    const uint16_t a = (uint16_t)(i + j), b = (uint16_t)(a + h);
+                    const float vr = re[b] * wr - im[b] * wi;
+                    const float vi = re[b] * wi + im[b] * wr;
+                    re[b] = re[a] - vr;
+                    im[b] = im[a] - vi;
+                    re[a] += vr;
+                    im[a] += vi;
+                }
+            }
+        }
+        if (inverse) {
+            const float s = 1.0f / (float)N;
+            for (uint16_t i = 0; i < N; i++) {
+                re[i] *= s;
+                im[i] *= s;
+            }
+        }
+    }
+
+private:
+    float tw_re_[N / 2U], tw_im_[N / 2U];
+    uint16_t rev_[N];
 };
 
 }  // namespace a121_fft

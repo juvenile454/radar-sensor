@@ -490,6 +490,26 @@ class RealFftTest(unittest.TestCase):
         printf("%.6f %.6f %.6f %.1f", p[0], p[1], p[2], p[3]);""")
         self.assertEqual(out.split(), ["1.000000", "1.000000", "1.000000", "-1.0"])
 
+    def test_complex_fft_matches_numpy(self):
+        """V3.3: komplexe FFT in place (vorwärts e^{-j}, rückwärts e^{+j} mit 1/N) für das analytische Signal."""
+        import numpy as np
+        out = run_cpp("""
+        static a121_fft::ComplexFft<256> f;
+        static float re[256], im[256];
+        for (int n = 0; n < 256; n++) { re[n] = sinf(0.21f * n) + 0.1f * (n % 5); im[n] = 0.3f * cosf(0.9f * n); }
+        f.transform(re, im, false);
+        for (int k = 0; k < 256; k++) printf("%.7g %.7g\\n", re[k], im[k]);
+        f.transform(re, im, true);
+        for (int k = 0; k < 256; k++) printf("%.7g %.7g\\n", re[k], im[k]);""")
+        v = np.array([[float(a) for a in ln.split()] for ln in out.splitlines()])
+        n = np.arange(256)
+        x = (np.sin(0.21 * n) + 0.1 * (n % 5)).astype(np.float32) + 1j * (0.3 * np.cos(0.9 * n)).astype(np.float32)
+        want = np.fft.fft(x)
+        got = v[:256, 0] + 1j * v[:256, 1]
+        self.assertLess(np.max(np.abs(got - want)) / np.max(np.abs(want)), 2e-6)
+        back = v[256:, 0] + 1j * v[256:, 1]
+        self.assertLess(np.max(np.abs(back - x)), 1e-5)
+
 
 class LinearTrendTest(unittest.TestCase):
     """V2.2: Trend in float mit geschlossenem Σt² (vorher double, auf dem ESP32-S3 in Software)."""
@@ -888,6 +908,79 @@ class ViterbiTest(unittest.TestCase):
         self.assertEqual(valid, "1")
         self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
         self.assertGreater(float(conf), 50.0)
+
+
+class GuidedHarmonicsTest(unittest.TestCase):
+    """V3.3 (Schalter A121_DSP_HARM_REMOVE): Atem-Oberwellen geführt von der Atemphase entfernen. Phase = Winkel des
+    analytischen Signals der Atem-Grundwelle im Weg, dann Fit von cos(mφ), sin(mφ) für m = 1..8 und abziehen. m bleibt,
+    wenn Puls oder 2 × Puls in m × [kleinste, größte Atemfrequenz im Fenster] ± 0,1 Hz liegt: Bei schwankender Rate
+    verschmiert die m-te Oberwelle um m × die Schwankung und nähme sonst dem Puls einen Teil weg."""
+
+    FLAGS = ("-DA121_DSP_HARM_REMOVE",)
+    HARM = "300.0f * cosf(3.0f * phi + 0.4f) + 150.0f * cosf(4.0f * phi - 1.1f) + 80.0f * cosf(5.0f * phi + 2.0f)"
+
+    def residual(self, fn: str, keep: float, harm: str, pulse: str, beta: float = 0.9) -> float:
+        """Atmung 0,27 Hz, Phase mit beta · sin(2π · 0,07 Hz · t) moduliert (0,9 rad: Rate ±23 %), Oberwellen harm(phi),
+        Puls pulse(t); 15 Hz, 15 s; f_Atem des vorigen Reports = 0,27 Hz. fn = guided | fixed. Rückgabe:
+        Effektivwert(Ergebnis − Puls), Hann-gewichtet."""
+        call = ("removeBreathHarmonicsGuided(x, d, N, 15.0f, 0.27f, KEEP, cf, wk);" if fn == "guided"
+                else "removeBreathHarmonics(x, N, 15.0f, 0.27f, KEEP);").replace("KEEP", f"{keep}f")
+        out = run_cpp(f"""
+        const uint16_t N = 225; static float x[N], d[N], wk[2 * kGuideFft];
+        static a121_fft::ComplexFft<kGuideFft> cf;
+        for (int n = 0; n < N; n++) {{
+            const float t = n / 15.0f;
+            const float phi = 6.2832f * 0.27f * t + {beta}f * sinf(6.2832f * 0.07f * t);
+            d[n] = 1200.0f * sinf(phi);
+            x[n] = {harm} + {pulse};
+        }}
+        {call}
+        double e = 0, c = 0;   /* Hann-gewichtet wie vor der Puls-FFT: die Ränder zählen kaum */
+        for (int n = 0; n < N; n++) {{ const float t = n / 15.0f; const double r = x[n] - ({pulse});
+            const double w = 0.5 * (1 - cos(6.283185307 * n / (N - 1))); e += w * r * r; c += w; }}
+        printf("%.4f", sqrt(e / c));""", self.FLAGS)
+        return float(out)
+
+    def test_varying_rate_guided_beats_fixed(self):
+        # Rate ±23 %, Oberwellen m = 3..5 (10 / 5 / 2,7 × Puls), Puls 1,9 Hz abseits ihrer Streuung
+        pulse = "30.0f * cosf(6.2832f * 1.9f * t)"
+        g = self.residual("guided", 1.9, self.HARM, pulse)
+        f = self.residual("fixed", 1.9, self.HARM, pulse)
+        self.assertLess(g, 0.3 * f)
+
+    def test_varying_rate_keeps_pulse(self):
+        # nur Puls: Die Basen, deren Streuung den Puls überdeckt, bleiben weg (1,25 Hz liegt in 4 × und 5 × Atmung);
+        # der Rest-Fit nimmt dem Puls (30 µm) weniger als 13 %. Ohne diese Regel: 12 µm (40 %).
+        for hz in (1.25, 1.9):
+            self.assertLess(self.residual("guided", hz, "0.0f", f"30.0f * cosf(6.2832f * {hz}f * t)"), 4.0)
+
+    def test_steady_rate_removes_harmonics(self):
+        # Metronom (Rate ±3 %): Oberwellen m = 3..5 (zusammen 243 µm effektiv) um ≥ 88 % kleiner, besser als mit fester
+        # Frequenz (die Phasengenauigkeit aus 15 s, ≈ 0,03 rad, begrenzt); Puls 1,6 Hz bleibt (m = 6 liegt am Puls)
+        pulse = "30.0f * cosf(6.2832f * 1.6f * t)"
+        g = self.residual("guided", 1.6, self.HARM, pulse, beta=0.1)
+        self.assertLess(g, 0.12 * 243.0)
+        self.assertLess(g, 0.6 * self.residual("fixed", 1.6, self.HARM, pulse, beta=0.1))
+
+    def test_harmonic_on_pulse_stays(self):
+        self.assertLess(self.residual("guided", 1.08, "0.0f", "30.0f * cosf(6.2832f * 1.08f * t)", beta=0.1), 3.0)
+
+    def test_no_breath_no_change(self):
+        out = run_cpp("""
+        const uint16_t N = 225; static float x[N], d[N], wk[2 * kGuideFft]; static a121_fft::ComplexFft<kGuideFft> cf;
+        for (int n = 0; n < N; n++) { x[n] = 30.0f * cosf(6.2832f * 1.25f * n / 15.0f); d[n] = 0; }
+        removeBreathHarmonicsGuided(x, d, N, 15.0f, 0.0f, 1.25f, cf, wk);
+        double e = 0; for (int n = 0; n < N; n++) { const double r = x[n] - 30.0f * cosf(6.2832f * 1.25f * n / 15.0f); e += r * r; }
+        printf("%.6f", sqrt(e / N));""", self.FLAGS)
+        self.assertLess(float(out), 1e-6)
+
+    def test_dsp_with_switch(self):
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0] + """
+        for (int i = 0; i < 20; i++) { push(60, 1.2f); d.computeVitalReport(r); }
+        printf("%d %.2f", r.valid, r.hr_fused_bpm);""", self.FLAGS)
+        valid, hr = out.split()
+        self.assertEqual(valid, "1")
+        self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
 
 
 if __name__ == "__main__":

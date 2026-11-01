@@ -170,5 +170,17 @@ class ViterbiBenchTest(unittest.TestCase):
             self.assertIn("A121_DSP_VITERBI", r.stdout)
 
 
+class HarmRemoveBenchTest(unittest.TestCase):
+    """V3.3 (Schalter A121_DSP_HARM_REMOVE): Variante hält die Grenzwerte, auch mit Viterbi; brady prüft die Regel
+    „nur nach sicherem Report" (ohne sie MAE 3,7 > Grenze 3,7)."""
+
+    def test_variant_within_limits(self):
+        for extra in ([], ["--define", "A121_DSP_VITERBI"]):
+            r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--define",
+                                "A121_DSP_HARM_REMOVE", "--scen", "brady", "harm4", "base", "step", *extra],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+
+
 if __name__ == "__main__":
     unittest.main()

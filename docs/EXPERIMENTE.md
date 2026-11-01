@@ -132,6 +132,17 @@ mkdir -p /tmp/dsp_vit && { echo '#define A121_DSP_VITERBI 1'; cat firmware/esp32
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_* --replay /tmp/dsp_vit
 ```
 
+**Atem-Oberwellen geführt entfernen (V3.3, offen):** Variante hinter `#define A121_DSP_HARM_REMOVE` (Standard aus): je
+Zoom-Punkt vor der Puls-FFT (15 Hz) die Oberwellen m = 1..8 der Atmung abziehen, Phase = Winkel des analytischen
+Signals der Atem-Grundwelle im Weg des Punkts (FFT, Band 0,2–1,8 × Atemfrequenz des vorigen Reports). m bleibt, wenn
+Puls oder 2 × Puls in m × [kleinste, größte Atemfrequenz im Fenster] ± 0,1 Hz liegt; nur nach einem gültigen Report mit
+Konfidenz ≥ 50 % (sonst schonte die Regel einen falschen Puls und löschte den echten). Abnahme an Tag A: R3 (Metronom)
+besser, R1 nicht schlechter. Rechnung vorab (nur Simulation): bei ±23 % Ratenschwankung bleiben 12 % der Oberwellen
+(feste Frequenz: 100 %), bei gleichmäßiger Atmung ≈ 10 % (feste Frequenz 24 %); dem Puls nimmt sie < 13 %. Prüfstand:
+Puls-Kennzahlen wie ohne Variante (Oberwellen sind dort schwach), Konfidenz-Median richtiger Reports 82 → 100 %,
+falscher unverändert 31 %; Rechenzeit am PC +0,7 ms. Als Variante: `#define A121_DSP_HARM_REMOVE 1` voranstellen wie
+oben.
+
 **Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
 jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start
 nach 2 Atemzügen. `vital_eval.py` schreibt dazu je Sitzung „Atmung Atemzug für Atemzug" (gegen die Marker „ein",

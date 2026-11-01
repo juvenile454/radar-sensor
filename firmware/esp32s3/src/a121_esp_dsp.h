@@ -307,6 +307,38 @@ inline void cardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, fl
     }
 }
 
+/** G·coef = r für die Oberwellen-Fits lösen (G symmetrisch positiv definit, nur untere Hälfte gefüllt; G und r werden
+ *  überschrieben, r = coef). Cholesky G = L·Lᵀ mit kleiner Regularisierung gegen fast gleiche Frequenzen. false: G
+ *  nicht positiv definit. */
+inline bool harmSolve(float (*G)[2U * kHarmMMax], float *r, uint8_t P) {
+    float tr = 0.0f;
+    for (uint8_t a = 0; a < P; a++) tr += G[a][a];
+    for (uint8_t a = 0; a < P; a++) G[a][a] += 1e-6f * tr / (float)P;
+    for (uint8_t a = 0; a < P; a++) {
+        for (uint8_t b = 0; b <= a; b++) {
+            float v = G[a][b];
+            for (uint8_t k = 0; k < b; k++) v -= G[a][k] * G[b][k];
+            if (a == b) {
+                if (v <= 0.0f) return false;
+                G[a][a] = sqrtf(v);
+            } else {
+                G[a][b] = v / G[b][b];
+            }
+        }
+    }
+    for (uint8_t a = 0; a < P; a++) {  /* L·y = r */
+        float v = r[a];
+        for (uint8_t k = 0; k < a; k++) v -= G[a][k] * r[k];
+        r[a] = v / G[a][a];
+    }
+    for (int a = (int)P - 1; a >= 0; a--) {  /* Lᵀ·coef = y */
+        float v = r[a];
+        for (uint8_t k = (uint8_t)(a + 1); k < P; k++) v -= G[k][a] * r[k];
+        r[a] = v / G[a][a];
+    }
+    return true;
+}
+
 /** Atem-Oberwellen m · f_breath (m = 1..kHarmMMax, unter fs/2) aus x abziehen: gemeinsamer Kleinste-Quadrate-Fit von
  *  cos und sin aller m, Hann-gewichtet (sonst sickert eine starke Oberwelle in die Nachbarn und in den Puls). m mit
  *  |m · f_breath − f_keep| < 0,1 Hz oder |m · f_breath − 2 f_keep| < 0,1 Hz bleiben, dort liegt der Puls (wie V3.3).
@@ -348,32 +380,7 @@ inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath
         }
         step();
     }
-    /* Cholesky G = L·Lᵀ (in G, untere Hälfte), kleine Regularisierung gegen fast gleiche Frequenzen */
-    float tr = 0.0f;
-    for (uint8_t a = 0; a < P; a++) tr += G[a][a];
-    for (uint8_t a = 0; a < P; a++) G[a][a] += 1e-6f * tr / (float)P;
-    for (uint8_t a = 0; a < P; a++) {
-        for (uint8_t b = 0; b <= a; b++) {
-            float v = G[a][b];
-            for (uint8_t k = 0; k < b; k++) v -= G[a][k] * G[b][k];
-            if (a == b) {
-                if (v <= 0.0f) return;
-                G[a][a] = sqrtf(v);
-            } else {
-                G[a][b] = v / G[b][b];
-            }
-        }
-    }
-    for (uint8_t a = 0; a < P; a++) {  /* L·y = r */
-        float v = r[a];
-        for (uint8_t k = 0; k < a; k++) v -= G[a][k] * r[k];
-        r[a] = v / G[a][a];
-    }
-    for (int a = (int)P - 1; a >= 0; a--) {  /* Lᵀ·coef = y */
-        float v = r[a];
-        for (uint8_t k = (uint8_t)(a + 1); k < P; k++) v -= G[k][a] * r[k];
-        r[a] = v / G[a][a];
-    }
+    if (!harmSolve(G, r, P)) return;
     start();
     for (uint16_t n = 0; n < N; n++) {
         float v = 0.0f;
@@ -382,6 +389,123 @@ inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath
         step();
     }
 }
+
+#ifdef A121_DSP_HARM_REMOVE
+static constexpr uint16_t kGuideFft = 256U;  /* ≥ Fensterlänge nach Dezimierung (15 s · 15 Hz = 225) */
+static constexpr float    kGuideMinConf = 50.0f;  /* Konfidenz des vorigen Reports, ab der entfernt wird (%) */
+
+/**
+ * V3.3 (Variante): Atem-Oberwellen geführt von der Atemphase entfernen (wie project_out_respiration_harmonics() in den
+ * PC-Skripten). Phase φ(n) = Winkel des analytischen Signals der Atem-Grundwelle aus disp: FFT, nur positive
+ * Frequenzen, flach im Band 0,5–1,5 × f_breath, cos²-Flanken bis 0,2 bzw. 1,8 × f_breath, zurück. So folgt φ einer
+ * Rate, die im Fenster schwankt oder vom vorigen Report abweicht (Rechnung bei ±23 % Ratenschwankung und Atemform mit
+ * 2./3. Oberwelle: 0,05 rad Effektivwert; ein enges Band ±0,3 gab 0,12 rad, festes Mischen mit f_breath und Mittel
+ * über eine Periode ±0,5 rad). Dann gemeinsamer Hann-gewichteter Kleinste-Quadrate-Fit von cos(mφ),
+ * sin(mφ) für m = 1..kHarmMMax an x und abziehen. m bleibt, wenn f_keep oder 2 f_keep in m × [kleinste, größte
+ * Atemfrequenz im Fenster] ± 0,1 Hz liegt: Die m-te Oberwelle streut um m × die Ratenschwankung, ihre Basis nähme dem
+ * Puls sonst einen Teil weg (Rechnung: 40 % bei ±23 % Schwankung und m = 5 nahe am Puls). Oberwellen, die den Puls
+ * überdecken, lassen sich so nicht entfernen, nur die abseits. f_breath ≤ 0: nichts tun.
+ * work: Arbeitsspeicher mit 2 · kGuideFft Werten.
+ */
+inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N, float fs, float f_breath,
+                                        float f_keep, const a121_fft::ComplexFft<kGuideFft> &cfft, float *work) {
+    if (f_breath <= 0.0f || N < 8U || N > kGuideFft) return;
+    float *ur = work, *ui = work + kGuideFft;
+    float mean = 0.0f;
+    for (uint16_t n = 0; n < N; n++) mean += disp[n];
+    mean /= (float)N;
+    for (uint16_t n = 0; n < kGuideFft; n++) {
+        ur[n] = (n < N) ? disp[n] - mean : 0.0f;
+        ui[n] = 0.0f;
+    }
+    cfft.transform(ur, ui, false);
+    for (uint16_t k = 0; k < kGuideFft; k++) {  /* analytisch und Atem-Grundwelle: Gewicht 2 im Band, 0 sonst */
+        const float rel = (k < kGuideFft / 2U) ? fabsf((float)k * fs / (float)kGuideFft / f_breath - 1.0f) : 9.0f;
+        float g = 0.0f;
+        if (rel <= 0.5f) g = 2.0f;
+        else if (rel < 0.8f) {
+            const float c = cosf(0.5f * (float)M_PI * (rel - 0.5f) / 0.3f);
+            g = 2.0f * c * c;
+        }
+        ur[k] *= g;
+        ui[k] *= g;
+    }
+    cfft.transform(ur, ui, true);
+    for (uint16_t n = 0; n < N; n++) {
+        const float mag = sqrtf(ur[n] * ur[n] + ui[n] * ui[n]);
+        if (mag > 0.0f) {
+            ur[n] /= mag;
+            ui[n] /= mag;
+        } else {
+            ur[n] = 1.0f;
+            ui[n] = 0.0f;
+        }
+    }
+    /* Spanne der Atemfrequenz im Fenster: Phasenschritte über 1 s gemittelt, ohne die Ränder (dort ist die Phase des
+     * analytischen Signals unsicher). Die m-te Oberwelle streut über m × diese Spanne. */
+    float f_lo = f_breath, f_hi = f_breath;
+    {
+        const uint16_t W = (uint16_t)lroundf(fs);
+        if (N > 3U * W) {
+            float acc = 0.0f;
+            for (uint16_t n = W + 1U; n < N - W; n++) {
+                acc += atan2f(ui[n] * ur[n - 1U] - ur[n] * ui[n - 1U], ur[n] * ur[n - 1U] + ui[n] * ui[n - 1U]);
+                if (n >= 2U * W) {
+                    const uint16_t o = (uint16_t)(n - W);
+                    acc -= atan2f(ui[o] * ur[o - 1U] - ur[o] * ui[o - 1U], ur[o] * ur[o - 1U] + ui[o] * ui[o - 1U]);
+                }
+                if (n + 1U >= 2U * W) {
+                    const float f = acc / (float)W * fs / (2.0f * (float)M_PI);
+                    f_lo = fminf(f_lo, f);
+                    f_hi = fmaxf(f_hi, f);
+                }
+            }
+        }
+    }
+    uint8_t ms[kHarmMMax], K = 0;
+    for (uint8_t m = 1; m <= kHarmMMax; m++) {
+        if ((float)m * f_breath >= 0.5f * fs) break;
+        const float lo = (float)m * f_lo - 0.1f, hi = (float)m * f_hi + 0.1f;
+        if ((f_keep >= lo && f_keep <= hi) || (2.0f * f_keep >= lo && 2.0f * f_keep <= hi)) continue;
+        ms[K++] = m;
+    }
+    if (K == 0) return;
+    /* Fit von Re/Im(u^m), m ∈ ms */
+    constexpr uint8_t kP = 2U * kHarmMMax;
+    const uint8_t P = 2U * K;
+    float G[kP][kP] = {}, r[kP] = {}, phi[kP];
+    auto basis = [&](uint16_t n) {
+        float pr = 1.0f, pi = 0.0f;
+        uint8_t k = 0;
+        for (uint8_t m = 1; m <= ms[K - 1U]; m++) {
+            const float r2 = pr * ur[n] - pi * ui[n];
+            pi = pr * ui[n] + pi * ur[n];
+            pr = r2;
+            if (m == ms[k]) {
+                phi[2U * k]      = pr;
+                phi[2U * k + 1U] = pi;
+                k++;
+            }
+        }
+    };
+    for (uint16_t n = 0; n < N; n++) {
+        const float wn = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)n / (float)(N - 1U)));
+        basis(n);
+        for (uint8_t a = 0; a < P; a++) {
+            const float wp = wn * phi[a];
+            r[a] += wp * x[n];
+            for (uint8_t b = 0; b <= a; b++) G[a][b] += wp * phi[b];
+        }
+    }
+    if (!harmSolve(G, r, P)) return;
+    for (uint16_t n = 0; n < N; n++) {
+        basis(n);
+        float v = 0.0f;
+        for (uint8_t a = 0; a < P; a++) v += r[a] * phi[a];
+        x[n] -= v;
+    }
+}
+#endif
 
 /** Atem-Amplitude (µm): Spitze-Spitze des gleitenden 1-s-Mittels über die letzten kBrAmpWinS von x, nach Abzug
  *  einer Geraden (Lage-Drift beim Anhalten). < 0: zu wenig Daten. Das 1-s-Mittel dämpft den Herzschlag (76 /min auf
@@ -1029,6 +1153,10 @@ public:
 #ifdef A121_DSP_VITERBI
         vit_.reset();
 #endif
+#ifdef A121_DSP_HARM_REMOVE
+        fb_prev_   = 0.0f;
+        conf_prev_ = 0.0f;
+#endif
         prov_       = true;
         hr_prev_    = 0.0f;
         hr_miss_    = 0;
@@ -1354,6 +1482,21 @@ public:
             }
             total_blocks += N / kGateBlk;
             /* dezimieren + Hann */
+#ifdef A121_DSP_HARM_REMOVE
+            /* V3.3: Atem-Oberwellen geführt von der Atemphase dieses Punkts entfernen, mit Atem- und Pulsfrequenz des
+             * vorigen Reports. Nur, wenn der vorige Report sicher war: Verfolgte er einen falschen Puls (Prüfstand brady:
+             * 2 × Puls, Konfidenz ≈ 20 %), schonte die Regel den falschen und löschte den echten, der dicht an einer
+             * Atem-Oberwelle lag (MAE 2,8 → 3,7 /min). */
+            if (fb_prev_ > 0.0f && hr_prev_ > 0.0f && conf_prev_ >= kGuideMinConf) {
+                for (uint16_t m = 0; m < M; m++) {
+                    dec_[m]        = h[(uint32_t)m * kDecim];
+                    guide_disp_[m] = work_x_[(uint32_t)m * kDecim];
+                }
+                removeBreathHarmonicsGuided(dec_, guide_disp_, M, kFsHz / kDecim, fb_prev_, hr_prev_ / 60.0f, cfft_,
+                                            guide_work_);
+                for (uint16_t m = 0; m < M; m++) dec_[m] *= hann[m];
+            } else
+#endif
             for (uint16_t m = 0; m < M; m++) dec_[m] = h[(uint32_t)m * kDecim] * hann[m];
             /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f): Ein Herzschlag ist ein kurzer Impuls mit kräftiger 2. Oberwelle,
              * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). Im FFT-Raster liegt 2f genau auf Bin 2k. */
@@ -1382,6 +1525,9 @@ public:
             }
         }
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] /= (wsum + 1e-12f);
+#ifdef A121_DSP_HARM_REMOVE
+        conf_prev_ = 0.0f;  /* verbraucht; gilt erst wieder, wenn dieser Report gültig endet */
+#endif
         rep.hr_bin     = hr_bin;
         rep.motion_pct = 100.0f * (float)moving_blocks / (float)(total_blocks ? total_blocks : 1U);
 
@@ -1412,6 +1558,9 @@ public:
         rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= br_min_q && fb > 0.0f,
                                         rep.motion_pct);
         const bool breath_held = rep.br_state == kBrStateApnea;
+#ifdef A121_DSP_HARM_REMOVE
+        fb_prev_ = (br_q >= br_min_q && fb > 0.0f && !breath_held) ? fb : 0.0f;  /* für den nächsten Report (V3.3) */
+#endif
         /* Atem-Oberwellen (m = 2..8) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
          * und überdeckte den Puls ganz. Kandidaten auf m ≥ 4 bekommen bei der Wahl S × 0,5 (der Puls kann darauf liegen,
          * live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5), ein Sprung dorthin braucht kHoldHarm statt 3 Reports, und die
@@ -1665,6 +1814,9 @@ public:
             have_valid_     = true;
             last_valid_tot_ = s.tot_frames;
         }
+#ifdef A121_DSP_HARM_REMOVE
+        conf_prev_ = rep.valid ? rep.confidence_pct : 0.0f;
+#endif
         setState(s, rep, measurementState(person, echo_ok, breath_ok, rep.valid, rep.motion_pct, rep.br_state));
         rep.compute_us = micros() - t0;
         return rep.valid;
@@ -2000,6 +2152,14 @@ private:
     float    cum_phase_rad_        = 0.0f;
 #ifdef A121_DSP_VITERBI
     ViterbiTracker vit_;                                           /* V3.2, Report-Seite */
+#endif
+#ifdef A121_DSP_HARM_REMOVE
+    static_assert(kHrWin / kDecim + 1U <= kGuideFft, "Fenster nach Dezimierung passt nicht in kGuideFft");
+    a121_fft::ComplexFft<kGuideFft> cfft_;                        /* V3.3, Report-Seite */
+    float    guide_disp_[kGuideFft];
+    float    guide_work_[2U * kGuideFft];
+    float    fb_prev_              = 0.0f;  /* Atemfrequenz des vorigen Reports (0 = keine Atemspitze) */
+    float    conf_prev_            = 0.0f;  /* Konfidenz des vorigen Reports (0 = ungültig) */
 #endif
     BreathDetector breath_det_;                                    /* V3.4, nur Push-Seite */
     BreathEvent    breath_ev_;
