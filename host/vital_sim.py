@@ -13,7 +13,11 @@ Modi:
           Simulationswahrheit (Puls, Atmung, RMSSD, Konfidenz, Reaktionszeit).
 
   .venv/bin/python host/vital_sim.py demod
-  .venv/bin/python host/vital_sim.py bench [--out <ordner>] [--scen base harm4 ...]
+  .venv/bin/python host/vital_sim.py bench [--out <ordner>] [--scen base harm4 ...] [--header <a121_esp_dsp.h>]
+  .venv/bin/python host/vital_sim.py bench --check     # Regressionstest: Exit 1, wenn ein Grenzwert verletzt ist
+
+--check prüft nur den angegebenen Header (Standard: Firmware) gegen LIMITS. Jede DSP-Änderung verschärft die Grenzwerte,
+die sie verbessert (docs/AUDIT_VITAL.md, V0.5).
 
 Die erzeugten Frames (je Szenario ≈ 3 MB) landen in einem temporären Ordner oder unter --out (nicht im Repo).
 """
@@ -139,8 +143,10 @@ def gauss_env(dd, fwhm):
 
 
 def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=lambda t: 15.0, breath_pp_mm=2.5,
-                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244):
-    """Schreibt <path>.iq (int16 real/imag je Punkt, 105 Punkte je Frame) und <path>_truth.npz."""
+                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True):
+    """Schreibt <path>.iq (int16 real/imag je Punkt, 105 Punkte je Frame) und <path>_truth.npz.
+
+    person=False: nur Tisch, Wand und Möbel (leerer Platz vor dem Sensor)."""
     rng = np.random.default_rng(seed)
     n = int(T * FS)
     t = np.arange(n) / FS
@@ -159,6 +165,8 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
     # Streuzentren: Abstand (m), Amplitude, Atem-Anteil, Herz-Anteil, Phase. Vorderbrust, Bauch, Schulter, Tisch, Wand, Möbel
     scat = [(0.640, 1500, 1.0, 1.0, 0.3), (0.668, 900, 1.3, 0.5, 1.9), (0.730, 800, 0.3, 0.2, 4.0),
             (0.450, 600, 0.0, 0.0, 2.2), (2.200, 1500, 0.0, 0.0, 5.1), (1.300, 500, 0.0, 0.0, 0.9)]
+    if not person:
+        scat = scat[3:]
     zd = (zoom_start_pt + np.arange(ZOOM_N)) * STEP_M
     rd = (ROOM_START_PT + np.arange(ROOM_N) * ROOM_STEP) * STEP_M
     Z = np.zeros((n, ZOOM_N), complex)
@@ -195,7 +203,40 @@ SCENARIOS = {
     "beweg":  ("10 s Bewegung ±3 mm bei 50–60 s", dict(motion=(50, 60, 6.0))),
     "anhalt": ("Atem anhalten 40–60 s", dict(hold=(40, 60), rr_fn=lambda t: 16.0, hr_fn=lambda t: 76.0)),
     "leer":   ("ruhendes Echo, keine Atmung/Puls", dict(breath_pp_mm=0.0, heart_pp_um=0.0)),
+    "niemand": ("keine Person, nur Möbel und Wand", dict(person=False)),
 }
+
+# Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
+# Spielraum (Anteil −3 Prozentpunkte, MAE +0,5 /min, Reaktion +1 s). Jede DSP-Aufgabe verschärft, was sie verbessert.
+LIMITS = {
+    "base":    [("hr_p5", ">=", 94.0), ("hr_mae", "<=", 1.2), ("br_mae", "<=", 0.5)],
+    "harm4":   [("hr_p5", ">=", 0.0), ("hr_mae", "<=", 18.6), ("br_mae", "<=", 0.5)],
+    "step":    [("hr_p5", ">=", 87.0), ("hr_mae", "<=", 3.4), ("reaktion_s", "<=", 12.0), ("br_mae", "<=", 0.5)],
+    "brady":   [("hr_p5", ">=", 0.0), ("br_mae", "<=", 0.6)],
+    "tachy":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 1.4), ("br_mae", "<=", 0.5)],
+    "flach":   [("hr_p5", ">=", 51.0), ("hr_mae", "<=", 5.4), ("br_mae", "<=", 0.6)],
+    "tief":    [("hr_p5", ">=", 57.0), ("hr_mae", "<=", 5.2), ("br_mae", "<=", 0.5)],
+    "beweg":   [("hr_p5", ">=", 74.0), ("hr_mae", "<=", 3.4), ("br_mae", "<=", 0.7)],
+    "anhalt":  [("hr_p5", ">=", 90.0), ("hr_mae", "<=", 2.3), ("br_mae", "<=", 1.2)],
+    "leer":    [("n_valid", "<=", 113)],
+    "niemand": [("n_valid", "<=", 113)],
+}
+
+
+def check_limits(results: dict, limits: dict) -> list[str]:
+    """Verletzte Grenzwerte als Meldungen; NaN (z. B. kein gültiger Report) gilt als verletzt. Szenarien ohne
+    Ergebnis werden übersprungen."""
+    msgs = []
+    for scen, rules in limits.items():
+        if scen not in results:
+            continue
+        for metric, op, lim in rules:
+            v = results[scen].get(metric, np.nan)
+            ok = (v >= lim) if op == ">=" else (v <= lim)
+            if not (isinstance(v, (int, float)) and not np.isnan(v) and ok):
+                shown = f"{v:.1f}" if isinstance(v, float) else str(v)
+                msgs.append(f"{scen}: {metric} = {shown}, Grenze {op} {lim}")
+    return msgs
 
 HARNESS = r"""
 #include <Arduino.h>
@@ -260,24 +301,23 @@ KASA_NEW = KASA_OLD + """        {
 """
 
 
-def build(tmp: pathlib.Path) -> dict[str, pathlib.Path]:
+def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER, with_variants: bool = True) -> dict[str, pathlib.Path]:
     (tmp / "inc").mkdir(exist_ok=True)
     (tmp / "inc" / "Arduino.h").write_text(SHIM)
     (tmp / "harness.cpp").write_text(HARNESS)
-    src = DSP_HEADER.read_text()
+    src = header.read_text()
     variants = {"original": src}
-    if src.count(KASA_OLD) == 1:
+    if with_variants and src.count(KASA_OLD) == 1:
         variants["kasa"] = src.replace(KASA_OLD, KASA_NEW)
-    else:
-        print("Hinweis: Kåsa-Variante übersprungen (Stelle in binDisplacement nicht eindeutig gefunden).")
     exes = {}
     for name, text in variants.items():
         d = tmp / name
         d.mkdir(exist_ok=True)
         (d / "a121_esp_dsp.h").write_text(text)
         exe = tmp / f"harness_{name}"
-        subprocess.run(["g++", "-O2", "-std=c++17", f"-I{tmp / 'inc'}", f"-I{d}", str(tmp / "harness.cpp"),
-                        "-o", str(exe), "-lm"], check=True)
+        # Header-Ordner und Firmware-Ordner als Rückfall (weitere Header neben a121_esp_dsp.h)
+        subprocess.run(["g++", "-O2", "-std=c++17", f"-I{tmp / 'inc'}", f"-I{d}", f"-I{header.parent}",
+                        f"-I{DSP_HEADER.parent}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"], check=True)
         exes[name] = exe
     return exes
 
@@ -304,6 +344,7 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     e_br = np.abs(d["br"] - tru[:, 1])[v]
     res = {
         "gueltig": f"{int(v.sum())}/{len(v)}",
+        "n_valid": int(v.sum()),
         "erst_s": float(d["t_s"][v][0]) if v.any() else np.nan,
         "hr_mae": float(np.nanmean(e_hr)), "hr_p5": float(100 * np.nanmean(e_hr <= 5)),
         "br_mae": float(np.nanmean(e_br)),
@@ -321,23 +362,27 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     return res
 
 
-def run_bench(out_dir: pathlib.Path | None, names: list[str]) -> int:
+def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Path = DSP_HEADER,
+              check: bool = False) -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = pathlib.Path(tmpdir)
         data = out_dir or tmp
         data.mkdir(parents=True, exist_ok=True)
-        exes = build(tmp)
-        for i, nm in enumerate(names):
-            make_frames(data / nm, seed=i + 1, **SCENARIOS[nm][1])
+        exes = build(tmp, header, with_variants=not check)
+        results = {}
+        for nm in names:  # fester Zufallswert je Szenario, unabhängig von --scen
+            make_frames(data / nm, seed=list(SCENARIOS).index(nm) + 1, **SCENARIOS[nm][1])
         print("NUR SIMULATION. Puls-MAE und Anteil ≤ 5 /min gegen die wahre mittlere Herzfrequenz im 15-s-Fenster;")
         print("Konfidenz = Median aller gültigen Reports, 'bei Fehler' = Median der Reports mit > 10 /min Abweichung.")
-        print("Szenario 'leer': Puls-Werte sind bedeutungslos, dort zählt nur die Zahl gültiger Reports (Soll 0).")
+        print("Szenarien 'leer'/'niemand': Puls-Werte sind bedeutungslos, dort zählt nur die Zahl gültiger Reports (Soll 0).")
         for var, exe in exes.items():
             print(f"\n=== DSP-Header {var}")
             print(f"{'Szenario':8s} {'Beschreibung':32s} {'gültig':>7s} {'erst':>5s} {'Puls-MAE':>9s} {'≤5/min':>7s}"
                   f" {'Atem-MAE':>9s} {'RMSSD/wahr':>11s} {'Konf':>5s} {'b.Fehler':>8s}  Zusatz")
             for nm in names:
                 r = evaluate(exe, data / nm, nm)
+                if var == "original":
+                    results[nm] = r
                 extra = ""
                 if "reaktion_s" in r:
                     extra = f"Reaktion {r['reaktion_s']:.0f} s"
@@ -347,7 +392,14 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str]) -> int:
                       f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms {r['konf']:4.0f}"
                       f" {r['konf_falsch']:7.0f}  {extra}")
             print(f"Rechenzeit je Report am PC (Median): {r['us'] / 1000:.1f} ms (ESP32 live: ≈ 270–320 ms)")
-    return 0
+    if not check:
+        return 0
+    msgs = check_limits(results, LIMITS)
+    print(f"\nPrüfung gegen LIMITS ({header}):")
+    for m in msgs:
+        print("  VERLETZT", m)
+    print("  ERGEBNIS:", "VERSCHLECHTERT" if msgs else "OK (alle Grenzwerte eingehalten)")
+    return 1 if msgs else 0
 
 
 def main() -> int:
@@ -355,8 +407,12 @@ def main() -> int:
     ap.add_argument("mode", choices=["demod", "bench"])
     ap.add_argument("--out", type=pathlib.Path, default=None, help="bench: Ordner für die erzeugten Frames")
     ap.add_argument("--scen", nargs="*", default=list(SCENARIOS), choices=list(SCENARIOS))
+    ap.add_argument("--header", type=pathlib.Path, default=DSP_HEADER, help="bench: zu prüfender DSP-Header")
+    ap.add_argument("--check", action="store_true", help="bench: gegen LIMITS prüfen, Exit 1 bei Verschlechterung")
     a = ap.parse_args()
-    return run_demod() if a.mode == "demod" else run_bench(a.out, a.scen)
+    if a.mode == "demod":
+        return run_demod()
+    return run_bench(a.out, a.scen, a.header.resolve(), a.check)
 
 
 if __name__ == "__main__":
