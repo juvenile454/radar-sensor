@@ -5,7 +5,7 @@
  * Kette (Stand 2026-11-01, an `iq3raw_normal_120s_2026-11-01.npz` und `iq3raw_motion_120s_2026-11-01.npz` entwickelt):
  *   1. Subsweep 0: On-Chip-Loopback → Phasen-Derotation aller Zoom-Punkte pro Frame (PLL-/Taktjitter).
  *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (15 s Historie).
- *   3. Puls: pro Punkt Phase um den Fenster-Mittelpunkt abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
+ *   3. Puls: pro Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Fit, circleCenter) abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
  *      0,8–3,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
  *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Spektrum 0,88–2,30 Hz; Spitzen zählen nur
  *      zwischen 0,91 und 2,27 Hz (55–136 /min). Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
@@ -86,6 +86,8 @@ static constexpr uint8_t  kMaxRoomTargets = 8U;  /* gemeldete Raum-Ziele (die st
 static constexpr float    kRoomDetK    = 2.0f;   /* Raum-Ziel: Amplitude oder Bewegung ≥ 2 × Rauschpegel */
 static constexpr float    kRoomMoveK   = 3.0f;   /* bewegt: Bewegung ≥ 3 × Bewegungs-Rauschpegel */
 static constexpr float    kRoomSlowA   = 0.00554f; /* Glättung für das Zoom-Ziel: 1 − exp(−1 / (60 Hz · 3 s)), τ ≈ 3 s */
+static constexpr float    kArcMinRad   = 2.0f;   /* Kreisfit gilt als schlecht bestimmt, wenn die Phase weniger überstreicht */
+static constexpr float    kCenterTol   = 0.5f;   /* gespeicherter Mittelpunkt gilt, solange er ≤ 0,5 Radien vom Fit liegt */
 
 /* Butterworth-Bandpass 4. Ordnung 0,8–3,0 Hz bei 60 Hz: scipy.signal.butter(4, [0.8, 3.0], 'band', fs=60, output='sos') */
 static constexpr float kBpSos[4][6] = {
@@ -94,6 +96,78 @@ static constexpr float kBpSos[4][6] = {
     {1.0f, -2.0f, 1.0f, 1.0f, -1.7862894348694949f, 0.87269707452243317f},
     {1.0f, -2.0f, 1.0f, 1.0f, -1.9543928216301054f, 0.96170037756512228f},
 };
+
+/**
+ * Kreismittelpunkt der IQ-Werte eines Zoom-Punkts im Fenster: Kåsa-Fit in Bullock-Form (algebraisch, ein 2×2-System).
+ * Die Phase eines Punkts muss um den Mittelpunkt des Kreises gemessen werden, den die Atembewegung beschreibt (festes
+ * Echo im selben Punkt), nicht um den Mittelwert: Der liegt bei einem Atemhub mit Phasenhub β um J0(β) × Radius
+ * daneben und erzeugt Atem-Oberwellen im Pulsband (docs/AUDIT_VITAL.md, B2).
+ * Summen in float über (u, v) = (z − Mittelwert) / s mit s = Effektivwert des Abstands zum Mittelwert, damit float reicht
+ * (der ESP32-S3 rechnet double in Software).
+ * ring: [kHistoryLen][I, Q] dieses Punkts, Fenster start .. start + N (modulo kHistoryLen).
+ * Rückgabe false und (ci, cq) = Mittelwert, wenn das System schlecht bestimmt ist (det ≤ 10⁻⁶ · Suu · Svv, z. B. alle
+ * Punkte auf einer Geraden) oder der Mittelpunkt mehr als 10 × s vom Mittelwert entfernt läge.
+ */
+inline bool circleCenter(const float *ring, uint16_t start, uint16_t N, float mean_i, float mean_q, float &ci, float &cq) {
+    ci = mean_i;
+    cq = mean_q;
+    if (N < 3) return false;
+    float s2 = 0.0f;
+    for (uint16_t n = 0; n < N; n++) {
+        const float *z = ring + (size_t)((start + n) % kHistoryLen) * 2U;
+        const float du = z[0] - mean_i, dv = z[1] - mean_q;
+        s2 += du * du + dv * dv;
+    }
+    const float s = sqrtf(s2 / (float)N);
+    if (!(s > 1e-6f)) return false;
+    const float inv = 1.0f / s;
+    float suu = 0.0f, svv = 0.0f, suv = 0.0f, suuu = 0.0f, svvv = 0.0f, suvv = 0.0f, svuu = 0.0f;
+    for (uint16_t n = 0; n < N; n++) {
+        const float *z = ring + (size_t)((start + n) % kHistoryLen) * 2U;
+        const float u = (z[0] - mean_i) * inv, v = (z[1] - mean_q) * inv;
+        const float uu = u * u, vv = v * v;
+        suu += uu;
+        svv += vv;
+        suv += u * v;
+        suuu += uu * u;
+        svvv += vv * v;
+        suvv += u * vv;
+        svuu += v * uu;
+    }
+    const float det = suu * svv - suv * suv;
+    if (!(det > 1e-6f * suu * svv)) return false;
+    const float a = 0.5f * (suuu + suvv), c = 0.5f * (svvv + svuu);
+    const float uc = (a * svv - c * suv) / det, vc = (c * suu - a * suv) / det;
+    if (!(uc * uc + vc * vc <= 100.0f)) return false;
+    ci = mean_i + uc * s;
+    cq = mean_q + vc * s;
+#ifdef A121_DSP_CIRCLE_GN
+    /* Variante für den Vergleich an Aufnahmen (V1.1): 3 Gauß-Newton-Schritte auf den geometrischen Abstand, Radius
+     * eliminiert. Im Prüfstand ohne Unterschied zu Kåsa (ideale Kreisbögen), +8 % Rechenzeit. */
+    for (int it = 0; it < 3; it++) {
+        float rs = 0.0f;
+        for (uint16_t n = 0; n < N; n++) {
+            const float *z = ring + (size_t)((start + n) % kHistoryLen) * 2U;
+            rs += sqrtf((z[0] - ci) * (z[0] - ci) + (z[1] - cq) * (z[1] - cq));
+        }
+        const float R = rs / (float)N;
+        float a00 = 0.0f, a01 = 0.0f, a11 = 0.0f, b0 = 0.0f, b1 = 0.0f, ju = 0.0f, jv = 0.0f;
+        for (uint16_t n = 0; n < N; n++) {
+            const float *z = ring + (size_t)((start + n) % kHistoryLen) * 2U;
+            const float dx = z[0] - ci, dy = z[1] - cq, d = sqrtf(dx * dx + dy * dy) + 1e-6f;
+            const float ux = dx / d, uy = dy / d, r = d - R;
+            ju += ux; jv += uy; a00 += ux * ux; a01 += ux * uy; a11 += uy * uy; b0 += ux * r; b1 += uy * r;
+        }
+        ju /= (float)N; jv /= (float)N;
+        a00 -= (float)N * ju * ju; a01 -= (float)N * ju * jv; a11 -= (float)N * jv * jv;
+        const float dt = a00 * a11 - a01 * a01;
+        if (!(dt > 0.0f)) break;
+        ci += (a11 * b0 - a01 * b1) / dt;
+        cq += (a00 * b1 - a01 * b0) / dt;
+    }
+#endif
+    return true;
+}
 
 struct Complex16 {
     int16_t real;
@@ -193,6 +267,7 @@ public:
         memset(room_var_ema_, 0, sizeof(room_var_ema_));
         memset(room_amp_slow_, 0, sizeof(room_amp_slow_));
         memset(room_mot_slow_, 0, sizeof(room_mot_slow_));
+        memset(have_good_, 0, sizeof(have_good_));
     }
 
     void setZoomStartPoint(int32_t zoom_start_pt) {
@@ -383,7 +458,9 @@ public:
         for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
 
         for (uint8_t b = 0; b < kZoomPoints; b++) {
-            const float amp_c = binDisplacement(b, start, N, work_x_);
+            bool short_arc = false;
+            float spread = 0.0f;
+            const float amp_c = binDisplacement(b, start, N, work_x_, short_arc, spread);
             removeLinearTrend(work_x_, N);
             float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
             sosFiltFilt(work_x_, N);
@@ -415,7 +492,7 @@ public:
             std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
             const float med = scratch_[kHrNumF / 2] + 1e-12f;
             const float q   = pmax / med;
-            const float w   = q * q;
+            const float w   = q * q * (short_arc ? 0.5f : 1.0f);  /* kurzer Bogen: Phase weniger sicher */
             for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] += w * (spec_[k] / med);
             wsum += w;
             weight[b]  = w;
@@ -579,37 +656,75 @@ private:
         bi /= w_sum; bq /= w_sum; cli /= w_sum; clq /= w_sum;
     }
 
-    /** Phase des Zoom-Punkts b um den Fenster-Mittelpunkt abwickeln → µm. Rückgabe: mittlerer Abstand zum Mittelpunkt
-     *  (|z − Mittelwert|, Maß für die Phasenqualität dieses Punkts). */
-    float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out) const {
-        const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
-        double mi = 0.0, mq = 0.0;
+    /** Phase um (ci, cq) abwickeln → out[] in µm. Rückgabe: mittlerer Abstand zum Mittelpunkt (Radius);
+     *  span = überstrichene Phase (max − min, rad), spread = Streuung des Abstands relativ zum Radius. */
+    static float unwrapAround(const float *base, uint16_t start, uint16_t N, float ci, float cq, float *out, float &span,
+                              float &spread) {
+        float prev = 0.0f, acc = 0.0f, lo = 0.0f, hi = 0.0f, r_sum = 0.0f, r2_sum = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
             const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
-            mi += z[0];
-            mq += z[1];
-        }
-        mi /= (double)N;
-        mq /= (double)N;
-        float prev = 0.0f, acc = 0.0f;
-        double amp_sum = 0.0;
-        for (uint16_t n = 0; n < N; n++) {
-            const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
-            const float ci = z[0] - (float)mi, cq = z[1] - (float)mq;
-            const float phi = atan2f(cq, ci);
-            amp_sum += sqrtf(ci * ci + cq * cq);
+            const float di = z[0] - ci, dq = z[1] - cq;
+            const float phi = atan2f(dq, di);
+            const float r2 = di * di + dq * dq;
+            r_sum += sqrtf(r2);
+            r2_sum += r2;
             if (n > 0) {
                 float d = phi - prev;
                 if (d > (float)M_PI) d -= 2.0f * (float)M_PI;
                 else if (d < -(float)M_PI) d += 2.0f * (float)M_PI;
                 acc += d;
             } else {
-                acc = phi;
+                acc = lo = hi = phi;
             }
+            if (acc < lo) lo = acc;
+            if (acc > hi) hi = acc;
             prev   = phi;
             out[n] = acc * kRadToUm;
         }
-        return (float)(amp_sum / (double)N);
+        const float r = r_sum / (float)N;
+        const float var = r2_sum / (float)N - r * r;
+        span   = hi - lo;
+        spread = (r > 1e-6f && var > 0.0f) ? sqrtf(var) / r : 0.0f;
+        return r;
+    }
+
+    /** Phase des Zoom-Punkts b um den Kreismittelpunkt (circleCenter) abwickeln → µm. Überstreicht die Phase weniger als
+     *  kArcMinRad, ist der Fit schlecht bestimmt (kurzer Bogen): Dann gilt der letzte gute Mittelpunkt dieses Punkts,
+     *  solange die IQ-Werte auf dessen Kreis liegen (Streuung höchstens doppelt so groß wie um den Fit), und short_arc
+     *  meldet dem Aufrufer, das Gewicht des Punkts zu halbieren. Rückgabe: mittlerer Abstand zum Mittelpunkt (Radius),
+     *  spread: Streuung des Abstands relativ zum Radius (klein = sauberes Echo, ≈ 0,5 = nur Rauschen). */
+    float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out, bool &short_arc, float &spread) {
+        const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
+        float mi = 0.0f, mq = 0.0f;
+        for (uint16_t n = 0; n < N; n++) {
+            const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
+            mi += z[0];
+            mq += z[1];
+        }
+        mi /= (float)N;
+        mq /= (float)N;
+        float ci, cq, span;
+        const bool fit_ok = circleCenter(base, start, N, mi, mq, ci, cq);
+        float radius = unwrapAround(base, start, N, ci, cq, out, span, spread);
+        short_arc = span < kArcMinRad;
+        if (!short_arc) {
+            if (fit_ok) {
+                good_ci_[b]   = ci;
+                good_cq_[b]   = cq;
+                have_good_[b] = true;
+            }
+        } else if (have_good_[b]) {
+            float span_g, spread_g;
+            const float r_g = unwrapAround(base, start, N, good_ci_[b], good_cq_[b], work_ext_, span_g, spread_g);
+            if (spread_g <= 2.0f * spread + 0.02f) {
+                memcpy(out, work_ext_, N * sizeof(float));
+                radius = r_g;
+                spread = spread_g;
+            } else {
+                have_good_[b] = false;  /* Szene hat sich geändert: alter Mittelpunkt passt nicht mehr */
+            }
+        }
+        return radius;
     }
 
     /**
@@ -916,6 +1031,9 @@ private:
     float    hr_prev_              = 0.0f;
     uint8_t  hr_miss_              = 0;
 
+    float good_ci_[kZoomPoints]        = {};  /* letzter gut bestimmter Kreismittelpunkt je Zoom-Punkt (Bogen ≥ 2 rad) */
+    float good_cq_[kZoomPoints]        = {};
+    bool  have_good_[kZoomPoints]      = {};
     float zoom_clutter_i_[kZoomPoints] = {};
     float zoom_clutter_q_[kZoomPoints] = {};
     float zoom_var_ema_[kZoomPoints]   = {};
