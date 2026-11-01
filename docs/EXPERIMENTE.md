@@ -113,6 +113,24 @@ mkdir -p /tmp/dsp_win10 && { echo '#define A121_HR_WIN 600'; cat firmware/esp32s
 Prüfstand vorab (nur Simulation, `vital_sim.py bench --hr-win 600|720|900`): Reaktion im Szenario `step` 7 / 8 / 9 s;
 mit 10 s verletzt `beweg` (MAE 1,5), `anhalt` (Apnoe nicht erkannt, ±5-Anteil 96 %) und `leer` (1 gültiger Report)
 die Grenzwerte, mit 12 s nur `beweg` knapp (MAE 1,4 statt ≤ 1,3), 15 s hält alle. Standard bleibt 15 s bis Tag A.
+Mit der Viterbi-Verfolgung (V3.2, `--define A121_DSP_VITERBI`) hält auch 12 s alle Grenzwerte (Reaktion 8 s), 10 s
+weiter nicht (`beweg`, `anhalt`, `leer`). Für Tag A: 12 s + Viterbi als eigene Variante mitrechnen.
+
+**Viterbi-Verfolgung (V3.2, offen):** Variante hinter `#define A121_DSP_VITERBI` (Standard aus): Viterbi über die
+letzten 20 Reports, Zustände 40–180 /min, Übergang Gauß σ = 3 /min je s plus 2 % „Sprung irgendwohin", Emission aus
+den Kandidaten des Reports (Gauß je Kandidat, Gewicht (Wert / bester)³, Grundpegel 10 %), Konfidenz höchstens die
+Wahrscheinlichkeitsmasse ±5 /min. Abnahme an Tag A (alle Sitzungen): weniger Sprünge > 15 /min zwischen
+aufeinanderfolgenden gültigen Reports (`vital_eval.py` schreibt sie in die Kopfzeile je Sitzung), Anteil ±5 /min nicht
+schlechter. Prüfstand vorab (nur Simulation): Sprünge gleich (3 / 3), `brady` MAE 2,8 → 1,5 /min (±5: 95 → 97 %),
+`beweg` 0,8 → 0,6, sonst gleich; falsche Reports (> 10 /min) 9 → 5; Rechenzeit am PC +0,2 ms.
+
+```bash
+mkdir -p /tmp/dsp_vit && { echo '#define A121_DSP_VITERBI 1'; cat firmware/esp32s3/src/a121_esp_dsp.h; } > /tmp/dsp_vit/a121_esp_dsp.h
+```
+
+```bash
+.venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_* --replay /tmp/dsp_vit
+```
 
 **Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
 jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start

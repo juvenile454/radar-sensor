@@ -533,6 +533,7 @@ def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -
 
 
 def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
+    from vital_eval import count_jumps
     warnings.filterwarnings("ignore", "Mean of empty slice")
     warnings.filterwarnings("ignore", "All-NaN slice")
     tr = np.load(f"{base}_truth.npz")
@@ -558,6 +559,7 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         **{k: x for k, x in conf_stats(d["conf"][v], e_hr).items() if k != "konf_richtig"},
         "_err": e_hr, "_conf": d["conf"][v],
         "us": float(np.median(d["us"])),
+        "spruenge": count_jumps(d["hr"], v),   # V3.2: Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports
     }
     res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
     # Zustand BEWEGUNG (V3.5): Reports im Bewegungsabschnitt (bis 15 s danach, so lange liegt er im Fenster) und außerhalb
@@ -630,6 +632,8 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                     extra += f" Zustand BEWEGUNG ohne Bewegung: {r['zustand_beweg_fehl']}"
                 if r.get("apnoe_fehl"):
                     extra += f" Apnoe-Fehlalarme {r['apnoe_fehl']}"
+                if r["spruenge"]:
+                    extra += f" Sprünge > 15 /min: {r['spruenge']}"
                 kf = f"{r['konf_falsch']:7.0f}" if r["n_falsch"] else "      –"
                 print(f"{nm:8s} {SCENARIOS[nm][0]:32s} {r['gueltig']:>7s} {r['erst_s']:4.0f}s {r['hr_mae']:7.1f}   {r['hr_p5']:5.0f} %"
                       f" {r['br_mae']:7.1f}   {r['rmssd']:5.0f}/{r['rmssd_wahr']:3.0f} ms ({r['rmssd_anteil']:3.0f} %) {r['konf']:4.0f}"

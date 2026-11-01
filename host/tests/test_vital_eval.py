@@ -275,5 +275,15 @@ class BreathEventsEvalTest(unittest.TestCase):
         self.assertNotIn("breath_events", r)
 
 
+class JumpCountTest(unittest.TestCase):
+    def test_jumps_between_consecutive_valid_reports(self):
+        """V3.2 (Abnahme): Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports; ein ungültiger Report
+        unterbricht die Folge."""
+        hr = np.array([70, 72, 90, 91, 60, 61, 95, 96], float)
+        ok = np.array([1, 1, 1, 1, 1, 0, 1, 1], bool)
+        self.assertEqual(ve.count_jumps(hr, ok), 2)          # 72→90, 91→60; 61 ungültig, 60→95 zählt nicht
+        self.assertEqual(ve.count_jumps(hr, ok, thr=30.0), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

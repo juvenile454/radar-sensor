@@ -828,5 +828,67 @@ class BreathDetectorTest(unittest.TestCase):
         self.assertLess(ev[0][0] - 1800, 1.0 / 0.23 * 60 + 60)   # spätestens ein Atemzug nach dem Öffnen
 
 
+class ViterbiTest(unittest.TestCase):
+    """V3.2 (Schalter A121_DSP_VITERBI): Verfolgung als Viterbi über die letzten 20 Reports. Zustände 40–180 /min
+    (1 /min), Übergang Gauß σ = 3 /min je Report plus kleiner Anteil „Sprung irgendwohin"; Emission aus den
+    Kandidaten des Reports (Gauß je Kandidat, Gewicht = Kandidatenwert, mit Grundpegel); Konfidenz = Masse ±5 /min."""
+
+    FLAGS = ("-DA121_DSP_VITERBI",)
+
+    def run_vit(self, body: str) -> list[list[float]]:
+        out = run_cpp("ViterbiTracker v; float mass; float b[3], c[3];\n" + body, self.FLAGS)
+        return [[float(x) for x in ln.split()] for ln in out.splitlines()]
+
+    def test_follows_slow_change_against_strong_distractor(self):
+        # Puls 70 → 85 in 30 Reports; eine Fremdspitze springt zwischen 110 und 150 und ist jedes 2. Mal stärker
+        rows = self.run_vit("""
+        for (int t = 0; t < 30; t++) {
+            b[0] = 70.0f + 0.5f * t; c[0] = 1.0f;
+            b[1] = (t % 2) ? 110.0f : 150.0f; c[1] = (t % 2) ? 1.4f : 0.6f;
+            printf("%.2f %.3f\\n", v.update(b, c, 2, mass), mass);
+        }""")
+        for t, (bpm, _) in enumerate(rows[3:], 3):
+            self.assertAlmostEqual(bpm, 70.0 + 0.5 * t, delta=1.5)
+
+    def test_single_outlier_ignored_persistent_change_followed(self):
+        rows = self.run_vit("""
+        for (int t = 0; t < 25; t++) {
+            const bool out1 = (t == 10), moved = (t >= 15);
+            b[0] = (out1 || moved) ? 110.0f : 72.0f; c[0] = 1.0f;
+            printf("%.2f %.3f\\n", v.update(b, c, 1, mass), mass);
+        }""")
+        self.assertAlmostEqual(rows[10][0], 72.0, delta=1.5)    # ein Report mit nur 110: Verfolgung bleibt
+        self.assertAlmostEqual(rows[24][0], 110.0, delta=1.5)   # dauerhaft 110: nach wenigen Reports gewechselt
+        switch = next(t for t in range(15, 25) if abs(rows[t][0] - 110.0) < 1.5)
+        self.assertLessEqual(switch - 15, 4)
+
+    def test_mass(self):
+        rows = self.run_vit("""
+        for (int t = 0; t < 20; t++) { b[0] = 72.0f; c[0] = 1.0f; v.update(b, c, 1, mass); }
+        printf("%.3f\\n", mass);
+        v.reset();
+        for (int t = 0; t < 20; t++) { b[0] = 60.0f; c[0] = 1.0f; b[1] = 120.0f; c[1] = 1.0f; v.update(b, c, 2, mass); }
+        printf("%.3f\\n", mass);""")
+        self.assertGreater(rows[0][0], 0.8)
+        self.assertLess(rows[1][0], 0.65)
+
+    def test_window_forgets_after_20_reports(self):
+        """Nach einem Neubeginn (reset) zählt nur, was danach kam; ohne reset höchstens die letzten 20 Reports."""
+        rows = self.run_vit("""
+        for (int t = 0; t < 60; t++) { b[0] = 72.0f; c[0] = 1.0f; v.update(b, c, 1, mass); }
+        for (int t = 0; t < 25; t++) { b[0] = 72.0f; c[0] = 0.5f; b[1] = 130.0f; c[1] = 1.0f;
+                                       printf("%.2f\\n", v.update(b, c, 2, mass)); }""")
+        self.assertAlmostEqual(rows[-1][0], 130.0, delta=1.5)
+
+    def test_dsp_with_switch(self):
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0] + """
+        for (int i = 0; i < 20; i++) { push(60, 1.2f); d.computeVitalReport(r); }
+        printf("%d %.2f %.1f", r.valid, r.hr_fused_bpm, r.confidence_pct);""", self.FLAGS)
+        valid, hr, conf = out.split()
+        self.assertEqual(valid, "1")
+        self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
+        self.assertGreater(float(conf), 50.0)
+
+
 if __name__ == "__main__":
     unittest.main()

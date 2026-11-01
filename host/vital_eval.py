@@ -243,6 +243,13 @@ def metrics(est: np.ndarray, ref: np.ndarray, valid: np.ndarray) -> dict:
     }
 
 
+def count_jumps(hr: np.ndarray, valid: np.ndarray, thr: float = 15.0) -> int:
+    """Sprünge > thr /min zwischen aufeinanderfolgenden gültigen Reports (V3.2); ein ungültiger unterbricht."""
+    hr, valid = np.asarray(hr, float), np.asarray(valid, bool)
+    both = valid[1:] & valid[:-1]
+    return int(np.sum(both & (np.abs(np.diff(hr)) > thr)))
+
+
 def calibration(conf: np.ndarray, abs_err: np.ndarray, edges=(0, 30, 50, 70, 90, 101)) -> list[tuple]:
     """Je Konfidenzklasse [lo, hi): (lo, hi, Anzahl, Anteil innerhalb ±5 /min in %). Leere Klasse: Anteil NaN."""
     conf, abs_err = np.asarray(conf, float), np.asarray(abs_err, float)
@@ -326,7 +333,7 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
     have_ref = rec.beats_ms.size >= 3
     rr = rec.rr_ms if rec.rr_ms.size == rec.beats_ms.size else None
     ref = np.array([ref_hr_at(rec.beats_ms, x, win_s, rr) for x in t]) if have_ref else np.full(t.size, math.nan)
-    res = {"reports": int(t.size), "valid": int(ok.sum()), "have_ref": have_ref}
+    res = {"reports": int(t.size), "valid": int(ok.sum()), "have_ref": have_ref, "jumps": count_jumps(hr, ok)}
     res["hr"] = metrics(hr, ref, ok) if have_ref else None
     if have_ref:
         err = np.abs(hr - ref)
@@ -384,7 +391,7 @@ def format_report(name: str, r: dict) -> str:
     out = io.StringIO()
     w = out.write
     w(f"## {name}\n\n")
-    w(f"Reports {r['reports']}, gültig {r['valid']}")
+    w(f"Reports {r['reports']}, gültig {r['valid']}, Sprünge > 15 /min {r.get('jumps', 0)}")
     fs = r["first_s"]
     if fs:
         w(f"; erster Wert nach Start {_f(fs[0])} s")

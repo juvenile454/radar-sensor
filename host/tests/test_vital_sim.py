@@ -157,5 +157,18 @@ class BreathBenchTest(unittest.TestCase):
         self.assertIn(("base", "atemzug_erst_n", "<=", 2.5), lim)
 
 
+class ViterbiBenchTest(unittest.TestCase):
+    """V3.2 (Schalter A121_DSP_VITERBI): Variante hält die Grenzwerte, auch mit 12-s-Fenster (V2.5 „mit der Verfolgung
+    aus V3.2"); nur Simulation, Wahl an Tag A."""
+
+    def test_variant_within_limits(self):
+        for extra in ([], ["--hr-win", "720"]):
+            r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--define",
+                                "A121_DSP_VITERBI", "--scen", "brady", "beweg", "step", *extra],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+            self.assertIn("A121_DSP_VITERBI", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

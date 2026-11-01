@@ -777,6 +777,107 @@ private:
     uint8_t  niv_ = 0;
 };
 
+#ifdef A121_DSP_VITERBI
+/* V3.2 (Variante, A/B an Tag A): Puls-Verfolgung als Viterbi über die letzten kVitWin Reports */
+static constexpr uint16_t kVitMinBpm = 40U, kVitStates = 141U;  /* 40–180 /min in 1-/min-Schritten */
+static constexpr uint8_t  kVitWin    = 20U;
+static constexpr float    kVitSigma  = 3.0f;    /* Übergang: Gauß σ = 3 /min je Report (1 s) */
+static constexpr int16_t  kVitReach  = 12;      /* ±4 σ */
+static constexpr float    kVitJump   = 0.02f;   /* Anteil „Sprung irgendwohin" (sonst hielte ein Fehlgriff ewig) */
+static constexpr float    kVitFloor  = 0.1f;    /* Grundpegel der Emission (Report ohne Kandidat am wahren Puls) */
+static constexpr float    kVitEmSig  = 1.0f;    /* Breite je Kandidat in /min (FFT-Raster 0,88 /min) */
+static constexpr float    kVitGamma  = 3.0f;    /* Emission ∝ (Kandidatenwert / bester)^γ; mit γ = 1 hing der
+                                                   * Pfad im Prüfstand brady 9 Reports auf einem schwachen, aber
+                                                   * steten Kandidaten (75 statt 50); γ = 2: MAE 2,0, γ = 3: 1,5 */
+
+/**
+ * Viterbi über ein festes Gitter 40–180 /min mit den Emissionen der letzten kVitWin Reports. Emission je Report aus
+ * den Kandidaten (Gauß je Kandidat, Gewicht = Kandidatenwert mit Oberwellen-Abschlag und Oktav-Prüfung), normiert und
+ * mit Grundpegel kVitFloor. update() rechnet den besten Pfad über das Fenster neu (Ergebnis = sein letzter Zustand)
+ * und die Vorwärts-Wahrscheinlichkeit; mass = Anteil im Bereich ±5 /min um das Ergebnis.
+ */
+class ViterbiTracker {
+public:
+    ViterbiTracker() {
+        float sum = 0.0f;
+        for (int16_t d = -kVitReach; d <= kVitReach; d++) sum += expf(-0.5f * (float)(d * d) / (kVitSigma * kVitSigma));
+        for (int16_t d = -kVitReach; d <= kVitReach; d++) {
+            const float g = (1.0f - kVitJump) * expf(-0.5f * (float)(d * d) / (kVitSigma * kVitSigma)) / sum +
+                            kVitJump / (float)kVitStates;
+            tr_[d + kVitReach]  = g;
+            ltr_[d + kVitReach] = logf(g);
+        }
+    }
+
+    void reset() { n_ = 0; head_ = 0; }
+
+    /** Neuer Report mit n Kandidaten (bpm, Wert ≥ 0). Rückgabe: bpm am Ende des besten Pfads; mass ∈ [0, 1]. */
+    float update(const float *cand_bpm, const float *cand_w, uint8_t n, float &mass) {
+        float *e = em_[head_];
+        float sum = 0.0f, wmax = 0.0f;
+        for (uint8_t j = 0; j < n; j++) wmax = fmaxf(wmax, cand_w[j]);
+        for (uint16_t q = 0; q < kVitStates; q++) {
+            const float bpm = (float)(kVitMinBpm + q);
+            float v = 0.0f;
+            for (uint8_t j = 0; j < n; j++) {
+                const float d = (bpm - cand_bpm[j]) / kVitEmSig;
+                if (cand_w[j] > 0.0f && fabsf(d) < 6.0f) v += powf(cand_w[j] / wmax, kVitGamma) * expf(-0.5f * d * d);
+            }
+            e[q] = v;
+            sum += v;
+        }
+        for (uint16_t q = 0; q < kVitStates; q++)
+            e[q] = (sum > 0.0f ? (1.0f - kVitFloor) * e[q] / sum : 0.0f) + kVitFloor / (float)kVitStates;
+        head_ = (uint8_t)((head_ + 1U) % kVitWin);
+        if (n_ < kVitWin) n_++;
+
+        /* Viterbi (log) und Vorwärts (normiert) über das Fenster, ältester Report zuerst */
+        const float ljump = logf(kVitJump / (float)kVitStates);
+        for (uint8_t t = 0; t < n_; t++) {
+            const float *et = em_[(head_ + kVitWin - n_ + t) % kVitWin];
+            if (t == 0) {
+                for (uint16_t q = 0; q < kVitStates; q++) {
+                    dl_[q] = logf(et[q]);
+                    al_[q] = et[q];
+                }
+            } else {
+                float dmax = dl_[0];
+                for (uint16_t q = 1; q < kVitStates; q++) dmax = fmaxf(dmax, dl_[q]);
+                for (uint16_t q = 0; q < kVitStates; q++) {
+                    float best = dmax + ljump, acc = 0.0f;
+                    for (int16_t d = -kVitReach; d <= kVitReach; d++) {
+                        const int16_t r = (int16_t)q - d;
+                        if (r < 0 || r >= (int16_t)kVitStates) continue;
+                        best = fmaxf(best, dl_[r] + ltr_[d + kVitReach]);
+                        acc += al_[r] * (tr_[d + kVitReach] - kVitJump / (float)kVitStates);
+                    }
+                    dn_[q] = best + logf(et[q]);
+                    an_[q] = et[q] * (acc + kVitJump / (float)kVitStates);  /* Σ al_ = 1 */
+                }
+                memcpy(dl_, dn_, sizeof(dl_));
+                memcpy(al_, an_, sizeof(al_));
+            }
+            float asum = 0.0f;
+            for (uint16_t q = 0; q < kVitStates; q++) asum += al_[q];
+            for (uint16_t q = 0; q < kVitStates; q++) al_[q] /= asum;
+        }
+        uint16_t qb = 0;
+        for (uint16_t q = 1; q < kVitStates; q++)
+            if (dl_[q] > dl_[qb]) qb = q;
+        mass = 0.0f;
+        for (int16_t q = (int16_t)qb - 5; q <= (int16_t)qb + 5; q++)
+            if (q >= 0 && q < (int16_t)kVitStates) mass += al_[q];
+        return (float)(kVitMinBpm + qb);
+    }
+
+private:
+    float   em_[kVitWin][kVitStates];
+    float   dl_[kVitStates], dn_[kVitStates], al_[kVitStates], an_[kVitStates];
+    float   tr_[2 * kVitReach + 1], ltr_[2 * kVitReach + 1];
+    uint8_t head_ = 0, n_ = 0;
+};
+#endif
+
 struct VitalReport {
     bool     valid;
     uint32_t frame_count;
@@ -925,6 +1026,9 @@ public:
 
     /** Puls-Verfolgung neu (kein bisheriger Wert). */
     void resetTracking() {
+#ifdef A121_DSP_VITERBI
+        vit_.reset();
+#endif
         prov_       = true;
         hr_prev_    = 0.0f;
         hr_miss_    = 0;
@@ -1430,6 +1534,25 @@ public:
          * Atem-Oberwelle, und die Haltezeit hielt den Fehlwert bis zu 10 Reports). */
         const bool prov = prov_ && N < kHrStableWin;
         if (!prov) prov_ = false;
+#ifdef A121_DSP_VITERBI
+        /* V3.2: Viterbi über die letzten 20 Reports statt Haltezeit/Wechselregeln; Ergebnis auf den nächsten Kandidaten
+         * (±3 /min, verfeinert) gezogen, nahe Werte wie bisher geglättet */
+        float vit_mass = 0.0f;
+        {
+            float cb[3], cw[3];
+            for (uint8_t j = 0; j < n_cand; j++) {
+                cb[j] = cf[j] * 60.0f;
+                cw[j] = cs[j];
+            }
+            float tgt = vit_.update(cb, cw, n_cand, vit_mass);
+            int16_t nj = -1;
+            for (uint8_t j = 0; j < n_cand; j++)
+                if (fabsf(cb[j] - tgt) <= 3.0f && (nj < 0 || fabsf(cb[j] - tgt) < fabsf(cb[nj] - tgt))) nj = (int16_t)j;
+            if (nj >= 0) tgt = cb[nj];
+            if (hr_prev_ <= 0.0f || prov) hr_prev_ = raw_bpm;  /* vorläufig (V2.4): roher Wert, wie ohne Schalter */
+            else hr_prev_ = (fabsf(tgt - hr_prev_) < 12.0f) ? 0.7f * hr_prev_ + 0.3f * tgt : tgt;
+        }
+#else
         if (hr_prev_ <= 0.0f || prov) {
             hr_prev_   = raw_bpm;
             hr_miss_   = 0;
@@ -1469,6 +1592,7 @@ public:
                 alt_count_ = 0;
             }
         }
+#endif
         rep.hr_fused_bpm = hr_prev_;
 
         /* frühere Konfidenz als Diagnosewert: gewichteter Anteil der Punkte mit eigener Spitze ±5 /min am Ergebnis */
@@ -1516,6 +1640,9 @@ public:
         }
         qi.win_frac = (float)N / (float)kHrWin;
         rep.confidence_pct = signalQuality(qi);
+#ifdef A121_DSP_VITERBI
+        rep.confidence_pct = fminf(rep.confidence_pct, 100.0f * vit_mass);  /* V3.2: Masse ±5 /min */
+#endif
         if (!prov) {
             hr_hist_[hr_hist_n_ % 5] = hr_prev_;
             if (hr_hist_n_ < 250) hr_hist_n_++;
@@ -1871,6 +1998,9 @@ private:
     int16_t  last_temp_c_          = 0;
     float    last_lb_amp_          = 0.0f;
     float    cum_phase_rad_        = 0.0f;
+#ifdef A121_DSP_VITERBI
+    ViterbiTracker vit_;                                           /* V3.2, Report-Seite */
+#endif
     BreathDetector breath_det_;                                    /* V3.4, nur Push-Seite */
     BreathEvent    breath_ev_;
     bool     breath_pending_       = false;
