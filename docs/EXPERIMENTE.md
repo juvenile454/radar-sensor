@@ -98,6 +98,22 @@ eintragen. Nur wenn die Sprünge klein sind (oder eine gemeinsame Drehung, Streu
 .venv/bin/python host/rezoom_check.py ~/Data/radar-sensor/<T1-ordner>
 ```
 
+**Fensterlänge (V2.5, offen):** 10 / 12 / 15 s an Tag A (R4: Verzug, bis der Wert 50 % eines Pulsabfalls
+nachvollzogen hat; Ziel ≤ 7 s) vergleichen; kürzestes Fenster ohne MAE-Verlust > 0,5 /min wählen. Variante = Header
+mit vorangestelltem `#define A121_HR_WIN 600` (bzw. 720) in einem eigenen Ordner:
+
+```bash
+mkdir -p /tmp/dsp_win10 && { echo '#define A121_HR_WIN 600'; cat firmware/esp32s3/src/a121_esp_dsp.h; } > /tmp/dsp_win10/a121_esp_dsp.h
+```
+
+```bash
+.venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_R4_* --replay /tmp/dsp_win10
+```
+
+Prüfstand vorab (nur Simulation, `vital_sim.py bench --hr-win 600|720|900`): Reaktion im Szenario `step` 7 / 8 / 9 s;
+mit 10 s verletzt `beweg` (MAE 1,5), `anhalt` (Apnoe nicht erkannt, ±5-Anteil 96 %) und `leer` (1 gültiger Report)
+die Grenzwerte, mit 12 s nur `beweg` knapp (MAE 1,4 statt ≤ 1,3), 15 s hält alle. Standard bleibt 15 s bis Tag A.
+
 — offen (braucht Gurt und Aufnahmen)
 
 | Sitzung | Tag | Puls-MAE | ±5 /min | Verfügbarkeit | Konfidenz ≥ 70 %: ±5 | Atmung-MAE | Apnoe erkannt / Verzug |

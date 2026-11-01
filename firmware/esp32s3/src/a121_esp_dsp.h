@@ -78,12 +78,15 @@ static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 Punkte * 30 mm
 static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
 
 static constexpr float    kFsHz        = 60.0f;  /* Frame-Rate der iq3-Session; Filterkoeffizienten gelten nur hierfür */
-static constexpr uint16_t kHistoryLen  = 1080U;  /* 18 s @ 60 Hz: 15-s-Fenster + 3 s, die pushFrame während eines Reports
-                                                     weiterschreiben darf (V2.1, ReportSnapshot) */
-static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
-static constexpr uint16_t kSnapMaxLag  = kHistoryLen - kHrWin;  /* höchstens so viele Frames nach dem Schnappschuss */
+#ifndef A121_HR_WIN
+#define A121_HR_WIN 900  /* Pulsfenster in Frames; 600 / 720 für den Vergleich 10 / 12 / 15 s an Tag A (V2.5) */
+#endif
+static constexpr uint16_t kHrWin       = A121_HR_WIN;  /* 15 s Pulsfenster */
+static constexpr uint16_t kSnapMaxLag  = 180U;   /* pushFrame darf während eines Reports 3 s weiterschreiben (V2.1) */
+static constexpr uint16_t kHistoryLen  = kHrWin + kSnapMaxLag;  /* 18 s @ 60 Hz (ReportSnapshot) */
 static constexpr uint16_t kHrMinWin    = 360U;   /* ab 6 s Daten wird ein Puls berichtet, Fenster wächst bis 15 s (V2.4; vorher 8 s) */
 static constexpr uint16_t kHrStableWin = 480U;   /* Verfolgung erst ab 8 s Fenster; davor vorläufig (V2.4) */
+static_assert(kHrWin >= kHrStableWin && kHrWin % 60U == 0, "A121_HR_WIN: ganze Sekunden, mindestens 8 s");
 static constexpr uint16_t kStartZoomFrames = 120U;  /* Start: nach 2 s auf das Ziel zoomen (2 Reports statt 3, V2.4) */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
 /* Spektren (V2.2, B13): reelle FFT der auf 15 Hz dezimierten Folge (≤ 225 Werte, Hann, auf 1024 nullaufgefüllt) statt

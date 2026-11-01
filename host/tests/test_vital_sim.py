@@ -108,5 +108,16 @@ class ZoomWidthBenchTest(unittest.TestCase):
         self.assertIn("48 Zoom-Punkte", r.stdout)
 
 
+class WindowLengthBenchTest(unittest.TestCase):
+    """V2.5: Prüfstand mit kürzerem Pulsfenster (Header mit A121_HR_WIN übersetzt)."""
+
+    def test_bench_10_s_window(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--hr-win", "600", "--scen", "step"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
+        self.assertIn("Pulsfenster 10 s", r.stdout)
+        self.assertIn("Reaktion", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

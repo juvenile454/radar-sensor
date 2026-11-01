@@ -43,6 +43,7 @@ UM_PER_RAD = LAM / (4 * np.pi) * 1e6
 FS = 60.0
 STEP_M = 0.0025
 ZOOM_N, ROOM_N, ROOM_START_PT, ROOM_STEP = 24, 80, 120, 12
+HR_WIN = 900  # Pulsfenster in Frames (A121_HR_WIN, V2.5)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -319,7 +320,8 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> dict[str, pat
         (d / "a121_esp_dsp.h").write_text(text)
         exe = tmp / f"harness_{name}"
         # Shim zuerst (chrono-micros), dann Header-Ordner, Firmware-Ordner als Rückfall, dsp_replay für die Formate
-        subprocess.run(["g++", "-O2", "-std=c++17", f"-DA121_ZOOM_POINTS={ZOOM_N}", f"-I{tmp / 'inc'}", f"-I{d}",
+        subprocess.run(["g++", "-O2", "-std=c++17", f"-DA121_ZOOM_POINTS={ZOOM_N}", f"-DA121_HR_WIN={HR_WIN}",
+                        f"-I{tmp / 'inc'}", f"-I{d}",
                         f"-I{header.parent}",
                         f"-I{DSP_HEADER.parent}", f"-I{REPLAY_DIR}", str(tmp / "harness.cpp"), "-o", str(exe), "-lm"],
                        check=True)
@@ -547,7 +549,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
         print("NUR SIMULATION. Puls-MAE und Anteil ≤ 5 /min gegen die wahre mittlere Herzfrequenz im 15-s-Fenster;")
         print("Konfidenz = Median aller gültigen Reports, 'bei Fehler' = Median der Reports mit > 10 /min Abweichung.")
         print("Szenarien 'leer'/'niemand': Puls-Werte sind bedeutungslos, dort zählt nur die Zahl gültiger Reports (Soll 0).")
-        print(f"{ZOOM_N} Zoom-Punkte je Frame ({ZOOM_N * 2.5:.0f} mm).")
+        print(f"{ZOOM_N} Zoom-Punkte je Frame ({ZOOM_N * 2.5:.0f} mm), Pulsfenster {HR_WIN // 60} s.")
         for var, exe in exes.items():
             print(f"\n=== DSP-Header {var}")
             print(f"{'Szenario':8s} {'Beschreibung':32s} {'gültig':>7s} {'erst':>5s} {'Puls-MAE':>9s} {'≤5/min':>7s}"
@@ -583,7 +585,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
 
 
 def main() -> int:
-    global ZOOM_N
+    global ZOOM_N, HR_WIN
     ap = argparse.ArgumentParser(description="Synthetischer Prüfstand für die Vital-DSP (nur Simulation)")
     ap.add_argument("mode", choices=["demod", "bench", "record"])
     ap.add_argument("--out", type=pathlib.Path, default=None, help="bench: Ordner für die erzeugten Frames")
@@ -592,8 +594,11 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="bench: gegen LIMITS prüfen, Exit 1 bei Verschlechterung")
     ap.add_argument("--zoom", type=int, default=ZOOM_N, choices=[24, 48],
                     help="bench/record: Zoom-Punkte je Frame (Header mit A121_ZOOM_POINTS übersetzt, V2.3)")
+    ap.add_argument("--hr-win", type=int, default=HR_WIN, choices=[600, 720, 900],
+                    help="bench: Pulsfenster in Frames (A121_HR_WIN, Vergleich 10 / 12 / 15 s, V2.5)")
     a = ap.parse_args()
     ZOOM_N = a.zoom
+    HR_WIN = a.hr_win
     if a.mode == "demod":
         return run_demod()
     if a.mode == "record":

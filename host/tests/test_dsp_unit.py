@@ -641,5 +641,17 @@ class FastStartTest(unittest.TestCase):
         self.assertEqual(out.split(), ["120", "180"])
 
 
+class WindowLengthTest(unittest.TestCase):
+    """V2.5: Pulsfenster per A121_HR_WIN (Frames, Standard 900 = 15 s) für den Vergleich 10 / 12 / 15 s an Tag A;
+    die Historie wächst mit (Fenster + kSnapMaxLag)."""
+
+    def test_default_15_s(self):
+        self.assertEqual(run_cpp('printf("%u %u %u", kHrWin, kHistoryLen, kSnapMaxLag);').split(), ["900", "1080", "180"])
+
+    def test_switch_10_s(self):
+        out = run_cpp('printf("%u %u %u", kHrWin, kHistoryLen, kSnapMaxLag);', ("-DA121_HR_WIN=600",))
+        self.assertEqual(out.split(), ["600", "780", "180"])
+
+
 if __name__ == "__main__":
     unittest.main()
