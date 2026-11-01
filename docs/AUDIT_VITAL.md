@@ -414,6 +414,14 @@ Alle Zahlen zu Varianten stammen aus dem Prüfstand **[Sim]**; ob sie an echten 
 Einzelergebnisse und Befehle je Aufgabe: `docs/EXPERIMENTE.md` (Prüfstand, Messpläne), `docs/ANDROID_APP.md` (App,
 offene Gerätetests), `docs/HARDWARE.md` (Befehle, Schalter).
 
+**Abschluss-Review (2026-11-01), behoben und am PC geprüft:** Puls in der App grau bei ungültigem oder veraltetem
+Report (auch in APNOE); keine APNOE mehr im leeren Raum nach dem Gehen (Prüfstand-Szenario `weg`); Prüfstand zählt den
+ersten *richtigen* Wert und frühe Fehlwerte (`erst_ok_s`, `frueh_falsch_n`); Handy-DSP liefert auch mitten im Stream
+eingeschaltet Werte; Firmware mit `-ffp-contract=off` wie die Nachrechnung; eine Zeit je Report für
+`@DSP`/`@ROOM`/`@VITAL`/`@STATE`; Gurt verbindet nach fehlgeschlagener Dienstsuche wieder; Metronom gibt seinen
+Tongeber erst nach dem letzten Ton frei. Am Gerät offen: Firmware bauen/flashen, danach `replay-cpp` gegen eine neue
+Live-Aufnahme und `compute_us` gegen vorher; Gurt-Wiederverbindung und Metronom am Handy.
+
 ### Leitlinien
 
 - Reihenfolge: **messen können → Fehler beheben → schneller → besser.** Ohne V0 kein Urteil über V1–V5.
