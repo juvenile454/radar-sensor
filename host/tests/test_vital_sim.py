@@ -208,5 +208,35 @@ class CombineBenchTest(unittest.TestCase):
         self.assertLessEqual(ms, 0.5 * ms_std)
 
 
+class IbiTemplateBenchTest(unittest.TestCase):
+    """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage, NUR SIMULATION. Mehr Reports mit RMSSD (mehr
+    Schläge bestehen die Artefakt-Regeln), RMSSD gemessen/wahr in den Grenzen. Bekannt: tief verwirft den 6-s-Wert
+    (40,3 statt 71 /min, den der Standard über die zirkuläre IBI-Bestätigung gelten lässt), erster Wert nach 7 s."""
+
+    SCEN = ["--scen", "base", "step", "tief", "tachy"]
+    DEFINE = "A121_DSP_IBI_TEMPLATE"
+
+    def bench(self, *extra: str) -> tuple[list[str], dict[str, int]]:
+        import re
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", *self.SCEN, *extra],
+                           capture_output=True, text=True)
+        viol = sorted(ln.strip() for ln in r.stdout.splitlines() if "VERLETZT" in ln)
+        share = {}
+        for ln in r.stdout.splitlines():
+            m = re.match(r"^(base|step|tief|tachy)\s.*ms \(\s*(\d+) %\)", ln)
+            if m:
+                share[m.group(1)] = int(m.group(2))
+        self.assertEqual(len(share), 4, r.stdout[-3000:] + r.stderr[-2000:])
+        return viol, share
+
+    def test_variant_rmssd_share_and_limits(self):
+        viol_std, share_std = self.bench()
+        viol, share = self.bench("--define", self.DEFINE)
+        self.assertEqual(viol_std, [])
+        self.assertEqual(viol, ["VERLETZT tief: erst_s = 7.0, Grenze <= 6.0"])
+        for k in share:
+            self.assertGreater(share[k], share_std[k] + 20, (k, share, share_std))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1086,5 +1086,139 @@ class CombinePointsTest(unittest.TestCase):
         self.assertEqual(len(out.split(",")), 14)
 
 
+class TemplateIbiTest(unittest.TestCase):
+    """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),
+    Vorlage = Mittel der Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (wie V1.6 gefunden), Korrelationsfilter
+    mit der Vorlage, Spitzen der Korrelation parabolisch verfeinert, danach dieselben Artefakt-Regeln wie V1.6.
+    Abnahme laut Plan: IBI-Fehler gegen Gurt-RR halbiert gegenüber V1.6 (hier gegen die wahren Schläge, NUR SIMULATION)."""
+
+    FLAGS = ("-DA121_DSP_IBI_TEMPLATE",)
+
+    BEAT = "expf(-0.5f * u * u) - 0.45f * expf(-0.5f * w * w)"
+
+    def run_beats(self, noise: float, hrv_ms: float = 40.0, seed: int = 3, hr: float = 72.0, beat: str = BEAT,
+                  extra: str = "0.0f") -> dict:
+        """Herzwelle wie host/vital_sim.py (zwei Gauß-Anteile je Schlag, Spitze-Spitze 1) + weißes Rauschen (σ = noise),
+        60 Hz, 15 s. V1.6: Band 0,6–5 Hz + timeDomainIbi; V3.6: Band 0,6–8 Hz + templateIbi. Rückgabe je Verfahren:
+        Median |IBI-Fehler| (ms) über aufeinanderfolgende getroffene Schläge, Zahl der Treffer, bpm."""
+        out = run_cpp(f"""
+        const uint16_t N = 900; const float fs = 60.0f;
+        static float raw[N], ext[N + 2 * kFiltPad], x5[N], x8[N], work[N];
+        std::vector<float> tb;
+        uint32_t s = {seed}u; auto uni = [&] {{ s = s * 1664525u + 1013904223u; return (s >> 8) / 16777216.0f; }};
+        auto gauss = [&] {{ float a = 0; for (int i = 0; i < 12; i++) a += uni(); return a - 6.0f; }};
+        for (float t = 0.3f; t < 15.5f; t += 60.0f / {hr}f + {hrv_ms}f / 1000.0f * gauss()) tb.push_back(t);
+        float lo = 1e9f, hi = -1e9f;
+        for (int n = 0; n < N; n++) {{
+            const float t = n / fs; float v = 0;
+            for (size_t k = 0; k < tb.size(); k++) {{ const float b = tb[k];
+                const float u = (t - b) / 0.06f, w = (t - b - 0.18f) / 0.09f; v += {beat}; }}
+            raw[n] = v; lo = fminf(lo, v); hi = fmaxf(hi, v);
+        }}
+        for (int n = 0; n < N; n++) {{ const float t = n / fs; raw[n] = raw[n] / (hi - lo) + {noise}f * gauss() + {extra}; }}
+        sosFiltFiltSos(raw, N, ext, kBpSos);  memcpy(x5, ext + kFiltPad, N * sizeof(float));
+        sosFiltFiltSos(raw, N, ext, kBp8Sos); memcpy(x8, ext + kFiltPad, N * sizeof(float));
+        float t5[kIbiMaxPk], t8[kIbiMaxPk];
+        const IbiResult a = timeDomainIbi(x5, N, fs, {hr}f, t5);
+        const IbiResult b = templateIbi(x8, N, fs, {hr}f, work, t8);
+        auto err = [&](const float *td, uint8_t nd) {{   /* Treffer: nächste Spitze ±150 ms nach Abzug des Versatzes */
+            std::vector<float> off;
+            for (float bt : tb) {{ if (bt < 0.5f || bt > 14.5f) continue; float best = 1e9f;
+                for (int k = 0; k < nd; k++) if (fabsf(td[k] / fs - bt) < fabsf(best)) best = td[k] / fs - bt;
+                if (fabsf(best) < 0.15f) off.push_back(best); }}
+            if (off.size() < 3) return std::make_pair(-1.0f, 0);
+            std::nth_element(off.begin(), off.begin() + off.size() / 2, off.end()); const float o = off[off.size() / 2];
+            std::vector<float> e; float prev_d = -1, prev_t = -1;
+            for (float bt : tb) {{ if (bt < 0.5f || bt > 14.5f) {{ prev_t = -1; continue; }} float best = 1e9f;
+                for (int k = 0; k < nd; k++) if (fabsf(td[k] / fs - o - bt) < fabsf(best - bt)) best = td[k] / fs - o;
+                if (fabsf(best - bt) > 0.15f) {{ prev_t = -1; continue; }}
+                if (prev_t >= 0) e.push_back(fabsf((best - prev_d) - (bt - prev_t)) * 1000.0f);
+                prev_d = best; prev_t = bt; }}
+            if (e.empty()) return std::make_pair(-1.0f, 0);
+            std::nth_element(e.begin(), e.begin() + e.size() / 2, e.end());
+            return std::make_pair(e[e.size() / 2], (int)e.size());
+        }};
+        const auto ea = err(t5, a.n_beats), eb = err(t8, b.n_beats);
+        printf("%.3f %d %.2f %.3f %d %.2f", ea.first, ea.second, a.bpm, eb.first, eb.second, b.bpm);""", self.FLAGS)
+        v = out.split()
+        return {"v16": float(v[0]), "n16": int(v[1]), "bpm16": float(v[2]),
+                "v36": float(v[3]), "n36": int(v[4]), "bpm36": float(v[5])}
+
+    def test_coefficients_match_scipy(self):
+        """kBp8Sos = scipy.signal.butter(4, [0.6, 8.0], 'band', fs=60, output='sos')."""
+        import re
+        import numpy as np
+        from scipy import signal
+        txt = (FW / "a121_esp_dsp.h").read_text()
+        block = txt[txt.index("kBp8Sos[4][6]"):]
+        block = block[:block.index("};")]
+        nums = [float(x) for x in re.findall(r"-?\d+\.\d+(?:e-?\d+)?", block)]
+        sos = signal.butter(4, [0.6, 8.0], "band", fs=60, output="sos")
+        np.testing.assert_allclose(np.array(nums).reshape(4, 6), sos, rtol=1e-6, atol=1e-12)
+
+    SEEDS = (3, 11, 29, 41, 57, 73)
+    REST = (dict(noise=0.05, extra="0.3f * sinf(6.2832f * 1.05f * t + 0.4f)"),   # Atem-Rest nahe am Puls
+            dict(noise=0.05, extra="0.25f * sinf(6.2832f * 0.81f * t)",
+                 beat="(1.0f + 0.35f * sinf(6.2832f * 0.27f * b)) * (expf(-0.5f * u * u) - 0.45f * expf(-0.5f * w * w))"))
+
+    def ratios(self, **kw) -> list[float]:
+        out = []
+        for sd in self.SEEDS:
+            r = self.run_beats(seed=sd, **kw)
+            self.assertGreater(r["n36"], 10, r)
+            out.append(r["v36"] / r["v16"])
+        return out
+
+    def test_white_noise_not_worse(self):
+        # weißes Rauschen σ = 0,15 × Spitze-Spitze: V1.6 liegt schon nahe der Cramér-Rao-Grenze (≈ 7 ms je Schlag),
+        # die Vorlage gewinnt dort wenig (Median-Faktor gemessen 0,81, ein Fenster 1,24)
+        import statistics
+        self.assertLessEqual(statistics.median(self.ratios(noise=0.15)), 0.9)
+
+    def test_breath_residual_error_reduced(self):
+        # Atem-Rest im Herzband (0,81 / 1,05 Hz, wie ihn removeBreathHarmonics am Puls stehen lässt), Schlaghöhe ±35 %:
+        # die mittelwertfreie Vorlage unterdrückt ihn; Median-Faktor gemessen 0,58 (Plan: 0,5, an Tag A gegen Gurt-RR)
+        import statistics
+        r = [x for kw in self.REST for x in self.ratios(**kw)]
+        self.assertLessEqual(statistics.median(r), 0.65)
+
+    def test_clean_signal_same_rate(self):
+        r = self.run_beats(0.0)
+        self.assertAlmostEqual(r["bpm36"], r["bpm16"], delta=1.0)
+        self.assertLess(r["v36"], 5.0)
+
+    def test_slow_and_fast_pulse(self):
+        for hr in (45.0, 130.0):
+            r = self.run_beats(0.1, hr=hr, hrv_ms=20.0)
+            self.assertAlmostEqual(r["bpm36"], hr, delta=3.0, msg=r)
+
+    def test_dsp_with_switch(self):
+        # mit Schalter laufen die Einzelschläge über das Band 0,6–8 Hz und die Vorlage: Puls gleich, IBI-Werte anders
+        body = RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
+            "+ 0.08f * sinf(6.2832f * f_hr * t);",
+            "+ 0.08f * (expf(-8.0f * (1.0f - cosf(6.2832f * f_hr * t))) + 0.4f * sinf(6.2832f * 2.0f * f_hr * t + 0.7f));") + """
+        for (int i = 0; i < 20; i++) { push(60, 1.2f); d.computeVitalReport(r); }
+        printf("%d %.2f %.2f %.4f", r.valid, r.hr_fused_bpm, r.hr_ibi_bpm, r.ibi_median_ms);"""
+        self.assertIn("expf(-8.0f", body)
+        v1, hr1, ibi1, ms1 = run_cpp(body, self.FLAGS).split()
+        v0, hr0, ibi0, ms0 = run_cpp(body).split()
+        self.assertEqual((v1, v0), ("1", "1"))
+        self.assertAlmostEqual(float(hr1), 72.0, delta=1.0)
+        self.assertAlmostEqual(float(ibi1), 72.0, delta=2.0)
+        self.assertNotEqual(ms1, ms0)
+
+    def test_default_ibi_unchanged_with_times(self):
+        # Standard: timeDomainIbi mit Zeitausgabe liefert dieselben Werte wie ohne
+        out = run_cpp("""
+        static float x[900]; float tt[kIbiMaxPk];
+        for (int n = 0; n < 900; n++) { const float t = n / 60.0f; x[n] = sinf(6.2832f * 1.2f * t) + 0.3f * sinf(6.2832f * 2.4f * t); }
+        const IbiResult a = timeDomainIbi(x, 900, 60.0f, 72.0f), b = timeDomainIbi(x, 900, 60.0f, 72.0f, tt);
+        printf("%d %d %.3f", a.bpm == b.bpm && a.rmssd_ms == b.rmssd_ms && a.n_valid == b.n_valid, (int)b.n_beats, tt[1] - tt[0]);""")
+        same, nb, d = out.split()
+        self.assertEqual(same, "1")
+        self.assertGreater(int(nb), 10)
+        self.assertAlmostEqual(float(d), 50.0, delta=0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

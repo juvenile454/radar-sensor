@@ -217,6 +217,17 @@ class SyntheticRecordingTest(unittest.TestCase):
             self.assertAlmostEqual(again["hr"][k], live["hr"][k], places=6, msg=k)
         self.assertAlmostEqual(again["br"]["mae"], live["br"]["mae"], places=6)
 
+    def test_beats_against_strap_rr(self):
+        """V1.6/V3.6 (Tag A): je Report IBI-Median und RMSSD der Einzelschläge gegen die Gurt-RR im selben Fenster
+        (Reports, deren IBI nur der Rückfallwert 60 000 / Puls ist, zählen nicht). Nur Simulation."""
+        r = ve.evaluate(ve.load_recording(self.folder))
+        b = r["ibi_ref"]
+        self.assertGreater(b["n"], 50)
+        self.assertLess(b["ibi_mae_ms"], 30.0)
+        self.assertGreater(b["n_rmssd"], 3)
+        self.assertTrue(0.5 <= b["rmssd_ratio"] <= 2.0, b)
+        self.assertIn("Einzelschläge gegen Gurt-RR", ve.format_report("sim", r))
+
 
 class MotionStateEvalTest(unittest.TestCase):
     def test_motion_markers_vs_state(self):
@@ -304,6 +315,20 @@ class EffectivePointsTest(unittest.TestCase):
         self.assertIn("effektive Punktzahl (V3.1) 1.6", ve.format_report("x", r))
         self.assertIsNone(r0["n_eff"])
         self.assertNotIn("effektive Punktzahl", ve.format_report("x", r0))
+
+
+class RefIbiTest(unittest.TestCase):
+    def test_median_rr_and_rmssd_in_window(self):
+        """Gurt im Fenster (t − 15 s, t]: Median der RR und RMSSD aufeinanderfolgender RR; das erste RR im Fenster
+        beginnt vor dem Fenster und zählt nicht (wie ref_hr_at)."""
+        rr = np.array([800.0, 850.0] * 20)
+        beats = np.cumsum(rr)
+        med, rmssd = ve.ref_ibi_at(beats, rr, 20000.0, 15.0)
+        sel = rr[(beats > 5000.0) & (beats <= 20000.0)]   # 18 Schläge im Fenster, das erste RR zählt nicht → 17
+        self.assertEqual(sel.size, 18)
+        self.assertAlmostEqual(med, float(np.median(sel[1:])))
+        self.assertAlmostEqual(rmssd, 50.0)
+        self.assertTrue(all(np.isnan(ve.ref_ibi_at(beats, rr, 1000.0, 15.0))))
 
 
 if __name__ == "__main__":

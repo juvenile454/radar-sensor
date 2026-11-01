@@ -159,6 +159,22 @@ Atem-Oberwelle m ≤ 3, auch ohne Schalter (dort im Prüfstand ohne Wirkung): AK
 bestätigten sie mit (`base` mit Variante: 46 statt 71 /min gültig). Raum-Punkte als zweiter Kanal sind nicht umgesetzt
 (der DSP hält für sie keine Historie). Als Variante: `#define A121_DSP_COMBINE 1` voranstellen wie oben.
 
+**Einzelschläge mit Vorlage (V3.6, offen):** Variante hinter `#define A121_DSP_IBI_TEMPLATE` (Standard aus): Herzsignal
+des klarsten Punkts im Band 0,6–8 Hz (statt 0,6–5 Hz), Atem-Oberwellen wie bisher abgezogen; Vorlage = Mittel der
+Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (ohne Gleichanteil), Korrelationsfilter mit der Vorlage, dessen
+Spitzen parabolisch verfeinert, dann dieselben Artefakt-Regeln wie V1.6. Abnahme an Tag A (alle Sitzungen mit Gurt):
+IBI-Fehler gegen Gurt-RR halbiert gegenüber V1.6. Werkzeug: `vital_eval.py` schreibt je Sitzung „Einzelschläge gegen
+Gurt-RR" (je gültigem Report IBI-Median und RMSSD gegen die Gurt-RR im selben 15-s-Fenster; Reports, deren IBI nur der
+Rückfallwert 60 000 / Puls ist, zählen nicht); mit `--replay` und dem Schalter wie oben gegen den Standard vergleichen.
+Rechnung vorab (nur Simulation, Fehler je Schlag gegen die wahren Schläge, 6 Fenster): in weißem Rauschen Median-Faktor
+0,81 (V1.6 liegt dort schon nahe der Cramér-Rao-Grenze, ≈ 7 ms je Schlag bei σ = 0,15 × Spitze-Spitze; besser geht es
+mit keinem Verfahren), bei Atem-Resten im Herzband 0,58 (0,44–0,82) — halbiert also nicht überall. Prüfstand: Anteil der
+Reports mit RMSSD (≥ 90 % gültige Schläge) z. B. `base` 17 → 64 %, `tachy` 3 → 75 %, `tief` 20 → 85 %; RMSSD
+gemessen / wahr näher an 1 (`tachy` 1,30 → 0,98); Puls-MAE `brady` 2,8 → 3,2, `tief` 0,6 → 0,3. `tief` verwirft dabei
+den vorläufigen 6-s-Wert 40,3 /min (wahr 71), den der Standard gelten lässt: Dessen IBI-Bestätigung rechnet mit der
+Sperrzeit des Kandidaten (0,6 × 60 / 40 s), überspringt Schläge und bestätigt so den falschen Wert (offener Fehler im
+Standard, AUDIT_VITAL-Ledger).
+
 **Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
 jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start
 nach 2 Atemzügen. `vital_eval.py` schreibt dazu je Sitzung „Atmung Atemzug für Atemzug" (gegen die Marker „ein",

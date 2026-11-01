@@ -29,6 +29,8 @@
  *      Wert vorläufig (nicht verfolgt) und gilt nur, wenn Autokorrelation oder Einzelschläge ihn bestätigen und er
  *      nicht auf einer Atem-Oberwelle m ≤ 3 liegt (V3.1). Variante A121_DSP_COMBINE (V3.1): statt Einzelspektren die
  *      1. Hauptkomponente der 12 stärksten Punkte als ein Kanal (combinePrincipal), effektive Punktzahl hinten in @DSP.
+ *      Variante A121_DSP_IBI_TEMPLATE (V3.6): Einzelschläge im Band 0,6–8 Hz über Vorlage und Korrelationsfilter
+ *      (templateIbi) statt Spitzen im Pulsband.
  *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
  *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
  *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
@@ -162,6 +164,57 @@ static constexpr float kBpSos[4][6] = {
     {1.0f, -2.0f, 1.0f, 1.0f, -1.8687365868947912f, 0.8744518329372326f},
     {1.0f, -2.0f, 1.0f, 1.0f, -1.9571506605508442f, 0.9612033138279775f},
 };
+
+/** Ein Durchlauf von vier Biquads (DF2T) in Vorwärts- oder Rückwärtsrichtung, Anfangszustand = Sprungantwort. */
+inline void sosPassSos(float *e, uint32_t L, bool reverse, const float (*sos)[6]) {
+    const float x0 = reverse ? e[L - 1U] : e[0];
+    float z1[4], z2[4];
+    float level = x0;
+    for (uint8_t s = 0; s < 4; s++) {
+        const float *c = sos[s];
+        const float g = (c[0] + c[1] + c[2]) / (1.0f + c[4] + c[5]);  /* DC-Verstärkung der Sektion */
+        z1[s] = (g - c[0]) * level;
+        z2[s] = (c[2] - c[5] * g) * level;
+        level *= g;
+    }
+    for (uint32_t i = 0; i < L; i++) {
+        const uint32_t n = reverse ? (L - 1U - i) : i;
+        float v = e[n];
+        for (uint8_t s = 0; s < 4; s++) {
+            const float *c = sos[s];
+            const float y = c[0] * v + z1[s];
+            z1[s] = c[1] * v - c[4] * y + z2[s];
+            z2[s] = c[2] * v - c[5] * y;
+            v = y;
+        }
+        e[n] = v;
+    }
+}
+
+/**
+ * Nullphasen-Bandpass wie scipy `sosfiltfilt` (ungerade Erweiterung um kFiltPad, Anfangszustände aus der
+ * Sprungantwort) mit vier Biquads sos. ext: N + 2 · kFiltPad Werte; Ergebnis: ext[kFiltPad .. kFiltPad + N).
+ */
+inline void sosFiltFiltSos(const float *x, uint16_t N, float *ext, const float (*sos)[6]) {
+    const uint16_t P = (N > kFiltPad) ? kFiltPad : (uint16_t)(N - 1U);
+    float *e = ext + (kFiltPad - P);
+    const uint32_t L = (uint32_t)N + 2U * P;
+    for (uint16_t i = 0; i < P; i++) e[i] = 2.0f * x[0] - x[P - i];
+    memcpy(e + P, x, N * sizeof(float));
+    for (uint16_t j = 0; j < P; j++) e[P + N + j] = 2.0f * x[N - 1U] - x[N - 2U - j];
+    sosPassSos(e, L, false, sos);
+    sosPassSos(e, L, true, sos);
+}
+
+#ifdef A121_DSP_IBI_TEMPLATE
+/* V3.6: breiteres Herzband für die Einzelschläge; scipy.signal.butter(4, [0.6, 8.0], 'band', fs=60, output='sos') */
+static constexpr float kBp8Sos[4][6] = {
+    {0.009764843672775374f, 0.019529687345550748f, 0.009764843672775374f, 1.0f, -0.9137923786305936f, 0.24411561287811703f},
+    {1.0f, 2.0f, 1.0f, 1.0f, -1.0869497349419404f, 0.6029896520783747f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.8749786163052726f, 0.8797806780795341f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.95389950449864f, 0.9578914690655628f},
+};
+#endif
 
 /**
  * atan2 als Polynom (V2.2, B13): atan(a) für a = min/max ∈ [0, 1] nach Abramowitz/Stegun 4.4.49 (Fehler ≤ 1 · 10⁻⁵ rad),
@@ -600,39 +653,31 @@ struct IbiResult {
     uint8_t n_valid  = 0;     /* gültige IBI */
 };
 
-/**
- * Einzelschläge im Herzsignal (V1.6, B7): Spitzen über 0,35 × Effektivwert, Sperrzeit 0,6 × 60 / hr_bpm (vorher fest
- * 360 ms), Lage parabolisch zwischen den Abtastwerten verfeinert (vorher auf 16,7 ms gerastert). Ein IBI gilt, wenn es
- * im Bereich 40–180 /min liegt und höchstens 20 % vom Median der 5 vorigen IBI abweicht (am Fensteranfang: Median
- * aller IBI im Bereich). RMSSD nur aus direkt aufeinanderfolgenden gültigen IBI und nur, wenn ≥ 90 % der erwarteten
- * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, AUDIT_VITAL.md 5.1); 15 s sind für HRV ohnehin kurz.
- */
-inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_bpm) {
-    IbiResult res;
-    constexpr uint8_t kMaxPk = 48;
-    hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
+static constexpr uint8_t kIbiMaxPk = 48;  /* höchstens so viele Spitzen je Fenster (15 s × 180 /min = 45) */
+
+/** Spitzen über 0,35 × Effektivwert mit Sperrzeit 0,6 × 60 / hr_bpm (hr_bpm schon auf 40–180 begrenzt). */
+inline uint8_t findBeatPeaks(const float *hr, uint16_t N, float fs, float hr_bpm, uint16_t *pk) {
     float rms = 0.0f;
     for (uint16_t n = 0; n < N; n++) rms += hr[n] * hr[n];
     rms = sqrtf(rms / (float)(N ? N : 1U));
     const float thresh = 0.35f * rms;
     const uint16_t refractory = (uint16_t)roundf(0.6f * (60.0f / hr_bpm) * fs);
-
-    uint16_t pk[kMaxPk];
-    uint8_t  n_pk = 0;
+    uint8_t n_pk = 0;
     for (uint16_t n = 2; n + 2 < N; n++) {
         if (hr[n] > thresh && hr[n] > hr[n - 1] && hr[n] >= hr[n + 1] && hr[n] > hr[n - 2] && hr[n] >= hr[n + 2]) {
             if (n_pk == 0 || (uint16_t)(n - pk[n_pk - 1]) >= refractory) {
                 pk[n_pk++] = n;
-                if (n_pk >= kMaxPk) break;
+                if (n_pk >= kIbiMaxPk) break;
             } else if (hr[n] > hr[pk[n_pk - 1]]) {
                 pk[n_pk - 1] = n;
             }
         }
     }
-    res.n_beats = n_pk;
-    if (n_pk < 4) return res;
+    return n_pk;
+}
 
-    float t[kMaxPk];
+/** Lage der Spitzen parabolisch zwischen den Abtastwerten (in Abtastwerten). */
+inline void refinePeaks(const float *hr, const uint16_t *pk, uint8_t n_pk, float *t) {
     for (uint8_t k = 0; k < n_pk; k++) {
         const uint16_t i = pk[k];
         const float a = hr[i - 1], b = hr[i], c = hr[i + 1], den = a - 2.0f * b + c;
@@ -640,9 +685,16 @@ inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_b
         d = d < -0.5f ? -0.5f : (d > 0.5f ? 0.5f : d);
         t[k] = (float)i + d;
     }
+}
+
+/** IBI, Artefakt-Regeln und RMSSD aus Schlagzeiten t (Abtastwerte, V1.6). */
+inline IbiResult ibiFromTimes(const float *t, uint8_t n_pk, uint16_t N, float fs, float hr_bpm) {
+    IbiResult res;
+    res.n_beats = n_pk;
+    if (n_pk < 4) return res;
     const uint8_t n_ibi = (uint8_t)(n_pk - 1U);
-    float ibi[kMaxPk], tmp[kMaxPk];
-    bool  in_range[kMaxPk], valid[kMaxPk];
+    float ibi[kIbiMaxPk], tmp[kIbiMaxPk];
+    bool  in_range[kIbiMaxPk], valid[kIbiMaxPk];
     uint8_t n_in = 0;
     for (uint8_t k = 0; k < n_ibi; k++) {
         ibi[k] = (t[k + 1] - t[k]) * 1000.0f / fs;
@@ -690,6 +742,68 @@ inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_b
     }
     return res;
 }
+
+/**
+ * Einzelschläge im Herzsignal (V1.6, B7): Spitzen über 0,35 × Effektivwert, Sperrzeit 0,6 × 60 / hr_bpm (vorher fest
+ * 360 ms), Lage parabolisch zwischen den Abtastwerten verfeinert (vorher auf 16,7 ms gerastert). Ein IBI gilt, wenn es
+ * im Bereich 40–180 /min liegt und höchstens 20 % vom Median der 5 vorigen IBI abweicht (am Fensteranfang: Median
+ * aller IBI im Bereich). RMSSD nur aus direkt aufeinanderfolgenden gültigen IBI und nur, wenn ≥ 90 % der erwarteten
+ * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, AUDIT_VITAL.md 5.1); 15 s sind für HRV ohnehin kurz.
+ * t_out (optional, kIbiMaxPk Werte): Schlagzeiten in Abtastwerten, n_beats gültig.
+ */
+inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_bpm, float *t_out = nullptr) {
+    hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
+    uint16_t pk[kIbiMaxPk];
+    const uint8_t n_pk = findBeatPeaks(hr, N, fs, hr_bpm, pk);
+    float t[kIbiMaxPk];
+    refinePeaks(hr, pk, n_pk, t);
+    if (t_out) memcpy(t_out, t, n_pk * sizeof(float));
+    return ibiFromTimes(t, n_pk, N, fs, hr_bpm);
+}
+
+#ifdef A121_DSP_IBI_TEMPLATE
+static constexpr float   kTplHalf = 0.3f;  /* Vorlage ±0,3 × Schlagabstand um die Spitze */
+static constexpr uint8_t kTplMaxW = 28U;   /* 0,3 × 1,5 s × 60 Hz = 27 Abtastwerte bei 40 /min */
+
+/**
+ * Einzelschläge mit Vorlage (V3.6): erste Spitzen wie V1.6, Vorlage = Mittel der Abschnitte ±kTplHalf × Schlagabstand
+ * um sie (ohne Gleichanteil), Korrelationsfilter c[n] = Σ_j v[j] · x[n + j], Spitzen von c wie V1.6 gesucht und
+ * parabolisch verfeinert, dann dieselben Artefakt-Regeln. x: Herzsignal (V3.6: Band 0,6–8 Hz), work: N Werte. Mit
+ * weniger als 3 vollständigen Abschnitten: wie timeDomainIbi.
+ */
+inline IbiResult templateIbi(const float *x, uint16_t N, float fs, float hr_bpm, float *work, float *t_out = nullptr) {
+    hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
+    uint16_t pk[kIbiMaxPk];
+    const uint8_t n_pk = findBeatPeaks(x, N, fs, hr_bpm, pk);
+    uint16_t W = (uint16_t)roundf(kTplHalf * (60.0f / hr_bpm) * fs);
+    if (W > kTplMaxW) W = kTplMaxW;
+    float tpl[2U * kTplMaxW + 1U] = {};
+    uint8_t n_seg = 0;
+    for (uint8_t k = 0; k < n_pk; k++) {
+        if (pk[k] < W || (uint32_t)pk[k] + W >= N) continue;
+        for (int16_t j = -(int16_t)W; j <= (int16_t)W; j++) tpl[j + W] += x[pk[k] + j];
+        n_seg++;
+    }
+    if (n_seg < 3 || W < 2U) return timeDomainIbi(x, N, fs, hr_bpm, t_out);
+    const uint16_t L = (uint16_t)(2U * W + 1U);
+    float m = 0.0f;
+    for (uint16_t j = 0; j < L; j++) m += tpl[j];
+    m /= (float)L;
+    for (uint16_t j = 0; j < L; j++) tpl[j] = (tpl[j] - m) / (float)n_seg;
+    for (uint16_t n = 0; n < N; n++) {
+        float c = 0.0f;
+        if (n >= W && (uint32_t)n + W < N)
+            for (uint16_t j = 0; j < L; j++) c += tpl[j] * x[n - W + j];
+        work[n] = c;
+    }
+    uint16_t pk2[kIbiMaxPk];
+    const uint8_t n2 = findBeatPeaks(work, N, fs, hr_bpm, pk2);
+    float t[kIbiMaxPk];
+    refinePeaks(work, pk2, n2, t);
+    if (t_out) memcpy(t_out, t, n2 * sizeof(float));
+    return ibiFromTimes(t, n2, N, fs, hr_bpm);
+}
+#endif
 
 #define A121_DSP_FRAME_FLAGS 1  /* pushFrame nimmt FrameFlags (für host/dsp_replay mit älteren Headern) */
 
@@ -1883,7 +1997,17 @@ public:
         float acf_bpm = 0.0f, acf_peak = 0.0f;
         cardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
         rep.hr_acf_bpm = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
+#ifdef A121_DSP_IBI_TEMPLATE
+        /* V3.6: Einzelschläge mit Vorlage auf dem Band 0,6–8 Hz des klarsten Punkts; Bewegungsdämpfung und Abzug der
+         * Atem-Oberwellen wie für best_h_ */
+        sosFiltFiltSos(best_x_, N, work_ext_, kBp8Sos);
+        memcpy(work_x_, work_ext_ + kFiltPad, N * sizeof(float));
+        gateMotion(work_x_, N);
+        removeBreathHarmonics(work_x_, N, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
+        const IbiResult ibi = templateIbi(work_x_, N, kFsHz, hr_prev_, work_ext_);
+#else
         const IbiResult ibi = timeDomainIbi(best_h_, N, kFsHz, hr_prev_);
+#endif
         const float ibi_bpm = ibi.bpm;
         rep.hr_ibi_bpm    = (ibi_bpm > 0.0f) ? ibi_bpm : hr_prev_;
         rep.ibi_median_ms = (ibi_bpm > 0.0f) ? ibi.ibi_ms : 60000.0f / hr_prev_;
@@ -2128,46 +2252,8 @@ private:
     }
 #endif
 
-    /**
-     * Nullphasen-Bandpass wie scipy `sosfiltfilt` (ungerade Erweiterung um kFiltPad, Anfangszustände aus der
-     * Sprungantwort). Ergebnis: work_ext_[kFiltPad .. kFiltPad + N).
-     */
-    void sosFiltFilt(const float *x, uint16_t N) {
-        const uint16_t P = (N > kFiltPad) ? kFiltPad : (uint16_t)(N - 1U);
-        float *e = work_ext_ + (kFiltPad - P);
-        const uint32_t L = (uint32_t)N + 2U * P;
-        for (uint16_t i = 0; i < P; i++) e[i] = 2.0f * x[0] - x[P - i];
-        memcpy(e + P, x, N * sizeof(float));
-        for (uint16_t j = 0; j < P; j++) e[P + N + j] = 2.0f * x[N - 1U] - x[N - 2U - j];
-        sosPass(e, L, false);
-        sosPass(e, L, true);
-    }
-
-    /** Ein Durchlauf der vier Biquads (DF2T) in Vorwärts- oder Rückwärtsrichtung, Anfangszustand = Sprungantwort. */
-    static void sosPass(float *e, uint32_t L, bool reverse) {
-        const float x0 = reverse ? e[L - 1U] : e[0];
-        float z1[4], z2[4];
-        float level = x0;
-        for (uint8_t s = 0; s < 4; s++) {
-            const float *c = kBpSos[s];
-            const float g = (c[0] + c[1] + c[2]) / (1.0f + c[4] + c[5]);  /* DC-Verstärkung der Sektion */
-            z1[s] = (g - c[0]) * level;
-            z2[s] = (c[2] - c[5] * g) * level;
-            level *= g;
-        }
-        for (uint32_t i = 0; i < L; i++) {
-            const uint32_t n = reverse ? (L - 1U - i) : i;
-            float v = e[n];
-            for (uint8_t s = 0; s < 4; s++) {
-                const float *c = kBpSos[s];
-                const float y = c[0] * v + z1[s];
-                z1[s] = c[1] * v - c[4] * y + z2[s];
-                z2[s] = c[2] * v - c[5] * y;
-                v = y;
-            }
-            e[n] = v;
-        }
-    }
+    /** Nullphasen-Bandpass 0,6–5 Hz (kBpSos) wie scipy `sosfiltfilt`. Ergebnis: work_ext_[kFiltPad .. kFiltPad + N). */
+    void sosFiltFilt(const float *x, uint16_t N) { sosFiltFiltSos(x, N, work_ext_, kBpSos); }
 
     /* Bewegungsdämpfung im Herzband: Effektivwert je 1-s-Block. Bezug ist das ruhige Viertel der Blöcke (nicht der
      * Median: bei 8 s Bewegung in 15 s ist der Median selbst Bewegung). Blöcke über kGateK × Bezug bekommen die

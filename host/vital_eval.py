@@ -187,6 +187,16 @@ def ref_hr_at(beats_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, rr_ms:
     return 60000.0 / float(np.mean(ibi))
 
 
+def ref_ibi_at(beats_ms: np.ndarray, rr_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0) -> tuple[float, float]:
+    """Gurt im Fenster (t_end − win, t_end] (V1.6/V3.6): Median der RR und RMSSD aufeinanderfolgender RR (ms). Das erste
+    RR im Fenster beginnt vor dem Fenster und zählt nicht (wie ref_hr_at). NaN bei weniger als 3 RR."""
+    m = (beats_ms > t_end_ms - win_s * 1000.0) & (beats_ms <= t_end_ms)
+    rr = rr_ms[m][1:]
+    if rr.size < 3:
+        return math.nan, math.nan
+    return float(np.median(rr)), float(np.sqrt(np.mean(np.diff(rr) ** 2)))
+
+
 def br_ref_at(marks_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, tol: float = 0.05) -> float:
     """Metronom-Atemfrequenz am Fensterende: Intervalle der Einatem-Marker im Fenster, mindestens die letzten zwei.
     NaN, wenn die Intervalle um mehr als tol auseinanderliegen (Taktwechsel) oder zu wenige Marker da sind."""
@@ -317,6 +327,29 @@ def best_lag_s(t_ms: np.ndarray, est: np.ndarray, ref_fn, max_lag_s: float = 20.
 # Bericht
 # ---------------------------------------------------------------------------------------------------------
 
+def beats_vs_strap(rec: Recording, t: np.ndarray, ok: np.ndarray, win_s: float) -> dict:
+    """IBI-Median (@VITAL ibi_ms) und RMSSD (rmssd_ms, 0 = nicht berechnet) je gültigem Report gegen den Gurt im selben
+    Fenster. Ohne Einzelschläge schreibt die DSP 60 000 / Puls als IBI und den Puls als hr_ibi; solche Reports zählen
+    nicht. Rückgabe: Zahl der Reports, Median |IBI − Gurt| (ms), Zahl mit RMSSD, Median |RMSSD − Gurt| und Median
+    RMSSD / Gurt."""
+    v = rec.vital
+    ibi, rms, hr_ibi, hr = (np.full(t.size, math.nan) for _ in range(4))
+    if t.size and v["rx_ms"].size:
+        idx = np.searchsorted(t, v["rx_ms"], side="right") - 1
+        g = idx >= 0
+        for arr, k in ((ibi, "ibi_ms"), (rms, "rmssd_ms"), (hr_ibi, "hr_ibi"), (hr, "hr_fused")):
+            arr[idx[g]] = v[k][g]
+    fallback = (np.abs(hr_ibi - hr) < 0.05) & (np.abs(ibi - 60000.0 / np.where(hr > 0, hr, math.nan)) < 0.6)
+    ref = np.array([ref_ibi_at(rec.beats_ms, rec.rr_ms, x, win_s) for x in t]).reshape(-1, 2)
+    m = ok & np.isfinite(ibi) & np.isfinite(ref[:, 0]) & ~fallback
+    mr = m & (rms > 0) & np.isfinite(ref[:, 1]) & (ref[:, 1] > 0)
+    e_ibi = np.abs(ibi[m] - ref[m, 0])
+    return {"n": int(m.sum()), "ibi_mae_ms": float(np.median(e_ibi)) if e_ibi.size else math.nan,
+            "n_rmssd": int(mr.sum()),
+            "rmssd_mae_ms": float(np.median(np.abs(rms[mr] - ref[mr, 1]))) if mr.any() else math.nan,
+            "rmssd_ratio": float(np.median(rms[mr] / ref[mr, 1])) if mr.any() else math.nan}
+
+
 def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
     """Alle Kennzahlen einer Sitzung. Bezugszeit eines Reports = Empfang seiner @DSP-Zeile (Ende des Fensters)."""
     d = rec.dsp
@@ -344,6 +377,8 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         if np.nanmax(ref) - np.nanmin(ref) >= 15.0:  # Verzug nur, wenn sich der Puls deutlich ändert (R4)
             res["lag_s"] = best_lag_s(t[ok], hr[ok],
                                       lambda tt: np.array([ref_hr_at(rec.beats_ms, x, win_s, rr) for x in tt]))
+    if have_ref and rr is not None:  # V1.6/V3.6 (Tag A): Einzelschläge gegen Gurt-RR je Report
+        res["ibi_ref"] = beats_vs_strap(rec, t, ok, win_s)
     marks = np.array([tm for tm, text in rec.events if text == "ein"], float)
     if marks.size >= 3:
         bref = np.array([br_ref_at(marks, x, win_s) for x in t])
@@ -418,6 +453,11 @@ def format_report(name: str, r: dict) -> str:
         for lo, hi, n, p in r["calibration"]:
             w(f"| {lo}–{min(hi, 100)} % | {n} | {_f(p)} % |\n")
         w("\n")
+    if "ibi_ref" in r:
+        b = r["ibi_ref"]
+        w(f"Einzelschläge gegen Gurt-RR (V1.6/V3.6, je Report im 15-s-Fenster): IBI-Median-Fehler "
+          f"{_f(b['ibi_mae_ms'])} ms ({b['n']} Reports); RMSSD-Fehler {_f(b['rmssd_mae_ms'])} ms, RMSSD / Gurt "
+          f"{_f(b['rmssd_ratio'], '{:.2f}')} ({b['n_rmssd']} Reports mit RMSSD; experimentell).\n\n")
     if "br" in r:
         b = r["br"]
         w(f"Atmung gegen Metronom: {b['n']} Reports, MAE {_f(b['mae'])} /min, innerhalb ±1 /min {_f(b['p1'])} %.\n\n")
