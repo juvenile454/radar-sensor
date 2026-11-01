@@ -251,6 +251,26 @@ class MotionStateEvalTest(unittest.TestCase):
         self.assertIn("Zustand BEWEGUNG", ve.format_report("x", r))
 
 
+class StatePairingTest(unittest.TestCase):
+    """@STATE gehört zum @DSP davor (gleicher Report), auch wenn der ESP32 beide mit eigenem millis() stempelt."""
+
+    def test_state_after_dsp_with_later_time(self):
+        lines = ["@IQ3_START,610,670,60.0,1",
+                 "@DSP,1000,1,5,80.0,1000,0,0,0,0,0,0,0", "@ROOM,1001,5,0", "@VITAL,1002,72.0", "@STATE,1003,3,0",
+                 "@DSP,2000,1,5,80.0,1000,0,0,0,0,0,0,0", "@STATE,2000,4,0",
+                 "@DSP,3000,0,5,80.0,1000,0,0,0,0,0,0,0"]
+        _, dd, _ = ve.parse_lines(lines, np.arange(len(lines), dtype=float))
+        np.testing.assert_array_equal(dd["state"][:2], [3, 4])
+        self.assertTrue(math.isnan(dd["state"][2]))  # ohne @STATE (alter Header)
+
+    def test_firmware_one_time_per_report(self):
+        """Quelltext-Prüfung (kein Lauf am Gerät): handleResult() stempelt @DSP, @ROOM, @VITAL, @STATE mit einer Zeit."""
+        src = (HOST.parent / "firmware" / "esp32s3" / "src" / "main.cpp").read_text()
+        body = src[src.index("auto handleResult = [&]"):]
+        body = body[:body.index("\n  };\n")]
+        self.assertEqual(body.count("millis()"), 1, body)
+
+
 class BreathEventsEvalTest(unittest.TestCase):
     def test_breath_vs_metronome(self):
         """V3.4 (Abnahme R3): Rate je @BREATH gegen das Metronom (Einatem-Marker „ein"), Anteil ±1 /min, erster Wert

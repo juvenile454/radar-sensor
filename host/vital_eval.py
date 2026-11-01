@@ -96,8 +96,9 @@ def beats_from_ref(rx_ms: np.ndarray, rr_ms: np.ndarray) -> tuple[np.ndarray, np
 
 def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[float]]:
     """@VITAL und @DSP mit Empfangszeit; Zeitpunkte, an denen die Historie neu beginnt. dsp["state"]: Zustand aus der
-    @STATE-Zeile mit derselben Zeit (V3.5; ohne @STATE NaN)."""
-    vital, dsp, starts, states = [], [], [], {}
+    ersten @STATE-Zeile nach dem @DSP (V3.5, derselbe Report; vor dem Abschluss-Review stempelte der ESP32 sie mit
+    eigenem millis(), die Zeit taugt daher nicht zur Zuordnung; ohne @STATE NaN)."""
+    vital, dsp, starts, states = [], [], [], []
     for i, ln in enumerate(lines):
         t_rx = rx[i] if i < rx.size else math.nan
         tag = ln.split(",", 1)[0]
@@ -108,17 +109,18 @@ def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[floa
         elif tag == "@DSP":
             v = [_num(x) for x in ln.split(",")[1:]][:len(DSP_FIELDS)]
             dsp.append([t_rx] + v + [math.nan] * (len(DSP_FIELDS) - len(v)))
+            states.append(math.nan)
         elif tag == "@STATE":
             v = [_num(x) for x in ln.split(",")[1:3]]
-            if len(v) == 2:
-                states[v[0]] = v[1]
+            if len(v) == 2 and states and math.isnan(states[-1]):
+                states[-1] = v[1]
         elif tag in START_TAGS:
             starts.append(float(t_rx))
     va = np.array(vital, float).reshape(-1, len(VITAL_FIELDS) + 1)
     da = np.array(dsp, float).reshape(-1, len(DSP_FIELDS) + 1)
     vd = {k: va[:, i] for i, k in enumerate(["rx_ms"] + VITAL_FIELDS)}
     dd = {k: da[:, i] for i, k in enumerate(["rx_ms"] + DSP_FIELDS)}
-    dd["state"] = np.array([states.get(t, math.nan) for t in dd["t_ms"]], float)
+    dd["state"] = np.array(states, float)
     return vd, dd, starts
 
 

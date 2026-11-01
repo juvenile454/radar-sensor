@@ -714,11 +714,12 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       vitalOk = res.rep.valid = false;
     }
     a121_dsp::VitalReport &rep = res.rep;
-    printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), millis() - tStart, vitalOk, rep, rep.compute_us));
-    a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
+    const uint32_t tRep = millis() - tStart;  // eine Zeit für alle Zeilen des Reports (Zuordnung in der Auswertung)
+    printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), tRep, vitalOk, rep, rep.compute_us));
+    a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), tRep, meta.tick, rep);
     Serial.println(roomLine);
-    if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), millis() - tStart, rep));
-    printLine(repLine, a121_dsp::formatStateLine(repLine, sizeof(repLine), millis() - tStart, rep));  // V3.5
+    if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), tRep, rep));
+    printLine(repLine, a121_dsp::formatStateLine(repLine, sizeof(repLine), tRep, rep));  // V3.5
     g_dsp.setBreathGate(a121_dsp::breathGateOpen(rep.state));  // @BREATH ab dem nächsten Frame nur mit Person (V3.4)
 
     // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
