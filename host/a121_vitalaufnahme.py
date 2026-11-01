@@ -1,4 +1,9 @@
-"""Vitalaufnahme (Atmung/Puls) mit dem A121 — Rohdaten + erweiterte Offline-/Online-Auswertung.
+"""ARCHIV (V5.3, docs/AUDIT_VITAL.md), nicht mehr gepflegt.
+Eigene DSP-Kette am PC (Kåsa + DACM + Hilbert-Projektion + HPS). Neue Auswertungen nur mit host/vital_eval.py und
+Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier bewährt, wandert in den
+Header. Funktion des Skripts unverändert.
+
+Vitalaufnahme (Atmung/Puls) mit dem A121 — Rohdaten + erweiterte Offline-/Online-Auswertung.
 
 Verbesserungen gegenüber der Basisversion:
 1. Sensor-Konfiguration: Profile 1 (40 mm FWHM statt 75 mm bei Profile 2) zur schärferen Trennung

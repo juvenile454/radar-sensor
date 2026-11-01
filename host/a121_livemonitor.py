@@ -1,4 +1,9 @@
-"""Live-Monitor A121: Abstand, Bewegung, Atmung, Puls-Kandidat — zum Beobachten, nicht zum Messen.
+"""ARCHIV (V5.3, docs/AUDIT_VITAL.md), nicht mehr gepflegt.
+Live-Anzeige mit der DSP-Kette aus a121_vitalaufnahme.py. Neue Auswertungen nur mit host/vital_eval.py und Varianten
+des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier bewährt, wandert in den Header.
+Funktion des Skripts unverändert.
+
+Live-Monitor A121: Abstand, Bewegung, Atmung, Puls-Kandidat — zum Beobachten, nicht zum Messen.
 
 Fenster (pyqtgraph) mit:
 - Amplitude über Abstand (stabilster Ziel-Bin im Brustecho markiert)

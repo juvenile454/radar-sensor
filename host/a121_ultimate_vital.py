@@ -1,4 +1,9 @@
-"""Ultimatives 3-Subsweep Sparse-IQ Vital- & Umfeld-System für den Acconeer A121 (USB Exploration Server).
+"""ARCHIV (V5.3, docs/AUDIT_VITAL.md), nicht mehr gepflegt.
+Eigene DSP-Kette am PC (Kåsa + DACM + Hilbert-Projektion + HPS, USB Exploration Server). Neue Auswertungen nur mit
+host/vital_eval.py und Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier
+bewährt, wandert in den Header. Funktion des Skripts unverändert.
+
+Ultimatives 3-Subsweep Sparse-IQ Vital- & Umfeld-System für den Acconeer A121 (USB Exploration Server).
 
 Schöpft die Hardware des A121 (RSS v1.12.0) voll aus, indem pro Frame (100 Hz) drei Subsweeps
 simultan im Silizium ausgeführt werden (Gesamtdauer im Radar-Frontend ~5,7 ms/Sweep):

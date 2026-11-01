@@ -19,7 +19,8 @@ Frameverlust), Neuverbinden nach Abziehen, DSP-Nachrechnung per NDK. ESP32-Firmw
 
 **Audit Vitalerkennung (ab 2026-11-01, `docs/AUDIT_VITAL.md`):** Die ESP32-Kette für `iq3` steht in
 `docs/HARDWARE.md` (Befehl `iq3`) und im Kopf von `firmware/esp32s3/src/a121_esp_dsp.h`. Die Verfahren der Zeile
-„Signalverarbeitung (`host/`)" oben (DACM, Hilbert-Projektion, HPS) gehören zu den PC-Skripten, nicht zur Firmware.
+„Signalverarbeitung (`host/`)" oben (DACM, Hilbert-Projektion, HPS) gehören zu den PC-Skripten, nicht zur Firmware;
+diese Skripte sind seit V5.3 Archiv.
 Prüfstand `host/vital_sim.py bench --check` (nur Simulation), Auswertung gegen Brustgurt `host/vital_eval.py`.
 
 ## Dokumente
@@ -34,7 +35,7 @@ Prüfstand `host/vital_sim.py bench --check` (nur Simulation), Auswertung gegen 
 
 | Ordner | Inhalt |
 |---|---|
-| `host/` | Python: `a121_ultimate_vital.py`, `a121_zielmessung.py`, `a121_vitalaufnahme.py`, `a121_livemonitor.py`, `a121_anhalteanalyse.py`, `a121_esp_vital.py`, `a121_esp_auto.py`, `a121_esp_ultimate.py` (verify-cpp, plot, replay-cpp), `esp_record.py` (Aufnahme/Prüfung im App-Format), `esp_tcp_bridge.py` (ESP32 am PC → App über Tailscale), `vital_sim.py` (synthetischer Prüfstand für die Vital-DSP); `dsp_replay/` (C++-Nachrechnung für PC und App) (Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
+| `host/` | Python: `a121_esp_ultimate.py` (iq3-Aufnahme, verify-cpp, plot, replay-cpp), `vital_eval.py` (Auswertung gegen Gurt, Metronom, Marker; Header-Varianten mit `--replay`), `vital_sim.py` (synthetischer Prüfstand für die Vital-DSP), `esp_record.py` (Aufnahme/Prüfung im App-Format), `esp_tcp_bridge.py` (ESP32 am PC → App über Tailscale), `rezoom_check.py`, `a121_zielmessung.py`; `dsp_replay/` (C++-Nachrechnung und Live-Pfad für PC und App). Archiv (V5.3, eigene ältere DSP-Ketten, nicht mehr gepflegt; neue Auswertungen nur über `vital_eval.py` und den Firmware-Header): `a121_ultimate_vital.py`, `a121_vitalaufnahme.py`, `a121_anhalteanalyse.py`, `a121_livemonitor.py`, `a121_esp_vital.py`, `a121_esp_auto.py` (Setup: `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r host/requirements.txt`) |
 | `firmware/esp32s3/` | PlatformIO-Projekt ESP32-S3 (angelegt: Bring-up-Konsole mit I2C-Distanzbefehlen; `uv tool install platformio esptool`) |
 | `firmware/stm32-a121/` | Eigene STM32-Firmware für das A121-Board (Acconeer-SDK) |
 | `android/` | Android-App (Kotlin/Compose, angelegt; `./gradlew :app:testDebugUnitTest :app:assembleDebug`) |

@@ -1,4 +1,9 @@
-"""Vitaldaten-Aufnahme und -Auswertung über ESP32-S3 + A121 I2C Distance Detector.
+"""ARCHIV (V5.3, docs/AUDIT_VITAL.md), nicht mehr gepflegt.
+Eigene Puls-/Atem-Auswertung für den I2C-Befehl `vital` (Distance Detector). Neue Auswertungen nur mit
+host/vital_eval.py und Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier
+bewährt, wandert in den Header. Funktion des Skripts unverändert.
+
+Vitaldaten-Aufnahme und -Auswertung über ESP32-S3 + A121 I2C Distance Detector.
 
 Nutzt das optimierte `vital [start_mm end_mm]`-Kommando der ESP32-S3-Firmware:
 - 400 kHz I2C + Hardware-Interrupt-Polling (`GPIO18` / `MCU_INT`) -> ~37 Hz Abtastrate
