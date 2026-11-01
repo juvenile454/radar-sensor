@@ -26,7 +26,9 @@
  *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
  *      Gültig nur mit Lebenszeichen: sauberes Echo und Atmung (≥ 100 µm) oder angehaltener Atem mit klarer Pulsspitze,
  *      höchstens 30 % Bewegung. Start (V2.4): Fenster wächst ab 6 s bis 15 s, Konfidenz × N/900; unter 8 s ist der
- *      Wert vorläufig (nicht verfolgt) und gilt nur, wenn Autokorrelation oder Einzelschläge ihn bestätigen.
+ *      Wert vorläufig (nicht verfolgt) und gilt nur, wenn Autokorrelation oder Einzelschläge ihn bestätigen und er
+ *      nicht auf einer Atem-Oberwelle m ≤ 3 liegt (V3.1). Variante A121_DSP_COMBINE (V3.1): statt Einzelspektren die
+ *      1. Hauptkomponente der 12 stärksten Punkte als ein Kanal (combinePrincipal), effektive Punktzahl hinten in @DSP.
  *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
  *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
  *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
@@ -1002,6 +1004,104 @@ private:
 };
 #endif
 
+#ifdef A121_DSP_COMBINE
+/* V3.1: Zoom-Punkte vor der Demodulation kombinieren statt Spektren nachträglich zu mitteln (Szmola et al. 2025;
+ * Pi-ViMo 2023: kohärent ausgerichtet und gewichtet summieren, Maximum Ratio Combining). */
+static constexpr uint8_t kCombKMax = 16U;  /* Obergrenze für K (Akkumulatoren auf dem Stapel: 136 komplexe Werte) */
+static constexpr uint8_t kCombK    = (kZoomPoints < 12U) ? (uint8_t)kZoomPoints : 12U;  /* beste K Punkte (Plan 8–16) */
+static constexpr uint8_t kCombIter = 12U;  /* Potenz-Iterationen auf der K × K-Kovarianz */
+static_assert(kCombK <= kCombKMax, "kCombK zu groß");
+
+/**
+ * 1. Hauptkomponente von K Zoom-Punkten. u_j[n] = z_j[n] − c_j (Ring j wie hist_zoom_, ab start, N Werte, c_j =
+ * Kreismittelpunkt). C = Σ_n u uᴴ (hermitesch), v = Eigenvektor zum größten Eigenwert (Potenz-Iteration ab der Spalte
+ * mit der größten Leistung), y[n] = Σ_j conj(v_j) · u_j[n] (linear, [I,Q] × N). Bei gleichem Rauschen je Punkt ist das
+ * Maximum Ratio Combining: v_j ∝ Amplitude_j · e^{iθ_j}, die Punkte addieren phasengleich. Rückgabe: effektive
+ * Punktzahl N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²_F (≈ 1: alle sehen dieselbe Bewegung; ≈ K: nur Rauschen); dominant = j
+ * mit dem größten |v_j|. Reihenfolge der Schleifen: n außen, damit jeder Ring (PSRAM) nur einmal gelesen wird.
+ */
+inline float combinePrincipal(const float *const *rings, const float *ci, const float *cq, uint8_t K, uint16_t start,
+                              uint16_t N, float *y, uint8_t &dominant) {
+    dominant = 0;
+    if (K == 0 || K > kCombKMax || N == 0) return 0.0f;
+    constexpr uint16_t kPairs = (uint16_t)kCombKMax * (kCombKMax + 1U) / 2U;
+    float are[kPairs] = {}, aim[kPairs] = {};  /* C_jk für j ≤ k: Index j·K − j(j−1)/2 + (k − j) */
+    float ur[kCombKMax], ui[kCombKMax];
+    for (uint16_t n = 0; n < N; n++) {
+        const size_t idx = (size_t)((start + n) % kHistoryLen) * 2U;
+        for (uint8_t j = 0; j < K; j++) {
+            ur[j] = rings[j][idx] - ci[j];
+            ui[j] = rings[j][idx + 1U] - cq[j];
+        }
+        uint16_t pidx = 0;
+        for (uint8_t j = 0; j < K; j++)
+            for (uint8_t k = j; k < K; k++, pidx++) {
+                are[pidx] += ur[j] * ur[k] + ui[j] * ui[k];
+                aim[pidx] += ui[j] * ur[k] - ur[j] * ui[k];
+            }
+    }
+    auto at = [&](uint8_t j, uint8_t k, float &re, float &im) {  /* C_jk, untere Hälfte = konjugiert */
+        const bool sw = j > k;
+        const uint8_t a = sw ? k : j, b = sw ? j : k;
+        const uint16_t q = (uint16_t)(a * K - a * (a - 1) / 2 + (b - a));
+        re = are[q];
+        im = sw ? -aim[q] : aim[q];
+    };
+    float tr = 0.0f, fro = 0.0f;
+    uint8_t jmax = 0;
+    for (uint8_t j = 0; j < K; j++) {
+        float re, im;
+        at(j, j, re, im);
+        tr += re;
+        float rj, ij;
+        at(jmax, jmax, rj, ij);
+        if (re > rj) jmax = j;
+        for (uint8_t k = 0; k < K; k++) {
+            at(j, k, re, im);
+            fro += re * re + im * im;
+        }
+    }
+    float vr[kCombKMax], vi[kCombKMax], wr[kCombKMax], wi[kCombKMax];
+    for (uint8_t j = 0; j < K; j++) at(j, jmax, vr[j], vi[j]);
+    for (uint8_t it = 0; it <= kCombIter; it++) {
+        float nrm = 0.0f;
+        for (uint8_t j = 0; j < K; j++) nrm += vr[j] * vr[j] + vi[j] * vi[j];
+        nrm = sqrtf(nrm);
+        if (nrm <= 0.0f) {
+            for (uint8_t j = 0; j < K; j++) { vr[j] = (j == jmax) ? 1.0f : 0.0f; vi[j] = 0.0f; }
+            break;
+        }
+        for (uint8_t j = 0; j < K; j++) { vr[j] /= nrm; vi[j] /= nrm; }
+        if (it == kCombIter) break;
+        for (uint8_t j = 0; j < K; j++) {
+            wr[j] = wi[j] = 0.0f;
+            for (uint8_t k = 0; k < K; k++) {
+                float re, im;
+                at(j, k, re, im);
+                wr[j] += re * vr[k] - im * vi[k];
+                wi[j] += re * vi[k] + im * vr[k];
+            }
+        }
+        memcpy(vr, wr, K * sizeof(float));
+        memcpy(vi, wi, K * sizeof(float));
+    }
+    for (uint8_t j = 1; j < K; j++)
+        if (vr[j] * vr[j] + vi[j] * vi[j] > vr[dominant] * vr[dominant] + vi[dominant] * vi[dominant]) dominant = j;
+    for (uint16_t n = 0; n < N; n++) {
+        const size_t idx = (size_t)((start + n) % kHistoryLen) * 2U;
+        float yr = 0.0f, yi = 0.0f;
+        for (uint8_t j = 0; j < K; j++) {
+            const float a = rings[j][idx] - ci[j], b = rings[j][idx + 1U] - cq[j];
+            yr += vr[j] * a + vi[j] * b;
+            yi += vr[j] * b - vi[j] * a;
+        }
+        y[2U * n]      = yr;
+        y[2U * n + 1U] = yi;
+    }
+    return (fro > 0.0f) ? tr * tr / fro : 0.0f;
+}
+#endif
+
 struct VitalReport {
     bool     valid;
     uint32_t frame_count;
@@ -1041,6 +1141,7 @@ struct VitalReport {
     bool     target_in_zoom;   /* … und es liegt im Zoom-Fenster */
     uint8_t  state;            /* Zustand der Messung kSt* (V3.5) */
     uint32_t state_since_ms;   /* … seit (Frames × 1000 / 60) */
+    float    n_eff;            /* effektive Punktzahl des kombinierten Kanals (V3.1, nur mit A121_DSP_COMBINE) */
 };
 
 /**
@@ -1096,6 +1197,10 @@ public:
             br_comb_     = allocFloat(kBrNumF);
             allocated_   = hist_zoom_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ && br_x_ &&
                          dec_ && spec_ && sum_ && comb_ && scratch_ && br_comb_ && pen_;
+#ifdef A121_DSP_COMBINE
+            comb_y_      = allocFloat(2U * kHrWin);  /* kombinierter Kanal [I,Q] (V3.1) */
+            allocated_   = allocated_ && comb_y_;
+#endif
         }
         resetState();
         return allocated_;
@@ -1425,7 +1530,12 @@ public:
         /* Breites Zoom-Fenster (V2.3): Atem-Stärke vorab als Streuung der IQ-Werte im Fenster (≈ Amplitude² ×
          * Phasenhub², dieselbe Größe wie das Gewicht des Atem-Spektrums), nur die kSpecPoints stärksten rechnen. */
         bool use[kZoomPoints];
-        if (kSpecPoints < kZoomPoints) {
+#ifdef A121_DSP_COMBINE
+        constexpr uint16_t kSelPoints = kCombK;  /* V3.1: nur die K stärksten Punkte gehen in die Kombination */
+#else
+        constexpr uint16_t kSelPoints = kSpecPoints;
+#endif
+        if (kSelPoints < kZoomPoints) {
             float strength[kZoomPoints];
             for (uint8_t b = 0; b < kZoomPoints; b++) {
                 const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
@@ -1442,10 +1552,19 @@ public:
                 mq /= (float)N;
                 strength[b] = p2 / (float)N - (mi * mi + mq * mq);
             }
-            selectStrongest(strength, kZoomPoints, kSpecPoints, use);
+            selectStrongest(strength, kZoomPoints, kSelPoints, use);
         } else {
             for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = true;
         }
+#ifdef A121_DSP_COMBINE
+        /* V3.1: ein kombinierter Kanal statt Einzelspektren; die Schleife unten läuft einmal mit seinem Wegsignal und
+         * dem dominanten Punkt als hr_bin */
+        bool comb_short = false;
+        float comb_spread = 0.0f;
+        float comb_amp    = 0.0f;
+        const uint8_t comb_dom = combineZoom(start, N, use, comb_amp, comb_short, comb_spread, rep.n_eff);
+        for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = (b == comb_dom);
+#endif
 
         for (uint8_t b = 0; b < kZoomPoints; b++) {
             if (!use[b]) {
@@ -1455,7 +1574,13 @@ public:
             }
             bool short_arc = false;
             float spread = 0.0f;
+#ifdef A121_DSP_COMBINE
+            short_arc = comb_short;  /* work_x_ hält schon das Wegsignal des kombinierten Kanals */
+            spread    = comb_spread;
+            const float amp_c = comb_amp;
+#else
             const float amp_c = binDisplacement(b, start, N, work_x_, short_arc, spread);
+#endif
             removeLinearTrend(work_x_, N);
             float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
             sosFiltFilt(work_x_, N);
@@ -1807,7 +1932,11 @@ public:
         if (prov) {  /* vorläufig nur, wenn Autokorrelation oder Einzelschläge den Spektralwert bestätigen (±5 /min) */
             const bool acf_ok = qi.hr_acf > 0.0f && fabsf(qi.hr_acf - raw_bpm) <= 5.0f;
             const bool ibi_ok = qi.hr_ibi > 0.0f && fabsf(qi.hr_ibi - raw_bpm) <= 5.0f;
-            rep.valid = rep.valid && (acf_ok || ibi_ok);
+            /* … und nicht auf einer niedrigen Atem-Oberwelle (m ≤ 3): Die sehen AKF und Einzelschläge desselben Signals
+             * genauso, die Bestätigung zählt dort nicht (Prüfstand base mit A121_DSP_COMBINE: 46 statt 71 /min) */
+            const uint8_t m_raw = harmOrder(cf[0]);
+            const bool low_harm = m_raw != 0 && m_raw <= kHarmLowMax;
+            rep.valid = rep.valid && (acf_ok || ibi_ok) && !low_harm;
             hr_prev_  = 0.0f;
         }
         if (rep.valid) {
@@ -1913,7 +2042,8 @@ private:
      *  solange die IQ-Werte auf dessen Kreis liegen (Streuung höchstens doppelt so groß wie um den Fit), und short_arc
      *  meldet dem Aufrufer, das Gewicht des Punkts zu halbieren. Rückgabe: mittlerer Abstand zum Mittelpunkt (Radius),
      *  spread: Streuung des Abstands relativ zum Radius (klein = sauberes Echo, ≈ 0,5 = nur Rauschen). */
-    float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out, bool &short_arc, float &spread) {
+    float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out, bool &short_arc, float &spread,
+                          float *c_out = nullptr) {
         const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
         float mi = 0.0f, mq = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
@@ -1940,12 +2070,63 @@ private:
                 memcpy(out, work_ext_, N * sizeof(float));
                 radius = r_g;
                 spread = spread_g;
+                ci     = good_ci_[b];
+                cq     = good_cq_[b];
             } else {
                 have_good_[b] = false;  /* Szene hat sich geändert: alter Mittelpunkt passt nicht mehr */
             }
         }
+        if (c_out) {  /* benutzter Mittelpunkt (V3.1) */
+            c_out[0] = ci;
+            c_out[1] = cq;
+        }
         return radius;
     }
+
+#ifdef A121_DSP_COMBINE
+    /** V3.1: Die gewählten Punkte (use) um ihre Kreismittelpunkte verschieben (binDisplacement, mit Rückfall auf den
+     *  letzten guten Mittelpunkt) und zur 1. Hauptkomponente kombinieren (combinePrincipal). Punkte mit Rauschen statt
+     *  Echo (Streuung ≥ kEchoSpreadMax) bleiben draußen, außer es gibt keinen anderen. Das Wegsignal des Kanals steht
+     *  danach in work_x_ (µm). Rückgabe: dominanter Zoom-Punkt; amp/short_arc/spread wie binDisplacement. */
+    uint8_t combineZoom(uint16_t start, uint16_t N, const bool *use, float &amp, bool &short_arc, float &spread,
+                        float &n_eff) {
+        const float *rings[kCombKMax];
+        float ci[kCombKMax], cq[kCombKMax];
+        uint8_t idx[kCombKMax], K = 0, n_clean = 0;
+        bool clean[kCombKMax];
+        for (uint8_t b = 0; b < kZoomPoints && K < kCombK; b++) {
+            if (!use[b]) continue;
+            bool sa = false;
+            float sp = 0.0f, c[2];
+            binDisplacement(b, start, N, work_x_, sa, sp, c);
+            rings[K] = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
+            ci[K]    = c[0];
+            cq[K]    = c[1];
+            idx[K]   = b;
+            clean[K] = sp < kEchoSpreadMax;
+            n_clean += clean[K];
+            K++;
+        }
+        if (n_clean > 0 && n_clean < K) {  /* nur saubere Punkte behalten */
+            uint8_t w = 0;
+            for (uint8_t j = 0; j < K; j++)
+                if (clean[j]) {
+                    rings[w] = rings[j];
+                    ci[w]    = ci[j];
+                    cq[w]    = cq[j];
+                    idx[w]   = idx[j];
+                    w++;
+                }
+            K = w;
+        }
+        uint8_t dom = 0;
+        n_eff = combinePrincipal(rings, ci, cq, K, start, N, comb_y_, dom);
+        float span = 0.0f;
+        amp       = unwrapAround(comb_y_, 0, N, 0.0f, 0.0f, work_x_, span, spread);
+        short_arc = span < kArcMinRad;
+        return K ? idx[dom] : 0U;
+    }
+#endif
 
     /**
      * Nullphasen-Bandpass wie scipy `sosfiltfilt` (ungerade Erweiterung um kFiltPad, Anfangszustände aus der
@@ -2213,6 +2394,9 @@ private:
     float *hist_lb_phi_ = nullptr;
     float *work_x_      = nullptr;
     float *work_ext_    = nullptr;  /* sosfiltfilt mit Rand: kHrWin + 2 * kFiltPad */
+#ifdef A121_DSP_COMBINE
+    float *comb_y_      = nullptr;  /* kombinierter Kanal [I,Q] × kHrWin (V3.1) */
+#endif
     float *best_x_      = nullptr;
     float *best_h_      = nullptr;
     float *br_x_        = nullptr;  /* Wegsignal des Atem-Punkts (stärkste Atmung unter den Punkten mit sauberem Echo) */
@@ -2269,12 +2453,22 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
+#ifdef A121_DSP_COMBINE
+    /* V3.1: effektive Punktzahl als 15. Feld, nur mit Schalter (Standardzeile unverändert) */
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu,%.1f", (unsigned long)t_ms,
+                             (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,
+                             rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state,
+                             (unsigned)rep.n_delayed, (unsigned)rep.n_sat, (unsigned)rep.n_tickgap,
+                             (unsigned long)rep.frame_count, rep.n_eff),
+                    cap);
+#else
     return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu", (unsigned long)t_ms,
                              (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,
                              rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state,
                              (unsigned)rep.n_delayed, (unsigned)rep.n_sat, (unsigned)rep.n_tickgap,
                              (unsigned long)rep.frame_count),
                     cap);
+#endif
 }
 
 inline size_t formatVitalLine(char *buf, size_t cap, uint32_t t_ms, const VitalReport &r) {

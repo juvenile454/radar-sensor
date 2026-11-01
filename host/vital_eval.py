@@ -37,7 +37,8 @@ from a121_esp_ultimate import VITAL_FIELDS, run_replay_cpp  # noqa: E402
 
 # @DSP-Felder nach dem Tag; neue Felder kommen nur hinten dazu (fehlende = NaN)
 DSP_FIELDS = ["t_ms", "ok", "hr_bin", "conf", "compute_us", "motion_pct", "hr_harm",
-              "point_agree_pct", "br_state", "n_delayed", "n_sat", "n_tickgap", "snap_frame"]
+              "point_agree_pct", "br_state", "n_delayed", "n_sat", "n_tickgap", "snap_frame",
+              "n_eff"]  # n_eff: effektive Punktzahl, nur mit Schalter A121_DSP_COMBINE (V3.1), sonst NaN
 BR_STATE_APNEA = 2
 START_TAGS = ("@IQ3_START", "@REZOOM", "@RECAL")
 
@@ -334,6 +335,8 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
     rr = rec.rr_ms if rec.rr_ms.size == rec.beats_ms.size else None
     ref = np.array([ref_hr_at(rec.beats_ms, x, win_s, rr) for x in t]) if have_ref else np.full(t.size, math.nan)
     res = {"reports": int(t.size), "valid": int(ok.sum()), "have_ref": have_ref, "jumps": count_jumps(hr, ok)}
+    n_eff = d["n_eff"][np.isfinite(d["n_eff"])]
+    res["n_eff"] = float(np.median(n_eff)) if n_eff.size else None  # V3.1
     res["hr"] = metrics(hr, ref, ok) if have_ref else None
     if have_ref:
         err = np.abs(hr - ref)
@@ -392,6 +395,8 @@ def format_report(name: str, r: dict) -> str:
     w = out.write
     w(f"## {name}\n\n")
     w(f"Reports {r['reports']}, gültig {r['valid']}, Sprünge > 15 /min {r.get('jumps', 0)}")
+    if r.get("n_eff") is not None:
+        w(f"; effektive Punktzahl (V3.1) {_f(r['n_eff'])}")
     fs = r["first_s"]
     if fs:
         w(f"; erster Wert nach Start {_f(fs[0])} s")

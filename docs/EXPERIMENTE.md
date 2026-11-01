@@ -143,6 +143,22 @@ Puls-Kennzahlen wie ohne Variante (Oberwellen sind dort schwach), Konfidenz-Medi
 falscher unverändert 31 %; Rechenzeit am PC +0,7 ms. Als Variante: `#define A121_DSP_HARM_REMOVE 1` voranstellen wie
 oben.
 
+**Zoom-Punkte kombinieren (V3.1, offen):** Variante hinter `#define A121_DSP_COMBINE` (Standard aus): die 12 Punkte mit
+der stärksten Bewegung um ihre Kreismittelpunkte verschieben (Punkte ohne sauberes Echo bleiben draußen), 1.
+Hauptkomponente ihrer IQ-Werte (richtet die Punkte phasengleich aus und gewichtet sie mit der Amplitude, bei gleichem
+Rauschen je Punkt = Maximum Ratio Combining), dann **ein** Kanal demodulieren statt 24 Einzelspektren. `@DSP` trägt
+dann als 15. Feld die effektive Punktzahl N_eff = (Σλ)² / Σλ² der Kovarianz (≈ 1: alle Punkte sehen dasselbe Echo, mit
+Person oder ruhendem Echo; ≈ 12: nur Rauschen); `vital_eval.py` meldet ihren Median je Sitzung. Abnahme an Tag A:
+Puls-MAE ≤ ohne Variante bei ≤ 50 % Rechenzeit (ESP32 live, `compute_us` in `@DSP`). Prüfstand vorab (nur Simulation):
+Rechenzeit am PC 1,15 → 0,48 ms (42 %); Puls-MAE `base` 0,36 → 0,29, `brady` 2,81 → 1,51, `tief` 0,60 → 0,34, `step`
+0,74 → 0,77, `anhalt` 0,41 → 0,51 (beim Anhalten 4 gültige Reports mehr, Fehler 2–4 /min), sonst gleich; Konfidenz-Median
+richtiger Reports 82 → 94 %, falscher 31 → 25 %. Erster Wert bei `step` und `tief` nach 7 statt 6 s: Der kombinierte
+Kanal ist atemlastig (die Hauptkomponente maximiert die Leistung, und die trägt die Atmung), im 6-s-Fenster liegt die
+stärkste Spitze dort auf einer niedrigen Atem-Oberwelle. Seit V3.1 gilt ein vorläufiger Wert (V2.4) nie auf einer
+Atem-Oberwelle m ≤ 3, auch ohne Schalter (dort im Prüfstand ohne Wirkung): AKF und Einzelschläge desselben Signals
+bestätigten sie mit (`base` mit Variante: 46 statt 71 /min gültig). Raum-Punkte als zweiter Kanal sind nicht umgesetzt
+(der DSP hält für sie keine Historie). Als Variante: `#define A121_DSP_COMBINE 1` voranstellen wie oben.
+
 **Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
 jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start
 nach 2 Atemzügen. `vital_eval.py` schreibt dazu je Sitzung „Atmung Atemzug für Atemzug" (gegen die Marker „ein",

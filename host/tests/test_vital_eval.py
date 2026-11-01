@@ -285,5 +285,26 @@ class JumpCountTest(unittest.TestCase):
         self.assertEqual(ve.count_jumps(hr, ok, thr=30.0), 1)
 
 
+class EffectivePointsTest(unittest.TestCase):
+    def test_n_eff_median_and_line(self):
+        """V3.1: @DSP mit Schalter A121_DSP_COMBINE trägt als 15. Feld die effektive Punktzahl; die Auswertung meldet
+        ihren Median über die Reports, ohne das Feld (Standard) nichts."""
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text(
+                "@IQ3_START,610,670,60.0,1\n"
+                "@DSP,1000,0,5,0.0,300000,0,0,0,1,0,0,0,60,1.2\n"
+                "@DSP,2000,0,5,0.0,300000,0,0,0,1,0,0,0,120,1.6\n"
+                "@DSP,3000,0,5,0.0,300000,0,0,0,1,0,0,0,180,3.0\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n0,0\n1,1000\n2,2000\n3,3000\n")
+            r = ve.evaluate(ve.load_recording(p))
+            (p / "stream.log").write_text("@IQ3_START,610,670,60.0,1\n@DSP,1000,0,5,0.0,300000,0,0,0,1,0,0,0,60\n")
+            r0 = ve.evaluate(ve.load_recording(p))
+        self.assertAlmostEqual(r["n_eff"], 1.6)
+        self.assertIn("effektive Punktzahl (V3.1) 1.6", ve.format_report("x", r))
+        self.assertIsNone(r0["n_eff"])
+        self.assertNotIn("effektive Punktzahl", ve.format_report("x", r0))
+
+
 if __name__ == "__main__":
     unittest.main()

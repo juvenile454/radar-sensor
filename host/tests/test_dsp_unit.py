@@ -661,6 +661,22 @@ class FastStartTest(unittest.TestCase):
         printf("%u %u", first, again);""")
         self.assertEqual(out.split(), ["120", "180"])
 
+    def test_provisional_not_on_low_breath_harmonic(self):
+        # Atmung 15 /min mit kräftiger 3. Oberwelle (45 /min), Puls 96 schwach: Im 6-s-Fenster ist 3 × Atmung die
+        # stärkste Spitze, und AKF/Einzelschläge desselben Signals bestätigen sie. Vorläufig darf ein Wert auf einer
+        # Atem-Oberwelle m ≤ 3 nicht gelten (V3.1, Prüfstand base mit A121_DSP_COMBINE: 46 statt 71 /min gültig).
+        gen = self.GEN.replace("const float ph = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * f_hr * t);",
+                               "const float ph = 2.0f * sinf(6.2832f * 0.25f * t) + 0.3f * sinf(6.2832f * 0.75f * t + 0.5f)"
+                               " + 0.02f * sinf(6.2832f * f_hr * t);")
+        self.assertNotEqual(gen, self.GEN)
+        out = run_cpp(gen + """
+        push(360, 1.6f); d.computeVitalReport(r);
+        printf("%d %.1f %d", r.valid, r.hr_spec_bpm, (int)r.hr_harm);""")
+        valid, spec, harm = out.split()
+        self.assertAlmostEqual(float(spec), 45.0, delta=2.0)   # die Oberwelle ist die stärkste Spitze …
+        self.assertEqual(harm, "1")
+        self.assertEqual(valid, "0")                            # … und gilt vorläufig nicht
+
 
 class WindowLengthTest(unittest.TestCase):
     """V2.5: Pulsfenster per A121_HR_WIN (Frames, Standard 900 = 15 s) für den Vergleich 10 / 12 / 15 s an Tag A;
@@ -981,6 +997,93 @@ class GuidedHarmonicsTest(unittest.TestCase):
         valid, hr = out.split()
         self.assertEqual(valid, "1")
         self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
+
+
+class CombinePointsTest(unittest.TestCase):
+    """V3.1 (Schalter A121_DSP_COMBINE): Zoom-Punkte vor der Demodulation kombinieren. Je Punkt die IQ-Werte um den
+    Kreismittelpunkt verschieben (u = z − c), dann 1. Hauptkomponente der K × K-Kovarianz C = Σ u uᴴ: Sie richtet die
+    Punkte phasengleich aus und gewichtet sie mit der Amplitude (bei gleichem Rauschen je Punkt = Maximum Ratio
+    Combining). Ein Kanal y = Σ conj(v) u wird demoduliert. N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²: ≈ 1, wenn alle Punkte
+    dieselbe Bewegung sehen, ≈ K bei reinem Rauschen."""
+
+    FLAGS = ("-DA121_DSP_COMBINE",)
+
+    def combine(self, sig: str, K: int = 8, noise: float = 40.0) -> dict:
+        """K Ringe: Punkt j = Mittelpunkt (300 j, −200 j) + r_j · e^{i(phi_j(t) + 0,7 j)} + Rauschen (σ je Komponente);
+        sig(j, t) setzt r und phi. Rückgabe: N_eff, dominant, Phasenfehler (Effektivwert, rad) von y und vom besten
+        Einzelpunkt (gegen die wahre Phase des Punkts mit der größten Amplitude)."""
+        out = run_cpp(f"""
+        const uint8_t K = {K}; const uint16_t N = 900;
+        static float ring[K][kHistoryLen * 2]; static float y[2 * N]; static float tru[K][N];
+        float ci[K], cq[K], r_of[K]; const float *rings[K];
+        uint32_t s = 7; auto uni = [&] {{ s = s * 1664525u + 1013904223u; return (s >> 8) / 16777216.0f; }};
+        auto gauss = [&] {{ float a = 0; for (int i = 0; i < 12; i++) a += uni(); return a - 6.0f; }};
+        for (int j = 0; j < K; j++) {{
+            ci[j] = 300.0f * j; cq[j] = -200.0f * j; rings[j] = ring[j];
+            for (int n = 0; n < N; n++) {{
+                const float t = n / 60.0f; float r = 0, phi = 0;
+                {sig}
+                r_of[j] = r; tru[j][n] = phi;
+                ring[j][2 * n]     = ci[j] + r * cosf(phi + 0.7f * j) + {noise}f * gauss();
+                ring[j][2 * n + 1] = cq[j] + r * sinf(phi + 0.7f * j) + {noise}f * gauss();
+            }}
+        }}
+        uint8_t dom = 255;
+        const float neff = combinePrincipal(rings, ci, cq, K, 0, N, y, dom);
+        int jb = 0; for (int j = 1; j < K; j++) if (r_of[j] > r_of[jb]) jb = j;
+        auto err = [&](const float *iq, float c_i, float c_q) {{   /* Phase abwickeln, Versatz entfernen, Effektivwert */
+            static double e[N]; double prev = 0, acc = 0, m = 0;
+            for (int n = 0; n < N; n++) {{
+                const double p = atan2(iq[2 * n + 1] - c_q, iq[2 * n] - c_i);
+                double d = p - prev; if (n == 0) acc = p; else {{ while (d > M_PI) d -= 2 * M_PI; while (d < -M_PI) d += 2 * M_PI; acc += d; }}
+                prev = p; e[n] = acc - tru[jb][n]; m += e[n];
+            }}
+            m /= N; double v = 0; for (int n = 0; n < N; n++) v += (e[n] - m) * (e[n] - m); return sqrt(v / N);
+        }};
+        printf("%.4f %d %.5f %.5f", neff, dom, err(y, 0, 0), err(ring[jb], ci[jb], cq[jb]));""", self.FLAGS)
+        n, d, ec, es = out.split()
+        return {"n_eff": float(n), "dom": int(d), "err_comb": float(ec), "err_single": float(es)}
+
+    COMMON = "r = 400.0f + 100.0f * j; phi = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * 1.2f * t);"
+
+    def test_aligned_sum_beats_best_point(self):
+        # 8 Punkte mit Amplitude 400 … 1100, gleiches Rauschen: SNR der Summe ≈ 4 × der beste Punkt → Fehler ≈ 0,5 ×
+        r = self.combine(self.COMMON)
+        self.assertLess(r["err_comb"], 0.6 * r["err_single"])
+
+    def test_dominant_is_strongest_point(self):
+        self.assertEqual(self.combine(self.COMMON)["dom"], 7)
+
+    def test_n_eff_one_for_common_motion(self):
+        self.assertLess(self.combine(self.COMMON, noise=0.0)["n_eff"], 1.05)
+
+    def test_n_eff_near_k_for_noise(self):
+        self.assertGreater(self.combine("r = 0; phi = 0;", noise=40.0)["n_eff"], 6.5)
+
+    def test_n_eff_two_for_two_movers(self):
+        # Punkte 0–3 sehen Bewegung A (0,23 Hz), 4–7 Bewegung B (0,31 Hz), gleiche Amplitude
+        r = self.combine("r = 800.0f; phi = (j < 4) ? 2.0f * sinf(6.2832f * 0.23f * t) "
+                         ": 2.0f * sinf(6.2832f * 0.31f * t + 1.0f);", noise=0.0)
+        self.assertGreater(r["n_eff"], 1.7)
+        self.assertLess(r["n_eff"], 2.3)
+
+    def test_dsp_with_switch(self):
+        out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0] + """
+        for (int i = 0; i < 20; i++) { push(60, 1.2f); d.computeVitalReport(r); }
+        char b[256]; formatDspLine(b, sizeof(b), 1000, true, r, 5);
+        printf("%d %.2f %.2f %s", r.valid, r.hr_fused_bpm, r.n_eff, b);""", self.FLAGS)
+        valid, hr, neff, line = out.split()
+        self.assertEqual(valid, "1")
+        self.assertAlmostEqual(float(hr), 72.0, delta=1.0)
+        self.assertGreaterEqual(float(neff), 1.0)
+        self.assertLess(float(neff), 3.0)
+        f = line.split(",")
+        self.assertEqual(len(f), 15)                      # n_eff hinten an @DSP, nur mit Schalter
+        self.assertAlmostEqual(float(f[14]), float(neff), delta=0.06)
+
+    def test_default_line_unchanged(self):
+        out = run_cpp('VitalReport r = {}; char b[256]; formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
+        self.assertEqual(len(out.split(",")), 14)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,10 @@ class LineParserTest {
         val neu = parse<Dsp>("@DSP,1009,1,5,72.0,300000,0,0,55,2")
         assertEquals(55f, neu.pointAgreePct)
         assertEquals(2, neu.brState)
+        assertEquals(null, neu.nEff)
+        // V3.1: effektive Punktzahl als Feld 14, nur mit Schalter A121_DSP_COMBINE
+        val komb = parse<Dsp>("@DSP,1009,1,5,72.0,300000,0,0,100,0,0,0,0,1234,1.4")
+        assertEquals(1.4f, komb.nEff)
     }
 
     @Test fun atemzustandText() {

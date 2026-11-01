@@ -104,7 +104,8 @@ data class Vital(
 ) : EspMsg
 
 /**
- * `@DSP,t_ms,gültig,punkt,konfidenz,rechenzeit_us,bewegung_pct,hr_harm,point_agree_pct,br_state` (1 Hz).
+ * `@DSP,t_ms,gültig,punkt,konfidenz,rechenzeit_us,bewegung_pct,hr_harm,point_agree_pct,br_state,n_delayed,n_sat,
+ * n_tickgap,snap_frame[,n_eff]` (1 Hz).
  * Ältere Firmware schickt weniger Felder; fehlende hinten sind null.
  */
 data class Dsp(
@@ -119,6 +120,8 @@ data class Dsp(
     val pointAgreePct: Float? = null,
     /** Atemzustand (V1.4): 0 normal, 1 keine Atemspitze, 2 angehalten, 3 Bewegung, 4 flach */
     val brState: Int? = null,
+    /** effektive Punktzahl des kombinierten Kanals (V3.1, Feld 14, nur mit Schalter A121_DSP_COMBINE) */
+    val nEff: Float? = null,
 ) : EspMsg {
     companion object {
         const val BR_APNEA = 2

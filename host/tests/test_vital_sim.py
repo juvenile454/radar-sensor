@@ -182,5 +182,31 @@ class HarmRemoveBenchTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
 
 
+class CombineBenchTest(unittest.TestCase):
+    """V3.1 (Schalter A121_DSP_COMBINE): ein kombinierter Kanal statt Einzelspektren, NUR SIMULATION. Abnahme laut Plan
+    „MAE ≤ heute bei ≤ 50 % Rechenzeit". Bekannte Abweichung, festgehalten: Der kombinierte Kanal ist atemlastig, im
+    6-s-Fenster liegt die stärkste Spitze bei step und tief auf einer niedrigen Atem-Oberwelle (verworfen), der erste
+    Wert kommt dort nach 7 statt 6 s."""
+
+    SCEN = ["--scen", "base", "brady", "step", "tief"]
+    DEFINE = "A121_DSP_COMBINE"
+
+    def bench(self, *extra: str) -> tuple[list[str], float]:
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", *self.SCEN, *extra],
+                           capture_output=True, text=True)
+        viol = sorted(ln.strip() for ln in r.stdout.splitlines() if "VERLETZT" in ln)
+        ms = [float(ln.split(":")[1].split("ms")[0]) for ln in r.stdout.splitlines()
+              if ln.startswith("Rechenzeit je Report am PC")]
+        self.assertEqual(len(ms), 1, r.stdout[-3000:] + r.stderr[-2000:])
+        return viol, ms[0]
+
+    def test_variant_limits_and_compute(self):
+        viol_std, ms_std = self.bench()
+        viol, ms = self.bench("--define", self.DEFINE)
+        self.assertEqual(viol_std, [])
+        self.assertEqual(viol, ["VERLETZT step: erst_s = 7.0, Grenze <= 6.0", "VERLETZT tief: erst_s = 7.0, Grenze <= 6.0"])
+        self.assertLessEqual(ms, 0.5 * ms_std)
+
+
 if __name__ == "__main__":
     unittest.main()
