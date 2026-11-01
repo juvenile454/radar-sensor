@@ -11,6 +11,7 @@ import de.timo.radarsensor.protocol.Iq3
 import de.timo.radarsensor.protocol.Iq3Start
 import de.timo.radarsensor.protocol.Malformed
 import de.timo.radarsensor.protocol.Raw
+import de.timo.radarsensor.protocol.Recal
 import de.timo.radarsensor.protocol.Reconnect
 import de.timo.radarsensor.protocol.Rezoom
 import de.timo.radarsensor.protocol.Room
@@ -57,6 +58,8 @@ class LiveSnapshot(
     val iqZoomAmp: FloatArray,
     val iqTemp: FloatArray,
     val iqSaturatedFrames: Long,
+    /** Frames mit frame_delayed (V1.5) */
+    val iqDelayedFrames: Long,
     val lastIq3: Iq3?,
     val lastRaw: Raw?,
     val rawFrames: Long,
@@ -158,6 +161,7 @@ class LiveStore(
     private val iqZoom = FloatRing(iqCap)
     private val iqTemp = FloatRing(iqCap)
     private var iqSaturated = 0L
+    private var iqDelayed = 0L
     private var lastIq3: Iq3? = null
     private var lastRaw: Raw? = null
     private var rawFrames = 0L
@@ -260,6 +264,7 @@ class LiveStore(
                 zoomEnd = msg.zoomEndMm
                 event(EventKind.START, "iq3 Zoom ${msg.zoomStartMm.toInt()}–${msg.zoomEndMm.toInt()} mm" + if (msg.raw) ", Rohdaten" else "")
             }
+            is Recal -> event(EventKind.REZOOM, "Neu kalibriert")
             is Rezoom -> {
                 zoomStart = msg.zoomStartMm
                 zoomEnd = msg.zoomEndMm
@@ -350,6 +355,7 @@ class LiveStore(
         listOf(iqT, iqDisp, iqLoop, iqZoom, iqTemp, targetT, targetDist, vT, vBr, vHr, vHrSpec, vHrAcf, vHrIbi, vConf, vResp, vHeart, vSnr, vRmssd, dT, dCompute, dMotion, dopT, dopV, dopAmp, peakT, peakMm, peakAmp)
             .forEach { it.clear() }
         iqSaturated = 0
+        iqDelayed = 0
         lastIq3 = null
         lastRaw = null
         rawFrames = 0
@@ -413,6 +419,7 @@ class LiveStore(
         iqZoom.add(m.zoomAmp)
         iqTemp.add(m.tempC.toFloat())
         if (m.saturated) iqSaturated++
+        if (m.delayed == true) iqDelayed++
         lastIq3 = m
     }
 
@@ -480,6 +487,7 @@ class LiveStore(
                 iqZoomAmp = iqZoom.toArray(),
                 iqTemp = iqTemp.toArray(),
                 iqSaturatedFrames = iqSaturated,
+                iqDelayedFrames = iqDelayed,
                 lastIq3 = lastIq3,
                 lastRaw = lastRaw,
                 rawFrames = rawFrames,

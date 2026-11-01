@@ -94,6 +94,7 @@ public:
         else if (starts(c, "@ROOM,")) onRoom(c);
         else if (starts(c, "@VITAL,")) onVital(c);
         else if (starts(c, "@REZOOM,")) onRezoom(c);
+        else if (starts(c, "@RECAL,")) onRecal(c);
         else if (starts(c, "@RECONNECT,")) onReconnect(c);
         else if (starts(c, "@WARN,")) emit(c);
         else if (strcmp(c, "@END") == 0) onEnd(c);
@@ -124,8 +125,8 @@ public:
         bool last_digit = frames_ > 0 && gaps_ == 0 && extra_ == 0;
         for (TagStat &t : stats_)
             if (t.other > 0 || t.max_units > 1.0 + 1e-6) last_digit = false;
-        report("DSP-Nachrechnung: %lu Frames in %u Stream(s), Frame-Lücken %lu, Rezooms %lu, Neuverbindungen %lu\n",
-               frames_, streams_, gaps_, rezooms_, reconnects_);
+        report("DSP-Nachrechnung: %lu Frames in %u Stream(s), Frame-Lücken %lu, Rezooms %lu, Neuverbindungen %lu, "
+               "Neu-Kalibrierungen %lu\n", frames_, streams_, gaps_, rezooms_, reconnects_, recals_);
         for (TagStat &t : stats_) {
             report("  %-10s verglichen %7lu, gleich %7lu", t.tag, t.compared, t.equal);
             if (t.equal != t.compared)
@@ -324,7 +325,17 @@ private:
         const char *iq3 = have_iq3_ && lfield(iq3_.c_str(), 7, -1) == frame ? iq3_.c_str() : nullptr;
         const int16_t temp = iq3 ? (int16_t)lfield(iq3, 2) : 0;
         float um = 0.0f;
+        const long delayed = iq3 ? lfield(iq3, 9, -1) : -1;  /* frame_delayed, hinten an @IQ3 seit V1.5 */
+#ifdef A121_DSP_FRAME_FLAGS
+        FrameFlags ff;
+        ff.tick      = (uint32_t)tick;
+        ff.have_tick = true;
+        ff.saturated = iq3 && lfield(iq3, 6) != 0;
+        ff.delayed   = delayed > 0;
+        dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um, ff);
+#else
         dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um);
+#endif
         const float lb_amp = sqrtf((float)pts[0].real * pts[0].real + (float)pts[0].imag * pts[0].imag);
         const uint16_t b0 = 1U + (kZoomPoints / 2U);
         const float z_amp = sqrtf((float)pts[b0].real * pts[b0].real + (float)pts[b0].imag * pts[b0].imag);
@@ -332,8 +343,10 @@ private:
             missing("@IQ3 zum Frame fehlt");
             return;
         }
-        snprintf(buf_, sizeof(buf_), "@IQ3,%lu,%d,%.1f,%.2f,%.1f,%lu,%lu,%lu", ufield(iq3, 1), (int)temp, lb_amp, um,
-                 z_amp, ufield(iq3, 6), (unsigned long)frame, tick);
+        const int len = snprintf(buf_, sizeof(buf_), "@IQ3,%lu,%d,%.1f,%.2f,%.1f,%lu,%lu,%lu", ufield(iq3, 1), (int)temp,
+                                 lb_amp, um, z_amp, ufield(iq3, 6), (unsigned long)frame, tick);
+        if (delayed >= 0 && len > 0 && (size_t)len < sizeof(buf_))
+            snprintf(buf_ + len, sizeof(buf_) - (size_t)len, ",%ld", delayed);
         compare(IQ3, iq3, buf_);
         emit(buf_);
         have_iq3_ = false;
@@ -395,6 +408,14 @@ private:
         emit(c);
     }
 
+    /** Neu-Kalibrierung (V1.5): gleiches Zoom-Fenster, Historie neu wie beim Rezoom. */
+    void onRecal(const char *c) {
+        flushVital();
+        dsp_.setZoomStartPoint(zoom_pt_);
+        recals_++;
+        emit(c);
+    }
+
     void onReconnect(const char *c) {
         if (lfield(c, 3) == 1) {
             dsp_.setZoomStartPoint(zoom_pt_);  /* wie cmdIq3(): Lücke im Signal, Verlauf neu */
@@ -419,7 +440,8 @@ private:
     int32_t zoom_pt_ = 0;
     uint32_t dsp_t_ms_ = 0;
     long last_frame_ = -1;
-    unsigned long last_tick_ = 0, line_no_ = 0, frames_ = 0, gaps_ = 0, rezooms_ = 0, reconnects_ = 0, extra_ = 0;
+    unsigned long last_tick_ = 0, line_no_ = 0, frames_ = 0, gaps_ = 0, rezooms_ = 0, reconnects_ = 0, recals_ = 0,
+                  extra_ = 0;
     unsigned streams_ = 0;
     std::string cur_, iq3_;
     char buf_[kRoomLineMax];

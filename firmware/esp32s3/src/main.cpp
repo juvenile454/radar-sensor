@@ -658,6 +658,10 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   static char rawB64[((a121_dsp::kTotal3SubPts * sizeof(a121_dsp::Complex16) + 2) / 3) * 4 + 1];
   uint32_t nFrames = 0;
   ReconnectState rs;
+  // Neu-Kalibrierung (V1.5): höchstens alle 10 s, falls der Sensor das Flag nach dem Neuaufsetzen weiter meldet
+  static const uint32_t kRecalMinMs = 10000;
+  uint32_t lastRecalMs = 0;
+  bool recalDone = false;
 
   while (true) {
     const StreamInput in = pollStreamInput();
@@ -679,6 +683,22 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     }
     rs.consecTimeouts = 0;
 
+    // calibration_needed (Hersteller: Temperatur ±15 °C seit der letzten Kalibrierung): Session mit demselben
+    // Zoom-Fenster neu aufsetzen (setup kalibriert den Sensor), Historie neu wie beim Rezoom (V1.5, B15)
+    if (meta.calibration_needed && (!recalDone || (millis() - lastRecalMs) >= kRecalMinMs)) {
+      recalDone = true;
+      lastRecalMs = millis();
+      Serial.println("@WARN,calibration_needed");
+      g_srv.stopStreaming();
+      if (g_srv.setupSession(spec) && g_srv.startStreaming()) {
+        g_dsp.setZoomStartPoint(zoomStartPt);
+        // @RECAL,t_ms
+        Serial.printf("@RECAL,%lu\n", (unsigned long)(millis() - tStart));
+      }
+      lastFrameUs = micros();
+      continue;  // der markierte Frame gehört noch zur alten Kalibrierung
+    }
+
     uint32_t nowUs = micros();
     float dtS = (float)(nowUs - lastFrameUs) * 1.0e-6f;
     lastFrameUs = nowUs;
@@ -686,15 +706,20 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     uint16_t nPts = meta.payload_bytes / sizeof(a121_dsp::Complex16);
     if (nPts > a121_dsp::kTotal3SubPts) nPts = a121_dsp::kTotal3SubPts;  // readStreamFrame liest höchstens so viele
     float dispUm = 0.0f;
-    g_dsp.pushFrame(pts, nPts, meta.temperature_c, dtS, dispUm);
+    a121_dsp::FrameFlags ff;
+    ff.tick = meta.tick;
+    ff.have_tick = true;
+    ff.saturated = meta.data_saturated;
+    ff.delayed = meta.frame_delayed;
+    g_dsp.pushFrame(pts, nPts, meta.temperature_c, dtS, dispUm, ff);
 
     const float lbAmp = sqrtf((float)pts[0].real * pts[0].real + (float)pts[0].imag * pts[0].imag);
     const uint16_t b0 = 1U + (a121_dsp::kZoomPoints / 2U);
     const float zAmp  = sqrtf((float)pts[b0].real * pts[b0].real + (float)pts[b0].imag * pts[b0].imag);
     const uint32_t frameNo = nFrames++;
 
-    // @IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated,frame,tick (frame/tick seit proto 1)
-    Serial.printf("@IQ3,%lu,%d,%.1f,%.2f,%.1f,%u,%lu,%lu\n",
+    // @IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated,frame,tick,delayed (frame/tick seit proto 1, delayed seit V1.5)
+    Serial.printf("@IQ3,%lu,%d,%.1f,%.2f,%.1f,%u,%lu,%lu,%u\n",
                   (unsigned long)(millis() - tStart),
                   (int)meta.temperature_c,
                   lbAmp,
@@ -702,7 +727,8 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
                   zAmp,
                   (unsigned)meta.data_saturated,
                   (unsigned long)frameNo,
-                  (unsigned long)meta.tick);
+                  (unsigned long)meta.tick,
+                  (unsigned)meta.frame_delayed);
 
     if (raw) {
       size_t olen = 0;

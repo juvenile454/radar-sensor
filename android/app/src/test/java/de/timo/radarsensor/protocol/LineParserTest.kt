@@ -25,6 +25,16 @@ class LineParserTest {
         assertEquals(572L, m.tick)
     }
 
+    @Test fun iq3MitDelayed() {
+        // V1.5: frame_delayed hinten an @IQ3
+        assertEquals(true, parse<Iq3>("@IQ3,8,14,1419.0,0.00,206.6,0,0,572,1").delayed)
+        assertNull(parse<Iq3>("@IQ3,8,14,1419.0,0.00,206.6,0,0,572").delayed)
+    }
+
+    @Test fun neuKalibrierung() {
+        assertEquals(Recal(12345L), LineParser.parse("@RECAL,12345"))
+    }
+
     @Test fun iq3AlteFirmwareOhneZaehler() {
         val m = parse<Iq3>("@IQ3,8,14,1419.0,-3.25,206.6,1")
         assertNull(m.frame)

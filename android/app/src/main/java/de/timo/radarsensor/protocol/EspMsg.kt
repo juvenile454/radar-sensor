@@ -25,7 +25,7 @@ data class Iq3Start(
     val raw: Boolean,
 ) : EspMsg
 
-/** `@IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated[,frame,tick]` je Frame (60 Hz). */
+/** `@IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated[,frame,tick[,delayed]]` je Frame (60 Hz). */
 data class Iq3(
     val tMs: Long,
     val tempC: Int,
@@ -35,6 +35,8 @@ data class Iq3(
     val saturated: Boolean,
     val frame: Long?,
     val tick: Long?,
+    /** frame_delayed vom Server (seit V1.5; ältere Firmware: null) */
+    val delayed: Boolean? = null,
 ) : EspMsg
 
 /**
@@ -133,6 +135,9 @@ data class Dsp(
             }
     }
 }
+
+/** `@RECAL,t_ms`: Sensor meldete calibration_needed, Session mit gleichem Zoom-Fenster neu aufgesetzt (V1.5). */
+data class Recal(val tMs: Long) : EspMsg
 
 /** `@REZOOM,start_mm,end_mm` */
 data class Rezoom(

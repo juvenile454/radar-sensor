@@ -36,6 +36,7 @@ object LineParser {
                     saturated = p[6] != "0",
                     frame = p.getOrNull(7)?.toLong(),
                     tick = p.getOrNull(8)?.toLong(),
+                    delayed = p.getOrNull(9)?.let { it != "0" },
                 )
             "@RAW" -> parseRaw(p)
             "@ROOMPROF" -> {
@@ -98,6 +99,7 @@ object LineParser {
             "@IQ3_START" ->
                 Iq3Start(p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p.getOrNull(4)?.let { it != "0" } ?: false)
             "@REZOOM" -> Rezoom(p[1].toFloat(), p[2].toFloat())
+            "@RECAL" -> Recal(p[1].toLong())
             "@RECONNECT" -> Reconnect(p[1].toLong(), p[2].toInt(), p[3] != "0")
             "@WARN" -> Warn(p.drop(1).joinToString(","))
             "@END" -> End

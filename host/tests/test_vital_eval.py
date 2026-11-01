@@ -163,6 +163,22 @@ class LoadRecordingTest(unittest.TestCase):
         self.assertEqual(rec.beats_ms.size, 0)
 
 
+class SensorCountersTest(unittest.TestCase):
+    def test_sums_and_recal(self):
+        """V1.5: Summe der Sensor-Zähler aus @DSP und Zahl der Neu-Kalibrierungen (@RECAL) je Aufnahme."""
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text(
+                "@IQ3_START,610,670,60.0,1\n"
+                "@DSP,1000,0,5,0.0,300000,0,0,0,1,2,0,1\n"
+                "@WARN,calibration_needed\n@RECAL,1500\n"
+                "@DSP,2000,0,5,0.0,300000,0,0,0,1,1,2,0\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n0,0\n1,1000\n2,1400\n3,1500\n4,2000\n")
+            r = ve.evaluate(ve.load_recording(p))
+        self.assertEqual(r["sensor"], {"n_delayed": 3, "n_sat": 2, "n_tickgap": 1, "recal": 1})
+        self.assertIn("Neu-Kalibrierungen 1", ve.format_report("x", r))
+
+
 class SyntheticRecordingTest(unittest.TestCase):
     """Fertig-Kriterium V0.4 auf einer synthetischen Aufnahme (vital_sim.py record): Bericht entsteht, und --replay mit
     dem unveränderten Header liefert dieselben Zahlen wie die „Live"-Zeilen. Nur Simulation."""

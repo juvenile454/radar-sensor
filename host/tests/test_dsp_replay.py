@@ -60,6 +60,50 @@ class ReplayTest(unittest.TestCase):
         self.assertTrue(lines[i - 2].startswith("@DSP,"), lines[i - 2][:40])
 
 
+class SensorFlagsReplayTest(unittest.TestCase):
+    """V1.5: @IQ3 trägt hinten frame_delayed; die Nachrechnung gibt die Zeile gleich wieder aus und zählt wie der
+    ESP32. @RECAL (Neu-Kalibrierung, gleiches Zoom-Fenster) beginnt die Historie neu wie ein Rezoom."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        d = pathlib.Path(cls.tmp.name)
+        vital_sim.make_frames(d / "base", seed=1, T=30.0)
+        skel = d / "skel.log"
+        vital_sim.write_skeleton(pathlib.Path(f"{d / 'base'}.iq"), 244, skel, vital_placeholders=False)
+        lines, out = skel.read_text().splitlines(), []
+        for ln in lines:
+            if ln.startswith("@IQ3,"):
+                frame = int(ln.split(",")[7])
+                ln += ",1" if frame in (100, 101, 102) else ",0"   # 3 verspätete Frames im 2. Report
+            out.append(ln)
+            if ln.startswith("@ROOM,") and ln.split(",")[1] == "14983":   # nach dem 15. Report neu kalibriert
+                out.append("@RECAL,14990")
+        (d / "skel2.log").write_text("\n".join(out) + "\n")
+        vital_sim.replay_skeleton(d / "skel2.log", d / "out.log")
+        cls.lines = (d / "out.log").read_text().splitlines()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_iq3_keeps_delayed_field(self):
+        iq3 = [ln for ln in self.lines if ln.startswith("@IQ3,")]
+        self.assertEqual(iq3[100].split(",")[-1], "1")
+        self.assertEqual(iq3[99].split(",")[-1], "0")
+        self.assertEqual(len(iq3[0].split(",")), 10)
+
+    def test_delayed_counted_in_report(self):
+        dsp = [ln.split(",") for ln in self.lines if ln.startswith("@DSP,")]
+        self.assertEqual([f[10] for f in dsp[:3]], ["0", "3", "0"])
+
+    def test_recal_restarts_history(self):
+        i = next(k for k, ln in enumerate(self.lines) if ln.startswith("@RECAL,"))
+        dsp_after = [ln.split(",") for ln in self.lines[i:] if ln.startswith("@DSP,")]
+        self.assertEqual([f[2] for f in dsp_after[:7]], ["0"] * 7)   # < 8 s Daten nach dem Neubeginn
+        self.assertIn("1", [f[2] for f in dsp_after])
+
+
 class BaselineHeaderTest(unittest.TestCase):
     """Die Basislinie (V0.6) rechnet Aufnahmen mit dem DSP-Header vom 2026-11-01 (Commit 0e2d836) nach; die heutige
     Nachrechnung muss mit diesem alten Header übersetzen und eigene @VITAL-Zeilen schreiben."""

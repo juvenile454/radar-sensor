@@ -52,6 +52,7 @@ class Recording:
     events: list[tuple[float, str]]
     starts_ms: list[float]           # rx_ms von @IQ3_START, @REZOOM, @RECAL (Neubeginn der Historie)
     end_ms: float                    # letzte Empfangszeit
+    n_recal: int = 0                 # @RECAL-Zeilen (Neu-Kalibrierung, V1.5)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -129,7 +130,8 @@ def load_recording(folder: pathlib.Path, lines: list[str] | None = None) -> Reco
                                np.array([_num(r[2]) if len(r) > 2 else math.nan for r in ref], float))
     events = [(_num(r[0]), ",".join(r[1:]).strip()) for r in _read_csv(folder / "events.csv")]
     end = float(np.nanmax(rx)) if rx.size else 0.0
-    return Recording(folder, vd, dd, beats, rr, events, starts, end)
+    n_recal = sum(1 for ln in orig if ln.startswith("@RECAL,"))
+    return Recording(folder, vd, dd, beats, rr, events, starts, end, n_recal)
 
 
 def _t_to_rx(lines: list[str], rx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -322,6 +324,10 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         else:
             res["apnea"] = "kein br_state in @DSP (Firmware vor V1.4)"
     res["first_s"] = first_value_delays(rec.starts_ms, rec.vital["rx_ms"])
+    # Sensor-Flags (V1.5): Summen der Zähler je Report; ältere Firmware ohne die Felder → None
+    if any(np.isfinite(d[k]).any() for k in ("n_delayed", "n_sat", "n_tickgap")):
+        res["sensor"] = {k: int(np.nansum(d[k])) for k in ("n_delayed", "n_sat", "n_tickgap")}
+        res["sensor"]["recal"] = rec.n_recal
     return res
 
 
@@ -365,6 +371,10 @@ def format_report(name: str, r: dict) -> str:
         else:
             d = ", ".join(_f(x) for x in a["delays_s"]) or "–"
             w(f"Atem anhalten: {a['detected']} von {a['episodes']} erkannt, Verzug {d} s, Fehlalarme {a['false_alarms']}.\n\n")
+    if "sensor" in r:
+        sn = r["sensor"]
+        w(f"Sensor-Flags: verspätete Frames {sn['n_delayed']}, gesättigt {sn['n_sat']}, tick-Lücken {sn['n_tickgap']}, "
+          f"Neu-Kalibrierungen {sn['recal']}.\n\n")
     return out.getvalue()
 
 

@@ -40,13 +40,13 @@ Tabs: Übersicht, Signal, Raum, Vital, Doppler, Experten, Diagnose, Konsole, Auf
 
 | Quelle (Befehl) | Zeilen | Rate | Ansicht |
 |---|---|---|---|
-| `iq3` | `@IQ3` (Zeit, Temperatur, Loopback-Amplitude, Weg µm, Zoom-Amplitude, Sättigung, Frame, tick) | 60 Hz | Signal: Weg-Kurve, Amplituden, Sättigung |
+| `iq3` | `@IQ3` (Zeit, Temperatur, Loopback-Amplitude, Weg µm, Zoom-Amplitude, Sättigung, Frame, tick, verspätet) | 60 Hz | Signal: Weg-Kurve, Amplituden, Sättigung, verspätete Frames |
 | `iq3 … raw` | zusätzlich `@RAW` (105 komplexe int16 je Frame, Base64) | 60 Hz | nur Aufnahme (Nachrechnen, PC) |
 | `iq3` | `@ROOMPROF` (80 Amplituden + 80 Bewegungswerte, 0,30–2,67 m) | 5 Hz | Raum: Profil + Wasserfall |
 | `iq3` | `@ROOM` (Rauschen, Ziele: Abstand, Stärke, Bewegung, bewegt) | 1 Hz | Raum: Zielmarker; Übersicht: Hauptziel |
 | `iq3` | `@VITAL` (Atmung, Puls fused/Spektrum/AKF/IBI, IBI-Median, RMSSD, Konfidenz, Atemtiefe, Herz-Amplitude, SNR, Loopback-Phasenrauschen, Zielabstand, Anzahl Ziele) | 1 Hz | Übersicht/Vital; Puls **immer als „Kandidat“** mit Konfidenz |
-| `iq3` | `@DSP` (gültig, Punkt, Konfidenz, Rechenzeit, Bewegungsanteil, Oberwelle, Punkt-Einigkeit, Atemzustand 0–4) | 1 Hz | Vital + Diagnose, Atemzustand im Vital-Tab, „angehalten" als Ereignis |
-| `iq3` | `@IQ3_START`, `@REZOOM`, `@RECONNECT`, `@WARN`, `FEHLER…`, `@END` | Ereignis | Ereignisleiste, Diagnose |
+| `iq3` | `@DSP` (gültig, Punkt, Konfidenz, Rechenzeit, Bewegungsanteil, Oberwelle, Punkt-Einigkeit, Atemzustand 0–4, je Report verspätete / gesättigte Frames und tick-Lücken) | 1 Hz | Vital + Diagnose, Atemzustand im Vital-Tab, „angehalten" als Ereignis |
+| `iq3` | `@IQ3_START`, `@REZOOM`, `@RECAL` (Neu-Kalibrierung nach `calibration_needed`), `@RECONNECT`, `@WARN`, `FEHLER…`, `@END` | Ereignis | Ereignisleiste, Diagnose |
 | `doppler` | `@DOPPLER_START`, `@DOPPLER` (mit Frame, tick) | ~31 Hz | Doppler |
 | `sess …` | `@SESS_META`, `@SESS_SUB`, `@PEAK`, `@AMP`, `@SESS_STAT`, `@SESS_END` | je Session | Experten |
 | `help`, `info`, `bus`, `srv_info`, `hello`, … | Freitext / `@HELLO` | — | Konsole (jeder Befehl frei sendbar, Schnellbefehle, Server-Neustart-Test Strg+R) |

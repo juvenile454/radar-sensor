@@ -52,6 +52,20 @@ class LiveStoreTest {
         assertEquals(11.6f, c.seconds(400, 11_610), 1e-6f)
     }
 
+    @Test fun neuKalibrierungUndVerspaeteteFrames() {
+        val s = LiveStore()
+        s.feed(
+            "@IQ3_START,500,560,60.0,0",
+            "@IQ3,8,14,1419.0,0.00,206.6,0,0,572,0",
+            "@IQ3,25,14,1419.0,0.00,206.6,0,1,589,1",
+            "@WARN,calibration_needed",
+            "@RECAL,40",
+        )
+        val snap = s.snapshot()
+        assertEquals(1L, snap.iqDelayedFrames)
+        assertTrue(snap.events.any { it.kind == EventKind.REZOOM && it.text == "Neu kalibriert" })
+    }
+
     @Test fun atemAngehaltenAlsEreignis() {
         val s = LiveStore()
         s.feed(

@@ -21,8 +21,10 @@ def run_cpp(body: str) -> str:
         c = pathlib.Path(d) / "t.cpp"
         exe = pathlib.Path(d) / "t"
         c.write_text(src)
-        subprocess.run(["g++", "-O1", "-std=c++17", "-Wall", f"-I{SHIM}", f"-I{FW}", str(c), "-o", str(exe), "-lm"],
-                       check=True, capture_output=True, text=True)
+        cc = subprocess.run(["g++", "-O1", "-std=c++17", "-Wall", f"-I{SHIM}", f"-I{FW}", str(c), "-o", str(exe), "-lm"],
+                            capture_output=True, text=True)
+        if cc.returncode != 0:
+            raise AssertionError("Übersetzen fehlgeschlagen:\n" + cc.stderr[-3000:])
         return subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout
 
 
@@ -119,11 +121,11 @@ class SignalQualityTest(unittest.TestCase):
 
     def quality(self, **kw) -> float:
         q = dict(peak_db=15.0, on_harmonic="false", hr_spec=72.0, hr_acf=72.0, hr_ibi=72.0, hr_fused=72.0,
-                 hr_fused_5s_ago=72.0, motion_pct=0.0)
+                 hr_fused_5s_ago=72.0, motion_pct=0.0, sat_pct=0.0)
         q.update(kw)
         init = ", ".join(str(q[k]) + ("f" if isinstance(q[k], float) else "") for k in
                          ("peak_db", "on_harmonic", "hr_spec", "hr_acf", "hr_ibi", "hr_fused", "hr_fused_5s_ago",
-                          "motion_pct"))
+                          "motion_pct", "sat_pct"))
         return float(run_cpp(f"QualityInputs q = {{{init}}}; printf(\"%.3f\", signalQuality(q));"))
 
     def test_clear_peak_full_agreement(self):
@@ -140,6 +142,11 @@ class SignalQualityTest(unittest.TestCase):
     def test_agreement_two_and_one(self):
         self.assertAlmostEqual(self.quality(hr_ibi=90.0), 70.0, places=2)
         self.assertAlmostEqual(self.quality(hr_ibi=90.0, hr_acf=50.0), 50.0, places=2)
+
+    def test_saturation_halves_from_one_percent(self):
+        """V1.5: gesättigte Frames im Fenster ab 1 % → × 0,5"""
+        self.assertAlmostEqual(self.quality(sat_pct=0.5), 100.0, places=2)
+        self.assertAlmostEqual(self.quality(sat_pct=2.0), 50.0, places=2)
 
     def test_motion_and_jump(self):
         self.assertAlmostEqual(self.quality(motion_pct=50.0), 50.0, places=2)
@@ -274,6 +281,46 @@ class DspLineTest(unittest.TestCase):
         self.assertEqual(f[0], "@DSP")
         self.assertEqual(f[8], "55")
         self.assertEqual(f[9], "2")
+
+    def test_sensor_counters_at_end(self):
+        out = run_cpp('VitalReport r = {}; r.n_delayed = 3; r.n_sat = 2; r.n_tickgap = 1; char b[256];'
+                      'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
+        self.assertEqual(out.split(",")[10:13], ["3", "2", "1"])
+
+
+class FrameFlagsTest(unittest.TestCase):
+    """V1.5 (B15, B16): Sensor-Flags je Frame, Zähler je Report (seit dem letzten), tick-Lücken > 25 ms ohne Rezoom."""
+
+    PUSH = """
+    static Complex16 pts[kTotal3SubPts];
+    static UltimateEspDsp d; d.begin(244, 120, kRoomStep);
+    auto push = [&](uint32_t tick, bool sat, bool del) {
+        FrameFlags ff; ff.tick = tick; ff.have_tick = true; ff.saturated = sat; ff.delayed = del;
+        float um = 0; d.pushFrame(pts, kTotal3SubPts, 20, 0.0f, um, ff);
+    };
+    VitalReport r;
+    """
+
+    def counters(self, body: str) -> list[str]:
+        return run_cpp(self.PUSH + body).split()
+
+    def test_counts_since_last_report(self):
+        out = self.counters("""
+        uint32_t t = 0;
+        for (int i = 0; i < 10; i++) { t += (i == 5) ? 60 : 17; push(t, i == 2 || i == 3, i >= 7); }
+        d.computeVitalReport(r); printf("%u %u %u ", r.n_delayed, r.n_sat, r.n_tickgap);
+        push(t + 17, false, false);
+        d.computeVitalReport(r); printf("%u %u %u", r.n_delayed, r.n_sat, r.n_tickgap);""")
+        self.assertEqual(out, ["3", "2", "1", "0", "0", "0"])
+
+    def test_no_tick_gap_across_rezoom(self):
+        out = self.counters("""
+        push(100, false, false); push(117, false, false);
+        d.setZoomStartPoint(250);
+        push(5000, false, false); push(5017, false, false);
+        d.computeVitalReport(r); printf("%u", r.n_tickgap);""")
+        self.assertEqual(out, ["0"])
+
 
 
 if __name__ == "__main__":

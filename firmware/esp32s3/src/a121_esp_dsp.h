@@ -107,6 +107,8 @@ static constexpr float    kApneaRel    = 0.10f;  /* angehalten: ≥ 90 % unter d
 static constexpr float    kShallowRel  = 0.70f;  /* flach: ≥ 30 % darunter */
 static constexpr uint8_t  kBrLowReports = 1U;    /* „seit ≥ 10 s": ein niedriger Wert, das Fenster ist schon 10 s lang */
 static constexpr float    kBrMotionPct = 50.0f;  /* Zustand Bewegung ab motion_pct > 50 */
+static constexpr uint32_t kTickGapMs   = 25U;    /* tick-Abstand > 25 ms gilt als Lücke (Soll 16,7 ms; XM125: 1 tick = 1 ms) */
+static constexpr float    kSatMaxPct   = 1.0f;   /* ab 1 % gesättigter Frames im Fenster: Konfidenz × 0,5 (V1.5) */
 static constexpr uint8_t  kBrStateNormal = 0U, kBrStateNoPeak = 1U, kBrStateApnea = 2U, kBrStateMotion = 3U,
                           kBrStateShallow = 4U;
 static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
@@ -391,6 +393,16 @@ private:
     uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, state_ = kBrStateNormal;
 };
 
+#define A121_DSP_FRAME_FLAGS 1  /* pushFrame nimmt FrameFlags (für host/dsp_replay mit älteren Headern) */
+
+/** Sensor-Flags eines Frames aus dem Server-Kopf (V1.5, B15, B16). */
+struct FrameFlags {
+    uint32_t tick      = 0;
+    bool     have_tick = false;
+    bool     saturated = false;  /* data_saturated */
+    bool     delayed   = false;  /* frame_delayed: der Server hat Frames nicht rechtzeitig geliefert */
+};
+
 struct Complex16 {
     int16_t real;
     int16_t imag;
@@ -409,13 +421,15 @@ struct QualityInputs {
     bool  on_harmonic;      /* verfolgte Frequenz liegt auf einer Atem-Oberwelle */
     float hr_spec, hr_acf, hr_ibi, hr_fused, hr_fused_5s_ago;
     float motion_pct;       /* Anteil der 1-s-Blöcke mit Bewegung im Fenster */
+    float sat_pct = 0.0f;   /* Anteil gesättigter Frames im Fenster (V1.5) */
 };
 
 /**
  * Konfidenz 0–100 % aus unabhängigen Hinweisen statt aus der Einigkeit der 24 Zoom-Punkte (die sehen fast dasselbe
  * Signal, B4): 100 × clamp((peak_db − 3) / 12) × 0,5 auf einer Oberwelle × 1 / 0,7 / 0,5 bei 3 / 2 / ≤ 1 Schätzern
  * (Spektrum, Autokorrelation, Einzelschläge) innerhalb ±5 /min des Ergebnisses × (1 − Bewegungsanteil) × 0,7 bei einem
- * Sprung > 8 /min in 5 s. Faktoren vorläufig (Prüfstand); an Tag A abstimmen, danach festhalten.
+ * Sprung > 8 /min in 5 s × 0,5 ab 1 % gesättigter Frames (V1.5). Faktoren vorläufig (Prüfstand); an Tag A
+ * abstimmen, danach festhalten.
  */
 inline float signalQuality(const QualityInputs &q) {
     float c = (q.peak_db - 3.0f) / 12.0f;
@@ -427,6 +441,7 @@ inline float signalQuality(const QualityInputs &q) {
     const float mot = q.motion_pct < 0.0f ? 0.0f : (q.motion_pct > 100.0f ? 100.0f : q.motion_pct);
     c *= 1.0f - mot / 100.0f;
     if (q.hr_fused_5s_ago > 0.0f && fabsf(q.hr_fused - q.hr_fused_5s_ago) > 8.0f) c *= 0.7f;
+    if (q.sat_pct >= kSatMaxPct) c *= 0.5f;
     return 100.0f * c;
 }
 
@@ -452,6 +467,9 @@ struct VitalReport {
     float    confidence_pct;   /* signalQuality(): Spitzenhöhe, Oberwelle, Einigkeit der Schätzer, Bewegung, Sprung */
     float    point_agree_pct;  /* frühere Konfidenz: gewichteter Anteil der Zoom-Punkte mit eigener Spitze ±5 /min */
     uint8_t  br_state;         /* Atemzustand (BreathStateTracker): 0 normal, 1 keine Spitze, 2 angehalten, 3 Bewegung, 4 flach */
+    uint16_t n_delayed;        /* seit dem letzten Report: Frames mit frame_delayed (V1.5) */
+    uint16_t n_sat;            /* … mit data_saturated */
+    uint16_t n_tickgap;        /* … tick-Abstände > kTickGapMs (ohne Rezoom/Neubeginn) */
     uint8_t  hr_bin;           /* Zoom-Punkt mit klarstem Puls */
     uint32_t compute_us;       /* Rechenzeit dieses Reports */
     bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
@@ -472,6 +490,7 @@ public:
         zoom_start_pt_ = zoom_start_pt;
         room_start_pt_ = room_start_pt;
         room_step_     = room_step;
+        n_delayed_ = n_sat_ = n_tickgap_ = 0;  /* neuer Stream */
 
         if (!allocated_) {
             hist_zoom_   = allocFloat((size_t)kHistoryLen * kZoomPoints * 2U);
@@ -514,6 +533,8 @@ public:
         alt_count_            = 0;
         hr_hist_n_            = 0;
         br_track_.reset();
+        have_last_tick_       = false;  /* Rezoom/Neubeginn: der nächste tick-Abstand zählt nicht als Lücke */
+        memset(hist_sat_, 0, sizeof(hist_sat_));
 
         memset(zoom_clutter_i_, 0, sizeof(zoom_clutter_i_));
         memset(zoom_clutter_q_, 0, sizeof(zoom_clutter_q_));
@@ -545,8 +566,17 @@ public:
      * @param dt_s wird nicht mehr verwendet (Zeitbasis = kFsHz); bleibt für die Aufrufer-Kompatibilität.
      * @param out_um_sample Auslenkung des Telemetrie-Strahls in µm (für `@IQ3`).
      */
-    void pushFrame(const Complex16 *pts, uint16_t n_pts, int16_t temp_c, float dt_s, float &out_um_sample) {
+    void pushFrame(const Complex16 *pts, uint16_t n_pts, int16_t temp_c, float dt_s, float &out_um_sample,
+                   const FrameFlags &ff = FrameFlags()) {
         (void)dt_s;
+        /* Sensor-Flags zählen (je Report zurückgesetzt); tick-Lücke nur innerhalb einer Historie */
+        if (ff.delayed && n_delayed_ < 0xFFFFU) n_delayed_++;
+        if (ff.saturated && n_sat_ < 0xFFFFU) n_sat_++;
+        if (ff.have_tick) {
+            if (have_last_tick_ && (uint32_t)(ff.tick - last_tick_) > kTickGapMs && n_tickgap_ < 0xFFFFU) n_tickgap_++;
+            last_tick_      = ff.tick;
+            have_last_tick_ = true;
+        }
         if (!allocated_ || pts == nullptr || n_pts < (1U + kZoomPoints)) {
             out_um_sample = 0.0f;
             return;
@@ -639,6 +669,7 @@ public:
         const float disp_um = cum_phase_rad_ * kRadToUm;
         out_um_sample       = disp_um;
         hist_um_[hist_write_idx_]     = disp_um;
+        hist_sat_[hist_write_idx_]    = ff.saturated ? 1U : 0U;
         hist_lb_phi_[hist_write_idx_] = lb_phi;
         hist_write_idx_ = (uint16_t)((hist_write_idx_ + 1U) % kHistoryLen);
         if (hist_count_ < kHistoryLen) hist_count_++;
@@ -679,6 +710,10 @@ public:
     bool computeVitalReport(VitalReport &rep) {
         const uint32_t t0 = micros();
         memset(&rep, 0, sizeof(rep));
+        rep.n_delayed = n_delayed_;
+        rep.n_sat     = n_sat_;
+        rep.n_tickgap = n_tickgap_;
+        n_delayed_ = n_sat_ = n_tickgap_ = 0;
         rep.frame_count   = frame_count_;
         rep.fs_hz         = kFsHz;
         rep.temperature_c = last_temp_c_;
@@ -997,6 +1032,11 @@ public:
         qi.hr_fused        = hr_prev_;
         qi.hr_fused_5s_ago = (hr_hist_n_ >= 5) ? hr_hist_[(hr_hist_n_ - 5) % 5] : 0.0f;
         qi.motion_pct      = rep.motion_pct;
+        {
+            uint16_t n_sat_win = 0;
+            for (uint16_t n = 0; n < N; n++) n_sat_win += hist_sat_[(start + n) % kHistoryLen];
+            qi.sat_pct = 100.0f * (float)n_sat_win / (float)N;
+        }
         rep.confidence_pct = signalQuality(qi);
         hr_hist_[hr_hist_n_ % 5] = hr_prev_;
         if (hr_hist_n_ < 250) hr_hist_n_++;
@@ -1394,6 +1434,10 @@ private:
     uint8_t  hr_miss_              = 0;
     uint8_t  alt_count_            = 0;     /* Reports in Folge mit Alternative zur Oberwelle */
     BreathStateTracker br_track_;           /* Atemzustand (V1.4) */
+    uint16_t n_delayed_ = 0, n_sat_ = 0, n_tickgap_ = 0;  /* Sensor-Zähler seit dem letzten Report (V1.5) */
+    uint32_t last_tick_ = 0;
+    bool     have_last_tick_ = false;
+    uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated je Frame der Historie */
     float    hr_hist_[5]           = {};    /* hr_fused der letzten 5 Reports (Sprung-Abschlag) */
     uint8_t  hr_hist_n_            = 0;
 
@@ -1459,7 +1503,7 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
 /*
  * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
  * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
- *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct,br_state
+ *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct,br_state,n_delayed,n_sat,n_tickgap
  *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
  *          target_mm,n_room
  *   @REZOOM,zoom_start_mm,zoom_end_mm
@@ -1471,9 +1515,10 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
-    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u", (unsigned long)t_ms, (unsigned)ok,
-                             (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us, rep.motion_pct,
-                             (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state),
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u", (unsigned long)t_ms,
+                             (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,
+                             rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state,
+                             (unsigned)rep.n_delayed, (unsigned)rep.n_sat, (unsigned)rep.n_tickgap),
                     cap);
 }
 

@@ -116,6 +116,7 @@ fun SignalPage(s: LiveSnapshot) =
         LineChart("Loopback-Amplitude", listOf(Series(s.iqT, s.iqLoopAmp, Pal.c5, "Loopback")), xWindow = window.toFloat(), markers = m)
         LineChart("Sensortemperatur", listOf(Series(s.iqT, s.iqTemp, Pal.c2, "°C")), unit = "°C", height = 110)
         Labeled("Gesättigte Frames", "${s.iqSaturatedFrames}")
+        Labeled("Verspätete Frames (Server)", "${s.iqDelayedFrames}")
         Labeled("Zoom-Fenster", if (s.zoomStartMm.isNaN()) "–" else "%.0f–%.0f mm (%d × neu gewählt)".format(s.zoomStartMm, s.zoomEndMm, s.rezooms))
         val raw = s.lastRaw
         if (raw != null && raw.points >= 105) {
