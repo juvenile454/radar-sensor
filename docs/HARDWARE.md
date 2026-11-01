@@ -268,7 +268,7 @@ Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-
    - Behält alle bestehenden I2C-Befehle (`vital`, `zoom`, `auto`, `dist`, `cfg`, `ver`, `scan`) bei und ergänzt den Sparse-IQ-Stack:
      - `srv_info`: Verbindet sich auf `GPIO15`/`GPIO16` (schaltet von 115 200 auf 921 600 Baud hoch) und liest `get_system_info` & `get_sensor_info`.
      - `stm_reset`: Sendet ein 15-ms UART-Break auf `GPIO16` (`PB10`). Der Framing-Error setzt den STM32 zurück (USART1-Variante und SDK-Neubau, beide über Kanal B bestätigt). Jeder Server-Connect des ESP32 beginnt seit 2026-11-01 mit diesem Break.
-     - `iq3 [sek] [start_mm]`: Startet die **3-Subsweep Sparse-IQ Session @ 60 Hz** (Subsweep 0 On-Chip Loopback + Subsweep 1 2,5-mm Vital-Zoom + Subsweep 2 Raum-Scan 0,30–2,67 m, 80 × 30 mm) und berechnet direkt auf dem ESP32-S3 (im 8 MB Octal-PSRAM) Loopback-Phasenderotation, 5-Bin Beamforming, Kåsa-Kreisfit + DACM-Mikrometer-Demodulation, gleitende 7-s Hann-Hilbert Atem-Oberwellen-Projektion ($m=1\dots 6$), Tri-Modale Herzfrequenz (Spektral/HPS + Autokorrelation + Zeitbereichs-IBI/RMSSD) sowie automatischen Schnell-Rezoom (`@REZOOM`).
+     - `iq3 [sek] [start_mm]`: Startet die **3-Subsweep Sparse-IQ Session @ 60 Hz** (Subsweep 0 On-Chip Loopback + Subsweep 1 2,5-mm Vital-Zoom + Subsweep 2 Raum-Scan 0,30–2,67 m, 80 × 30 mm) und berechnet direkt auf dem ESP32-S3 (im 8 MB Octal-PSRAM) Loopback-Phasenderotation, 5-Bin Beamforming, Kåsa-Kreisfit + DACM-Mikrometer-Demodulation, gleitende 7-s Hann-Hilbert Atem-Oberwellen-Projektion ($m=1\dots 6$), Tri-Modale Herzfrequenz (Spektral/HPS + Autokorrelation + Zeitbereichs-IBI/RMSSD) sowie automatischen Schnell-Rezoom (`@REZOOM`). Ausgabe: `@IQ3` je Frame, `@ROOMPROF` 5/s (Raumprofil), `@DSP`/`@ROOM`/`@VITAL` 1/s; Format von `@ROOM`/`@ROOMPROF` in `a121_esp_dsp.h`, Auswertung und Raumbild mit `host/a121_esp_ultimate.py`.
      - `doppler [sek] [mm] [hz]`: Aktiviert `continuous_sweep_mode=true` + `double_buffering=true` (64 Sweeps/Frame @ bis zu 4 000 Hz) für kohärente Mikro-Doppler-/Vibrationsmessungen.
      - `bridge`: Transparente USB-CDC ↔ Server-UART Bridge (inkl. automatischer Baudraten-Synchronisation), sodass PC-Skripte wie `host/a121_ultimate_vital.py` auch direkt durch den ESP32-S3 streamen können.
      - `sess …` (seit 2026-11-01, `a121_session_console.h`): beliebige Sparse-IQ-Session ohne PC. Die Konfiguration liegt im RAM
@@ -418,6 +418,67 @@ startet jetzt bei **jedem** Fehler der Server-UART neu (`ErrorCode != HAL_UART_E
 - **Bug 4, behoben (ESP32): Der Client las jedes Byte der Frame-Kopfzeile einzeln aus dem UART-Treiber.** Bei 375 Frames/s
   lief der 32-KB-Puffer über (4873 FIFO-Overflows, Rate brach auf 12 Hz ein). Fix: 1-KB-Zwischenpuffer im Client, gefüllt in
   Blöcken. Danach 369 Frames/s mit Rückstau 0. `iq3` (58,5 Hz), `doppler` (31,2 Hz) und Bridge (≈ 195 kB/s) danach erneut geprüft.
+
+**`iq3` gibt den Raum aus, Zielsuche korrigiert (2026-11-01, mobiler Aufbau):**
+- Neue Zeilen: `@ROOMPROF` alle 12 Frames (5/s) mit geglätteter Amplitude und Bewegung aller 80 Raum-Punkte (0,30–2,67 m,
+  30 mm) und `@ROOM` je Report (1/s) mit Rauschpegel und bis zu 8 Zielen (Entfernung, Amplitude, Bewegung, bewegt ja/nein).
+  Zeitachse ist der Sensor-`tick` (ms), der auch über Rechenpausen lückenlos läuft. Vorher wurde nur die Anzahl der Ziele ausgegeben.
+- **Bug 5, behoben (ESP32-DSP): Die Zielsuche im Raum-Scan sah fast nur Rauschen.** Die festen Schwellen (Wert > 120, Bewegung > 12)
+  lagen unter dem Rauschen (Amplitude ≈ 55, Bewegung ≈ 55), und es zählten nur die 4 nächsten Spitzen. Die Liste war deshalb immer
+  mit Rausch-Spitzen bis ≈ 1,2 m gefüllt, und eine Rausch-Spitze im Zoom-Fenster galt als „bewegtes Ziel in der Nähe“ und
+  verhinderte den Rezoom. Jetzt: Rauschpegel = unteres Viertel der 80 Punkte, Ziel ab 2 × Rauschen, „bewegt“ ab 3 ×, die 8 stärksten,
+  Entfernung parabolisch verfeinert, Rezoom auf das stärkste bewegte Ziel.
+- PC-Prüfung (`host/a121_esp_ultimate.py --mode verify-cpp`, derselbe Header für den PC übersetzt, `iq3raw_normal_120s` und
+  `iq3raw_motion_120s`): verfolgter Puls in allen 242 Reports wie vorher (der Puls-/Atemteil ist nicht geändert). Zoom-Fenster
+  richtig (570–630 mm): alt und neu kein Rezoom. Fenster absichtlich falsch gesetzt: alt bei 400 mm (beide Aufnahmen) und 1000 mm
+  (`motion`) nie ein Rezoom; neu bei 400, 750, 1000, 1500 und 2250 mm nach 3–4 s eine Empfehlung auf die Person
+  (Fensterstart 562–688 mm, Person bei 0,60–0,67 m).
+- Am Gerät (`iq3 30 500`, Person sitzend bei ≈ 0,7 m, `2026-11-01_iq3_raum_live1.log/.png`): 1794 Frames in 30 s (59,8 Hz), keine
+  Sättigung; 149 Raumprofile im 200-ms-Takt, eine Lücke von 307 ms beim Rezoom. Rezoom nach 3 s von 500–560 auf 632–692 mm,
+  danach keiner mehr. Rechenzeit je Report weiter ≈ 306 ms.
+- Grenzen: Schwellen an zwei Aufnahmen und einem Live-Lauf derselben Person im selben Raum gesehen. Schwache feste Echos
+  (2–2,6 × Rauschen, z. B. bei 0,42 m und 1,0–1,3 m) erscheinen und verschwinden an der Schwelle.
+
+**Bug 6, behoben (ESP32-DSP): Die Atemfrequenz klebte oft am unteren Rand des Suchbands (6,9 /min)**, in `iq3raw_normal` bei
+30 von 113 Reports, in `iq3raw_motion` bei 35 von 115, live bei 10 von 18. Zwei Ursachen, an den Aufnahmen einzeln belegt
+(Python-Nachbau, der bis auf 0,1 /min mit dem C++-Code übereinstimmt):
+- Die Spektren der 24 Zoom-Punkte wurden ungewichtet summiert. Schwache Punkte (|z| 120–300) hatten 140–240 Phasensprünge in
+  15 s und ein Schein-Wegsignal von 8–11 mm Spitze-Spitze (Abwickel-Fehler). Ihr Tieftonanteil überdeckte die Atmung der
+  starken Punkte, die z. B. bei t = 75 s sauber 17 /min zeigten.
+- Gesucht wurde das größte Bin im Bereich. Bei Lagewechseln (Stufen von 2–5 mm im Wegsignal) steigt die Leistung zu tiefen
+  Frequenzen weiter an, das größte Bin ist dann der Rand, obwohl dort keine Spitze liegt.
+- Fix: Gewicht Amplitude² je Punkt (umgekehrtes Phasenrauschen) und nur echte lokale Maxima; ohne Spitze `br` = 0.
+  Einzeln getestet: nur Gewicht 30→15 bzw. 35→34 Randwerte, nur lokale Maxima 0/0 (2 Reports ohne Wert); beides 0/0.
+- PC-Prüfung: Randwerte 30→0 und 35→0, keine Reports ohne Wert. Verfolgter Puls in allen 228 Reports unverändert, nur `hr_harm`
+  ist öfter gesetzt (30→40, 41→43), weil die Oberwellen-Prüfung jetzt die richtige Atemfrequenz bekommt. Gegen die gezählten
+  Atemzyklen der starken Punkte: `normal` 60–75 s 17,6 gezählt / 17 /min, 80–95 s 19,8 / 21; `motion` 0–20 s 20,7 / 20–21.
+- Am Gerät (`iq3 60 500`, Person sitzend, `2026-11-01_iq3_atmung_live1.log/.png`): 40 Atemwerte, keiner am Rand, 9,7–24,3 /min.
+  Vergleich mit den Nulldurchgängen des `@IQ3`-Wegsignals im selben 15-s-Fenster: 29 von 40 innerhalb ±3 /min, bei 31–56 s
+  (Zoom 650–710 mm, auf der Brust) alle 26 innerhalb ±2 /min. Abweichungen bei 12–22 s (7 Reports; dort schwanken auch die
+  gezählten Zyklen zwischen 11 und 19 /min) und bei 56,5 s. Rechenzeit je Report Median 291 ms (vorher ≈ 306 ms).
+- Grenzen: keine Referenz, die Zyklenzählung stammt aus demselben Radarsignal (nur Plausibilität). Bei deutlicher Bewegung
+  (`motion` 46–58 s) gibt es trotzdem einen Atemwert (23–26 /min), der dort nicht belastbar ist.
+
+**Bug 7, behoben (ESP32-DSP): Der Rezoom wählte bei zwei nahen Echos das falsche und blieb dort hängen.** Im Lauf
+`2026-11-01_iq3_atmung_live1` ging der erste Rezoom auf 745–805 mm, die Brust lag bei ≈ 0,66 m; das Fenster blieb 19 s dort.
+- Ursache 1, Momentaufnahme: Es gab zwei bewegte Echos, die Brust bei 0,66 m (Amplitude schwankend 440–1220, Bewegung 600–960)
+  und ein zweites bei 0,78 m (Amplitude gleichmäßig ≈ 950, Bewegung 200–570). Entschieden wurde in einem einzigen Report:
+  0,774 m mit 1096 + 8 × 596 = 5864 gegen 0,656 m mit 529 + 8 × 660 = 5809, weil die Brust gerade einen Amplitudeneinbruch hatte.
+- Ursache 2, Nähe-Regel: Jedes bewegte Echo am Fenster verhinderte den Rezoom, also hielt das zweite Echo das Fenster fest.
+- Das falsche Fenster war schlechter: Pulskonfidenz Median 78 % gegen 99 % auf der Brust, Puls-Spitze/Median 9,2 gegen 15,8 dB
+  (verschiedene Zeitabschnitte desselben Laufs).
+- Kriterien an den 5-Hz-Raumprofilen von vier Logs verglichen (Brust gewählt / Wahl bei t = 3 s im Fehlerlauf): Momentaufnahme
+  heute 92 % / falsch; über 3 s geglättet „Amplitude + 8 × Bewegung“ 99–100 % / richtig; geglättet nur Bewegung ebenso; stärkstes
+  Echo 85–88 % / falsch (das zweite Echo war im Mittel stärker, bewegte sich aber weniger). Glättung 1–8 s: überall richtig.
+- Fix: Das Zoom-Ziel kommt aus einem zusätzlich geglätteten Raumprofil (τ ≈ 3 s), und nur dieses Ziel hält das Fenster (±60 mm).
+  Simulation auf den Logs: Start auf dem zweiten Echo (745 mm) heute bis 26 s gefangen, neu nach 3 s auf der Brust; in allen
+  anderen Fällen gleiche Rezooms wie vorher, kein Hin- und Herspringen.
+- PC-Prüfung (`iq3raw_normal`/`motion`): Vitalwerte bitgleich. Fenster richtig: kein Rezoom. Fenster bei 400–2250 mm: Brust nach 3 s
+  gefunden, Fensterstart 580–635 mm (vorher 562–688 mm).
+- Am Gerät (`iq3 45 745`, Person sitzend, `2026-11-01_iq3_rezoom_live1.log/.png`): ein Rezoom nach 3 s auf 635–695 mm, danach keiner,
+  obwohl bei 16, 25 und 43 s bewegte Echos bei 0,74–0,79 m auftauchten. 59,9 Hz, Atmung 11,5–24,8 /min ohne Randwert,
+  Pulskonfidenz Median 94 %, Rechenzeit Median 319 ms. Das zweite Echo war diesmal schwächer als im Fehlerlauf; der harte Fall
+  ist nur durch die Simulation auf dem Log belegt.
 
 Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`

@@ -17,10 +17,17 @@
  *      Oberwelle"; der Puls kann dort liegen (live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5).
  *   5. Konfidenz = Anteil (gewichtet) der Punkte, deren eigener Spitzenwert ±5 /min am Ergebnis liegt.
  *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
- *   6. Atemfrequenz aus der Leistungssumme aller Zoom-Punkte (0,115–0,585 Hz, Bandrand ausgeschlossen); Atemhub,
+ *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
+ *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
+ *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub,
  *      Herz-Autokorrelation und Zeitbereichs-Schläge (IBI, RMSSD) auf dem Punkt mit dem klarsten Puls.
- *   7. Subsweep 2: Raum-Scan 0,30–2,67 m (30 mm) mit Rezoom-Empfehlung. Kein Rezoom, solange ein bewegtes Ziel
- *      im Zoom-Fenster liegt (vorher wechselte der Zoom zwischen Körperstellen und löschte jedes Mal die Historie).
+ *   7. Subsweep 2: Raum-Scan 0,30–2,67 m (30 mm) mit Rezoom-Empfehlung. Rauschpegel = unteres Viertel aller 80 Punkte
+ *      (Amplitude und Bewegung getrennt). Ziel = lokales Maximum ab 2 × Rauschpegel, "bewegt" ab 3 × Bewegungs-Rauschpegel;
+ *      gemeldet werden die 8 stärksten. Vorher galten feste Rohwerte (Wert > 120, Bewegung > 12), die unter dem Rauschen
+ *      lagen (≈ 55 / 55), und nur die 4 nächsten Spitzen. Folge: Rausch-Spitzen im Zoom-Fenster blockierten den Rezoom.
+ *      Rezoom auf das stärkste bewegte Ziel im über ≈ 3 s geglätteten Profil (nicht in der Momentaufnahme, die bei zwei
+ *      nahen Echos kippte); kein Rezoom, solange dieses Ziel im Zoom-Fenster ±60 mm liegt (vorher wechselte der Zoom
+ *      zwischen Körperstellen und löschte jedes Mal die Historie).
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
@@ -75,6 +82,10 @@ static constexpr float    kGateP       = 3.0f;   /* Verstärkung darüber (Grenz
 static constexpr float    kMotionK     = 3.0f;   /* für motion_pct: Block > 3 × ruhiges Viertel gilt als Bewegung */
 static constexpr uint8_t  kMaxBlocks   = kHrWin / kGateBlk;
 static constexpr uint16_t kHrEdgeBins  = 3U;     /* Spitzen in den äußeren 3 Frequenzschritten zählen nicht (Leckage vom Bandrand) */
+static constexpr uint8_t  kMaxRoomTargets = 8U;  /* gemeldete Raum-Ziele (die stärksten) */
+static constexpr float    kRoomDetK    = 2.0f;   /* Raum-Ziel: Amplitude oder Bewegung ≥ 2 × Rauschpegel */
+static constexpr float    kRoomMoveK   = 3.0f;   /* bewegt: Bewegung ≥ 3 × Bewegungs-Rauschpegel */
+static constexpr float    kRoomSlowA   = 0.00554f; /* Glättung für das Zoom-Ziel: 1 − exp(−1 / (60 Hz · 3 s)), τ ≈ 3 s */
 
 /* Butterworth-Bandpass 4. Ordnung 0,8–3,0 Hz bei 60 Hz: scipy.signal.butter(4, [0.8, 3.0], 'band', fs=60, output='sos') */
 static constexpr float kBpSos[4][6] = {
@@ -90,9 +101,10 @@ struct Complex16 {
 };
 
 struct RoomTarget {
-    float dist_m;
-    float amplitude;
-    float motion_energy;
+    float dist_m;          /* parabolisch zwischen den 30-mm-Punkten verfeinert */
+    float amplitude;       /* geglättete Echo-Amplitude (Rohwert) */
+    float motion_energy;   /* geglättete Abweichung vom Standbild (Rohwert; reines Rauschen ≈ Rausch-Amplitude) */
+    bool  moving;          /* motion_energy ≥ kRoomMoveK × Bewegungs-Rauschpegel */
 };
 
 struct VitalReport {
@@ -120,7 +132,9 @@ struct VitalReport {
     bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
     float    motion_pct;       /* Anteil gedämpfter 1-s-Blöcke im Fenster (Bewegung), über alle Zoom-Punkte */
     uint8_t  num_room_targets;
-    RoomTarget room_targets[4];
+    RoomTarget room_targets[kMaxRoomTargets];  /* nach Stärke sortiert (Amplitude + 8 × Bewegung) */
+    float    room_noise_amp;                   /* Rauschpegel Amplitude (unteres Viertel der Raum-Punkte) */
+    float    room_noise_motion;                /* Rauschpegel Bewegung */
     bool     needs_rezoom;
     int32_t  recommended_zoom_start_pt;
 };
@@ -177,6 +191,8 @@ public:
         memset(room_clutter_q_, 0, sizeof(room_clutter_q_));
         memset(room_amp_ema_, 0, sizeof(room_amp_ema_));
         memset(room_var_ema_, 0, sizeof(room_var_ema_));
+        memset(room_amp_slow_, 0, sizeof(room_amp_slow_));
+        memset(room_mot_slow_, 0, sizeof(room_mot_slow_));
     }
 
     void setZoomStartPoint(int32_t zoom_start_pt) {
@@ -185,6 +201,12 @@ public:
     }
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
+
+    /** Raumprofil (Subsweep 2): geglättete Amplitude und Bewegung je Punkt, kRoomPoints Werte. */
+    const float *roomAmp() const { return room_amp_ema_; }
+    const float *roomMotion() const { return room_var_ema_; }
+    float roomStartMm() const { return (float)room_start_pt_ * kPointStepM * 1000.0f; }
+    float roomStepMm() const { return (float)room_step_ * kPointStepM * 1000.0f; }
 
     /**
      * @brief Verarbeitet einen 3-Subsweep-Frame (105 komplexe Punkte).
@@ -301,6 +323,8 @@ public:
                     room_clutter_q_[r] = rq;
                     room_amp_ema_[r]   = amp;
                     room_var_ema_[r]   = 0.0f;
+                    room_amp_slow_[r]  = amp;
+                    room_mot_slow_[r]  = 0.0f;
                 } else {
                     const float di = ri - room_clutter_i_[r];
                     const float dq = rq - room_clutter_q_[r];
@@ -308,6 +332,8 @@ public:
                     room_clutter_q_[r] += 0.02f * dq;
                     room_amp_ema_[r]    = 0.95f * room_amp_ema_[r] + 0.05f * amp;
                     room_var_ema_[r]    = 0.92f * room_var_ema_[r] + 0.08f * sqrtf(di * di + dq * dq);
+                    room_amp_slow_[r]  += kRoomSlowA * (room_amp_ema_[r] - room_amp_slow_[r]);
+                    room_mot_slow_[r]  += kRoomSlowA * (room_var_ema_[r] - room_mot_slow_[r]);
                 }
             }
         }
@@ -357,17 +383,22 @@ public:
         for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
 
         for (uint8_t b = 0; b < kZoomPoints; b++) {
-            binDisplacement(b, start, N, work_x_);
+            const float amp_c = binDisplacement(b, start, N, work_x_);
             removeLinearTrend(work_x_, N);
             float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
             sosFiltFilt(work_x_, N);
             moving_blocks += gateMotion(h, N);
-            /* Atem-Spektrum dieses Punkts (entzerrtes Wegsignal, dezimiert, Hann), Leistung über alle Punkte summiert */
+            /* Atem-Spektrum dieses Punkts (entzerrtes Wegsignal, dezimiert, Hann), gewichtet mit Amplitude² summiert.
+             * Schwache Punkte haben Phasenrauschen ~ 1/Amplitude, und Abwickel-Fehler wirken dort wie Stufen von 2,5 mm:
+             * Ungewichtet überdeckte ihr Tieftonanteil die Atmung (am Datensatz 2026-11-01 Punkte mit |z| 120–300,
+             * 140–240 Phasensprünge in 15 s, 8–11 mm "Hub"; die starken Punkte zeigten sauber 17 /min). */
+            const float wa = amp_c * amp_c;
             for (uint16_t m = 0; m < M; m++) {
                 const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
                 dec_[m] = work_x_[(uint32_t)m * kDecim] * w;
             }
-            for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] += goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
+            for (uint16_t k = 0; k < kBrNumF; k++)
+                br_comb_[k] += wa * goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
             total_blocks += N / kGateBlk;
             /* dezimieren + Hann */
             for (uint16_t m = 0; m < M; m++) {
@@ -421,12 +452,16 @@ public:
             rep.compute_us = micros() - t0;
             return false;
         }
-        /* Atmung über alle Punkte: Spitze nicht am Bandrand, parabolisch verfeinert */
+        /* Atmung über alle Punkte: größtes echtes lokales Maximum (nicht am Bandrand), parabolisch verfeinert.
+         * Vorher zählte das größte Bin im Suchbereich; bei Lagewechseln (Stufen im Wegsignal) oder Rest-Drift steigt die
+         * Leistung zu tiefen Frequenzen weiter an, und das Ergebnis klebte am Rand bei 6,9 /min. Ohne echte Spitze
+         * bleibt fb = 0 (br_bpm = 0 heißt: keine Atemspitze). */
         float fb = 0.0f, br_q = 0.0f;
-        {
-            uint16_t kb = kBrEdgeBins;
-            for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
-                if (br_comb_[k] > br_comb_[kb]) kb = k;
+        int16_t kb = -1;
+        for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
+            if (br_comb_[k] > br_comb_[k - 1] && br_comb_[k] >= br_comb_[k + 1] && (kb < 0 || br_comb_[k] > br_comb_[kb]))
+                kb = (int16_t)k;
+        if (kb >= 0) {
             const float a = br_comb_[kb - 1], b = br_comb_[kb], c = br_comb_[kb + 1];
             float d = 0.0f;
             if (b >= a && b >= c && a - 2.0f * b + c < 0.0f)
@@ -502,7 +537,7 @@ public:
             const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
             dec_[m] = best_x_[(uint32_t)m * kDecim] * w;
         }
-        const float best_p = goertzelPower(dec_, M, kFsHz / kDecim, fb);
+        const float best_p = (fb > 0.0f) ? goertzelPower(dec_, M, kFsHz / kDecim, fb) : 0.0f;
         const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
         rep.br_bpm        = fb * 60.0f;
         rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
@@ -544,8 +579,9 @@ private:
         bi /= w_sum; bq /= w_sum; cli /= w_sum; clq /= w_sum;
     }
 
-    /** Phase des Zoom-Punkts b um den Fenster-Mittelpunkt abwickeln → µm. */
-    void binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out) const {
+    /** Phase des Zoom-Punkts b um den Fenster-Mittelpunkt abwickeln → µm. Rückgabe: mittlerer Abstand zum Mittelpunkt
+     *  (|z − Mittelwert|, Maß für die Phasenqualität dieses Punkts). */
+    float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out) const {
         const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
         double mi = 0.0, mq = 0.0;
         for (uint16_t n = 0; n < N; n++) {
@@ -556,9 +592,12 @@ private:
         mi /= (double)N;
         mq /= (double)N;
         float prev = 0.0f, acc = 0.0f;
+        double amp_sum = 0.0;
         for (uint16_t n = 0; n < N; n++) {
             const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
-            const float phi = atan2f(z[1] - (float)mq, z[0] - (float)mi);
+            const float ci = z[0] - (float)mi, cq = z[1] - (float)mq;
+            const float phi = atan2f(cq, ci);
+            amp_sum += sqrtf(ci * ci + cq * cq);
             if (n > 0) {
                 float d = phi - prev;
                 if (d > (float)M_PI) d -= 2.0f * (float)M_PI;
@@ -570,6 +609,7 @@ private:
             prev   = phi;
             out[n] = acc * kRadToUm;
         }
+        return (float)(amp_sum / (double)N);
     }
 
     /**
@@ -761,26 +801,77 @@ private:
         out_rmssd_ms = (n_diff > 0) ? sqrtf(sum_sq_diff / (float)n_diff) : 0.0f;
     }
 
+    /** Unteres Viertel von 80 Werten (Rauschpegel; robust, solange weniger als drei Viertel des Raums Echos enthalten). */
+    static float lowerQuartile(const float *v) {
+        float tmp[kRoomPoints];
+        memcpy(tmp, v, sizeof(tmp));
+        std::nth_element(tmp, tmp + kRoomPoints / 4, tmp + kRoomPoints);
+        return tmp[kRoomPoints / 4];
+    }
+
+    /** Lokale Maxima von max(Amplitude, Bewegung) relativ zum Rauschen ab kRoomDetK (bei gleich hohen Nachbarn zählt
+     *  der vordere). f(r, d, bewegt) je Spitze; d = parabolische Verfeinerung in Punkten (−0,5 … 0,5). */
+    template <typename F>
+    static void forEachRoomPeak(const float *amp, const float *mot, float noise_amp, float noise_mot, F f) {
+        auto level = [&](uint16_t r) { return std::max(amp[r] / noise_amp, mot[r] / noise_mot); };
+        for (uint16_t r = 1; r + 1 < kRoomPoints; r++) {
+            const float a = level(r - 1), b = level(r), c = level(r + 1);
+            if (b < kRoomDetK || b <= a || b < c) continue;
+            const float den = a - 2.0f * b + c;
+            const float d   = (den < 0.0f) ? std::max(-0.5f, std::min(0.5f, 0.5f * (a - c) / den)) : 0.0f;
+            f(r, d, mot[r] >= kRoomMoveK * noise_mot);
+        }
+    }
+
+    float roomDistM(uint16_t r, float d) const {
+        return ((float)room_start_pt_ + ((float)r + d) * (float)room_step_) * kPointStepM;
+    }
+
     void extractRoomTargets(VitalReport &rep) {
         rep.num_room_targets = 0;
-        for (uint16_t r = 1; r + 1 < kRoomPoints; r++) {
-            const float score = room_amp_ema_[r] + 6.0f * room_var_ema_[r];
-            const float prev  = room_amp_ema_[r - 1] + 6.0f * room_var_ema_[r - 1];
-            const float next  = room_amp_ema_[r + 1] + 6.0f * room_var_ema_[r + 1];
-            if (score > 120.0f && score >= prev && score >= next && rep.num_room_targets < 4) {
-                const float dist_m = (float)(room_start_pt_ + (int32_t)(r * room_step_)) * kPointStepM;
-                rep.room_targets[rep.num_room_targets++] = {dist_m, room_amp_ema_[r], room_var_ema_[r]};
-            }
-        }
-        for (uint8_t i = 0; i < rep.num_room_targets; i++) {
-            for (uint8_t j = i + 1; j < rep.num_room_targets; j++) {
-                const float si = rep.room_targets[i].amplitude + 8.0f * rep.room_targets[i].motion_energy;
-                const float sj = rep.room_targets[j].amplitude + 8.0f * rep.room_targets[j].motion_energy;
-                if (sj > si) std::swap(rep.room_targets[i], rep.room_targets[j]);
-            }
-        }
+        /* Rauschpegel getrennt für Amplitude und Bewegung. Reines Rauschen hat Bewegung ≈ Amplitude (das Standbild
+         * mittelt es weg); am Datensatz 2026-11-01 beide ≈ 55, die Person bis 3300 / 2600. +1 gegen Division durch 0
+         * in den ersten Frames. */
+        const float noise_amp = lowerQuartile(room_amp_ema_) + 1.0f;
+        const float noise_mot = lowerQuartile(room_var_ema_) + 1.0f;
+        rep.room_noise_amp    = noise_amp;
+        rep.room_noise_motion = noise_mot;
 
-        /* Rezoom nur, wenn im Zoom-Fenster ±60 mm (zwei Raum-Schritte) kein bewegtes Ziel liegt, und erst nach
+        /* Ziel = lokales Maximum von max(Amplitude, Bewegung) relativ zum Rauschen, ab kRoomDetK. So zählen feste Echos
+         * (Wand, Möbel: Amplitude hoch, Bewegung ≈ Rauschen) und schwache bewegte Echos. Behalten werden die
+         * kMaxRoomTargets stärksten nach Amplitude + 8 × Bewegung (Bewegung zählt stärker), egal in welcher Entfernung. */
+        auto key = [](const RoomTarget &t) { return t.amplitude + 8.0f * t.motion_energy; };
+        forEachRoomPeak(room_amp_ema_, room_var_ema_, noise_amp, noise_mot, [&](uint16_t r, float d, bool moving) {
+            const RoomTarget t = {roomDistM(r, d), room_amp_ema_[r], room_var_ema_[r], moving};
+            uint8_t n = rep.num_room_targets;
+            if (n == kMaxRoomTargets && key(t) <= key(rep.room_targets[n - 1])) return;
+            uint8_t pos = (n < kMaxRoomTargets) ? n : (uint8_t)(n - 1U);  /* volle Liste: schwächstes Ziel fällt raus */
+            while (pos > 0 && key(rep.room_targets[pos - 1]) < key(t)) {
+                rep.room_targets[pos] = rep.room_targets[pos - 1];
+                pos--;
+            }
+            rep.room_targets[pos] = t;
+            if (n < kMaxRoomTargets) rep.num_room_targets++;
+        });
+
+        /* Zoom-Ziel: stärkstes bewegtes Ziel (Amplitude + 8 × Bewegung) im geglätteten Profil (τ ≈ 3 s), nicht in der
+         * Momentaufnahme. Live 2026-11-01 lagen zwei bewegte Echos nah beieinander (Brust 0,66 m mit schwankender
+         * Amplitude 440–1220, zweites Echo 0,78 m gleichmäßig ≈ 950, aber halb so viel Bewegung); die Momentaufnahme bei
+         * t = 3 s wählte das hintere um 1 %, und dort war der Puls schlechter (Konfidenz 78 statt 99 %). Geglättet trifft
+         * die Wahl in allen vier Logs die Brust (τ = 1–8 s geprüft). Das stärkste Echo allein wäre falsch gewesen.
+         * Das Fenster hält nur dieses Ziel (±60 mm), nicht jedes bewegte Echo: Sonst blieb es 19 s am hinteren Echo. */
+        const float ns_amp = lowerQuartile(room_amp_slow_) + 1.0f;
+        const float ns_mot = lowerQuartile(room_mot_slow_) + 1.0f;
+        float best_m = -1.0f, best_key = 0.0f;
+        forEachRoomPeak(room_amp_slow_, room_mot_slow_, ns_amp, ns_mot, [&](uint16_t r, float d, bool moving) {
+            const float k = room_amp_slow_[r] + 8.0f * room_mot_slow_[r];
+            if (moving && (best_m < 0.0f || k > best_key)) {
+                best_m   = roomDistM(r, d);
+                best_key = k;
+            }
+        });
+
+        /* Rezoom nur, wenn das Zoom-Ziel nicht im Zoom-Fenster ±60 mm (zwei Raum-Schritte) liegt, und erst nach
          * 3 Reports in den ersten 10 s (Ziel suchen) bzw. 5 Reports danach. Jeder Rezoom löscht die 15-s-Historie.
          * Abwägung am 2026-11-01: Ohne Toleranz wechselte der Zoom zwischen Körperstellen (Raum-Ziel 660 mm, bester
          * Puls bei 620 mm); mit ±30 mm wollte er 20-mal von 570–630 auf 630–690 mm; mit ±150 mm bliebe ein Ziel bei
@@ -790,22 +881,13 @@ private:
         const float zoom_max_m = (float)(zoom_start_pt_ + (int32_t)kZoomPoints - 4) * kPointStepM + 0.06f;
         rep.needs_rezoom              = false;
         rep.recommended_zoom_start_pt = zoom_start_pt_;
-        if (rep.num_room_targets == 0 || rep.room_targets[0].motion_energy <= 12.0f) {
-            out_of_window_frames_ = 0;
-            return;
-        }
-        bool near = false;
-        for (uint8_t i = 0; i < rep.num_room_targets; i++) {
-            const RoomTarget &t = rep.room_targets[i];
-            if (t.motion_energy > 12.0f && t.dist_m >= zoom_min_m && t.dist_m <= zoom_max_m) near = true;
-        }
-        if (near) {
+        if (best_m < 0.0f || (best_m >= zoom_min_m && best_m <= zoom_max_m)) {
             out_of_window_frames_ = 0;
             return;
         }
         const uint16_t needed = (frame_count_ < 600U) ? 3U : 5U;
         if (++out_of_window_frames_ >= needed) {
-            int32_t new_start = (int32_t)roundf(rep.room_targets[0].dist_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
+            int32_t new_start = (int32_t)roundf(best_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
             if (new_start < 80) new_start = 80; /* ≥ 0,20 m */
             rep.needs_rezoom              = true;
             rep.recommended_zoom_start_pt = new_start;
@@ -841,6 +923,8 @@ private:
     float room_clutter_q_[kRoomPoints] = {};
     float room_amp_ema_[kRoomPoints]   = {};
     float room_var_ema_[kRoomPoints]   = {};
+    float room_amp_slow_[kRoomPoints]  = {};  /* room_amp_ema_ zusätzlich geglättet (τ ≈ 3 s), für das Zoom-Ziel */
+    float room_mot_slow_[kRoomPoints]  = {};  /* room_var_ema_ zusätzlich geglättet (τ ≈ 3 s) */
 
     float *hist_zoom_   = nullptr;  /* [kZoomPoints][kHistoryLen][I,Q], derotiert, je Punkt ein Ring */
     float *hist_um_     = nullptr;
@@ -855,6 +939,35 @@ private:
     float *scratch_     = nullptr;
     float *br_comb_     = nullptr;
 };
+
+/*
+ * Ausgabezeilen für Raum-Ziele und Raumprofil (`iq3`). Firmware und PC-Prüfung (host/a121_esp_ultimate.py, verify-cpp)
+ * nutzen dieselben Funktionen, damit das Format übereinstimmt. tick = Sensor-Zeitstempel in ms; er läuft lückenlos
+ * weiter, auch über Rechenpausen und Rezooms. Rückgabe: Länge ohne Zeilenende (bei zu kleinem Puffer gekürzt).
+ *   @ROOM,t_ms,tick,rausch_amp,rausch_bew,n,{dist_mm,amp,bew,bewegt}×n      (Ziele nach Stärke sortiert)
+ *   @ROOMPROF,t_ms,tick,start_mm,step_mm,n,amp_0..amp_n-1,bew_0..bew_n-1    (Rohwerte, geglättet)
+ */
+static constexpr size_t kRoomLineMax = 1400U;  /* reicht für @ROOMPROF mit 2 × 80 Werten (≤ ~1100 Zeichen) */
+
+inline size_t formatRoomLine(char *buf, size_t cap, uint32_t t_ms, uint32_t tick, const VitalReport &rep) {
+    int len = snprintf(buf, cap, "@ROOM,%lu,%lu,%.0f,%.0f,%u", (unsigned long)t_ms, (unsigned long)tick,
+                       rep.room_noise_amp, rep.room_noise_motion, (unsigned)rep.num_room_targets);
+    for (uint8_t i = 0; i < rep.num_room_targets && len > 0 && (size_t)len < cap; i++) {
+        const RoomTarget &t = rep.room_targets[i];
+        len += snprintf(buf + len, cap - (size_t)len, ",%.0f,%.0f,%.0f,%u", t.dist_m * 1000.0f, t.amplitude,
+                        t.motion_energy, (unsigned)t.moving);
+    }
+    return (len < 0) ? 0U : std::min((size_t)len, cap - 1U);
+}
+
+inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32_t tick, const UltimateEspDsp &dsp) {
+    const float *amp = dsp.roomAmp(), *mot = dsp.roomMotion();
+    int len = snprintf(buf, cap, "@ROOMPROF,%lu,%lu,%.0f,%.0f,%u", (unsigned long)t_ms, (unsigned long)tick,
+                       dsp.roomStartMm(), dsp.roomStepMm(), (unsigned)kRoomPoints);
+    for (uint16_t r = 0; r < 2U * kRoomPoints && len > 0 && (size_t)len < cap; r++)
+        len += snprintf(buf + len, cap - (size_t)len, ",%.0f", r < kRoomPoints ? amp[r] : mot[r - kRoomPoints]);
+    return (len < 0) ? 0U : std::min((size_t)len, cap - 1U);
+}
 
 } /* namespace a121_dsp */
 

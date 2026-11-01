@@ -563,6 +563,11 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
   uint32_t tStart = millis();
   uint32_t lastFrameUs = micros();
   uint32_t lastReportMs = millis();
+  // Raumprofil alle 12 Frames (5 Hz bei 60 Hz), gezählt in Frames statt ESP32-Zeit: Nach jeder Rechenpause kommen die
+  // Frames gebündelt, ein Zeittakt würde dann Profile überspringen.
+  static const uint32_t kRoomProfEvery = 12;
+  static char roomLine[a121_dsp::kRoomLineMax];
+  uint32_t nFrames = 0;
 
   while (true) {
     if (Serial.available()) {
@@ -598,6 +603,11 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
                   zAmp,
                   (unsigned)meta.data_saturated);
 
+    if (++nFrames % kRoomProfEvery == 0) {
+      a121_dsp::formatRoomProfileLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, g_dsp);
+      Serial.println(roomLine);
+    }
+
     if ((millis() - lastReportMs) >= 1000UL) {
       lastReportMs = millis();
       a121_dsp::VitalReport rep;
@@ -607,6 +617,9 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm) {
       Serial.printf("@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u\n", (unsigned long)(millis() - tStart), (unsigned)vitalOk,
                     (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)rep.compute_us, rep.motion_pct,
                     (unsigned)rep.hr_harm);
+      // Raum-Ziele kommen auch ohne gültigen Puls (Format s. a121_esp_dsp.h)
+      a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), millis() - tStart, meta.tick, rep);
+      Serial.println(roomLine);
       if (vitalOk) {
         Serial.printf("@VITAL,%lu,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.0f,%.1f,%.1f,%.1f,%.2f,%.0f,%u\n",
                       (unsigned long)(millis() - tStart),
@@ -833,6 +846,7 @@ static void help() {
       "  stm_reset             15-ms UART-Break auf GPIO16 (Neustart des Servers, je nach Firmware)\n"
       "  iq3 [sek] [start_mm]  3-Subsweep Sparse-IQ (Loopback + 2.5-mm Vital-Zoom + Raum-Scan @ 60 Hz)\n"
       "                        inkl. On-Device C++ Vital-DSP (PSRAM) & Auto-Rezoom (Standard: 60 s, 500 mm)\n"
+      "                        Zeilen: @IQ3 je Frame, @ROOMPROF 5/s (Raumprofil 0,30–2,67 m), @DSP/@ROOM/@VITAL 1/s\n"
       "  doppler [sek] [mm] [hz] Continuous Sweep Mode (CSM) + Double Buffering Mikro-Doppler (Standard: 15 s, 500 mm, 2000 Hz)\n"
       "  sess ...              Beliebige Sparse-IQ-Session einstellen + auf dem ESP32 auswerten ('sess help')\n"
       "  bridge                Transparente USB <-> Server-UART Bridge für PC-Tools (Beenden: +++EXIT)\n"
