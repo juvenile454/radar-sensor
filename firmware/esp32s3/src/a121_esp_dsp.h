@@ -978,6 +978,7 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
  *   @REZOOM,zoom_start_mm,zoom_end_mm
  * compute_us getrennt, weil die Nachrechnung die Rechenzeit des ESP32 übernimmt.
  */
+#define A121_DSP_FORMATS 1  /* host/dsp_replay erkennt daran Header ab V0.4 (ältere bekommen dort die alten Formate) */
 static constexpr size_t kReportLineMax = 256U;
 
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }

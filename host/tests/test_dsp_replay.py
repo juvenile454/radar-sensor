@@ -60,5 +60,25 @@ class ReplayTest(unittest.TestCase):
         self.assertTrue(lines[i - 2].startswith("@DSP,"), lines[i - 2][:40])
 
 
+class BaselineHeaderTest(unittest.TestCase):
+    """Die Basislinie (V0.6) rechnet Aufnahmen mit dem DSP-Header vom 2026-11-01 (Commit 0e2d836) nach; die heutige
+    Nachrechnung muss mit diesem alten Header übersetzen und eigene @VITAL-Zeilen schreiben."""
+
+    def test_replay_with_baseline_header(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            hdr = subprocess.run(["git", "-C", str(HOST.parent), "show", "0e2d836:firmware/esp32s3/src/a121_esp_dsp.h"],
+                                 capture_output=True, text=True, check=True).stdout
+            (d / "basis").mkdir()
+            (d / "basis" / "a121_esp_dsp.h").write_text(hdr)
+            vital_sim.make_frames(d / "base", seed=1, T=20.0)
+            skel, out = d / "skel.log", d / "out.log"
+            vital_sim.write_skeleton(pathlib.Path(f"{d / 'base'}.iq"), 244, skel, vital_placeholders=False)
+            vital_sim.replay_skeleton(skel, out, d / "basis" / "a121_esp_dsp.h")
+            vital = [ln for ln in out.read_text().splitlines() if ln.startswith("@VITAL,")]
+        self.assertGreater(len(vital), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
