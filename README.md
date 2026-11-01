@@ -17,6 +17,11 @@ Live-Ansichten, Konsole, Aufnahme im PC-Format im Hintergrund (31,7 min bei ausg
 Frameverlust), Neuverbinden nach Abziehen, DSP-Nachrechnung per NDK. ESP32-Firmware `2026-11-01-app1` (Protokoll
 `proto=1`, nur ergänzt). Stand und Ergebnisse: `docs/ANDROID_APP.md`.
 
+**Audit Vitalerkennung (ab 2026-11-01, `docs/AUDIT_VITAL.md`):** Die ESP32-Kette für `iq3` steht in
+`docs/HARDWARE.md` (Befehl `iq3`) und im Kopf von `firmware/esp32s3/src/a121_esp_dsp.h`. Die Verfahren der Zeile
+„Signalverarbeitung (`host/`)" oben (DACM, Hilbert-Projektion, HPS) gehören zu den PC-Skripten, nicht zur Firmware.
+Prüfstand `host/vital_sim.py bench --check` (nur Simulation), Auswertung gegen Brustgurt `host/vital_eval.py`.
+
 ## Dokumente
 
 - `docs/KONZEPT.md` — Ziele, Realitätscheck, Architektur, Phasen, Einkauf

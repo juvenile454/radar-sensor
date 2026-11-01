@@ -70,7 +70,6 @@ static constexpr float    kFsHz        = 60.0f;  /* Frame-Rate der iq3-Session; 
 static constexpr uint16_t kHistoryLen  = 960U;   /* 16 s @ 60 Hz */
 static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
 static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
-static constexpr uint16_t kRespMinWin  = 180U;   /* ab 3 s Atmung */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
 static constexpr float    kHrFMin      = 0.64f;  /* 38 /min; mit 3 gesperrten Randschritten Suche ab 0,67 Hz = 40 /min (V1.2) */
 static constexpr float    kHrFStep     = 0.01f;  /* 0,6 /min (feiner bringt bei 15-s-Fenster nichts, am Datensatz geprüft) */
@@ -123,7 +122,6 @@ static constexpr float    kRoomDetK    = 2.0f;   /* Raum-Ziel: Amplitude oder Be
 static constexpr float    kRoomMoveK   = 3.0f;   /* bewegt: Bewegung ≥ 3 × Bewegungs-Rauschpegel */
 static constexpr float    kRoomSlowA   = 0.00554f; /* Glättung für das Zoom-Ziel: 1 − exp(−1 / (60 Hz · 3 s)), τ ≈ 3 s */
 static constexpr float    kArcMinRad   = 2.0f;   /* Kreisfit gilt als schlecht bestimmt, wenn die Phase weniger überstreicht */
-static constexpr float    kCenterTol   = 0.5f;   /* gespeicherter Mittelpunkt gilt, solange er ≤ 0,5 Radien vom Fit liegt */
 
 /* Butterworth-Bandpass 4. Ordnung 0,6–5,0 Hz bei 60 Hz (V1.2: Puls 40–180 /min samt 2. Oberwelle; vorher 0,8–3,0 Hz):
  * scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') */
@@ -594,7 +592,6 @@ public:
 
         if (!allocated_) {
             hist_zoom_   = allocFloat((size_t)kHistoryLen * kZoomPoints * 2U);
-            hist_um_     = allocFloat(kHistoryLen);
             hist_lb_phi_ = allocFloat(kHistoryLen);
             work_x_      = allocFloat(kHrWin);
             work_ext_    = allocFloat(kHrWin + 2U * kFiltPad);
@@ -608,7 +605,7 @@ public:
             scratch_     = allocFloat(kHrNumF);
             pen_         = allocFloat(kHrNumF);
             br_comb_     = allocFloat(kBrNumF);
-            allocated_   = hist_zoom_ && hist_um_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ && br_x_ &&
+            allocated_   = hist_zoom_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ && br_x_ &&
                          dec_ && spec_ && sum_ && comb_ && scratch_ && br_comb_ && pen_;
         }
         resetState();
@@ -768,7 +765,6 @@ public:
 
         const float disp_um = cum_phase_rad_ * kRadToUm;
         out_um_sample       = disp_um;
-        hist_um_[hist_write_idx_]     = disp_um;
         hist_sat_[hist_write_idx_]    = ff.saturated ? 1U : 0U;
         hist_lb_phi_[hist_write_idx_] = lb_phi;
         hist_write_idx_ = (uint16_t)((hist_write_idx_ + 1U) % kHistoryLen);
@@ -1501,7 +1497,6 @@ private:
     float room_mot_slow_[kRoomPoints]  = {};  /* room_var_ema_ zusätzlich geglättet (τ ≈ 3 s) */
 
     float *hist_zoom_   = nullptr;  /* [kZoomPoints][kHistoryLen][I,Q], derotiert, je Punkt ein Ring */
-    float *hist_um_     = nullptr;
     float *hist_lb_phi_ = nullptr;
     float *work_x_      = nullptr;
     float *work_ext_    = nullptr;  /* sosfiltfilt mit Rand: kHrWin + 2 * kFiltPad */
