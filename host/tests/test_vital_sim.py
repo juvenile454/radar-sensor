@@ -48,6 +48,22 @@ class CheckLimitsTest(unittest.TestCase):
         self.assertEqual(vital_sim.check_limits({}, lim), [])
 
 
+class ConfStatsTest(unittest.TestCase):
+    """Konfidenz falscher (> 10 /min) und richtiger (≤ 5 /min) Reports; ohne falsche Reports ist nichts falsch markiert
+    worden, konf_falsch = 0 (vorher NaN und damit ein Verstoß gegen die Grenze, Szenario tachy6)."""
+
+    def test_no_wrong_reports_is_zero(self):
+        st = vital_sim.conf_stats(np.array([80.0, 90.0]), np.array([1.0, 2.0]))
+        self.assertEqual(st["konf_falsch"], 0.0)
+        self.assertEqual(st["n_falsch"], 0)
+        self.assertEqual(st["konf_richtig"], 85.0)
+
+    def test_median_of_wrong_reports(self):
+        st = vital_sim.conf_stats(np.array([10.0, 30.0, 90.0, 50.0]), np.array([20.0, 15.0, 1.0, 12.0]))
+        self.assertEqual(st["konf_falsch"], 30.0)
+        self.assertEqual(st["n_falsch"], 3)
+
+
 class SceneTest(unittest.TestCase):
     def test_niemand_has_no_echo_in_zoom_window(self):
         """Ohne Person bleiben im Zoom-Fenster (0,61–0,67 m) nur Rauschen und die Ausläufer ferner Echos."""

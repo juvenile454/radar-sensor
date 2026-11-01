@@ -6,21 +6,29 @@
  *   1. Subsweep 0: On-Chip-Loopback → Phasen-Derotation aller Zoom-Punkte pro Frame (PLL-/Taktjitter).
  *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (15 s Historie).
  *   3. Puls: pro Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Fit, circleCenter) abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
- *      0,8–3,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
- *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Spektrum 0,88–2,30 Hz; Spitzen zählen nur
- *      zwischen 0,91 und 2,27 Hz (55–136 /min). Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
- *      Punkte mit klarem Puls zählen mehr. Atem-Oberwellen werden NICHT herausprojiziert: Liegt der Puls nahe
- *      m × Atemfrequenz, entfernt die Projektion den Herzanteil mit (am Datensatz: 13–42 % statt 61–89 % Treffer).
- *   4. Verfolgung: Kandidaten (Top 3) mit ≥ 40 % der Spitzenleistung innerhalb ±12 /min des bisherigen Werts
- *      werden bevorzugt (Glättung 0,7/0,3); ein weiter Sprung gilt erst, wenn er 3 Reports hält, auf eine
- *      Atem-Oberwelle (m = 2..6) erst nach 10 Reports. hr_harm = 1 heißt nur "Spitze liegt auf einer
- *      Oberwelle"; der Puls kann dort liegen (live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5).
- *   5. Konfidenz = Anteil (gewichtet) der Punkte, deren eigener Spitzenwert ±5 /min am Ergebnis liegt.
+ *      0,6–5,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
+ *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) für
+ *      0,64–3,03 Hz; Spitzen zählen nur zwischen 0,67 und 3,00 Hz (40–180 /min, V1.2; vorher 55–136).
+ *      Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
+ *      Punkte mit klarem Puls zählen mehr. Atem-Oberwellen werden im Spektrum NICHT herausprojiziert: Liegt der Puls
+ *      nahe m × Atemfrequenz, entfernt die Projektion den Herzanteil mit (am Datensatz: 13–42 % statt 61–89 % Treffer).
+ *   4. Kandidaten (V1.3): Top 3 der Spitzen von S mit Abschlag auf Atem-Oberwellen (m = 4..8: × 0,5 bei ±0,04 Hz;
+ *      m = 2, 3: × 0,02 in der ganzen Hauptkeule ±0,1 Hz). Oktav-Prüfung je Kandidat: Spitze bei f/2 mit
+ *      S(f/2) ≥ 0,5 · S(f) → Kandidat steht für f/2 (2. Herz-Oberwelle), außer f/2 liegt bei 2 × / 3 × Atmung.
+ *      Verfolgung: naher Kandidat (±12 /min) mit ≥ 50 % des besten Werts gewinnt (Glättung 0,7/0,3); ein weiter
+ *      Sprung gilt nach 3 Reports, auf eine Atem-Oberwelle erst nach 10. Liegt der verfolgte Wert auf 2 × / 3 ×
+ *      Atmung, wechselt er nach 3 Reports zu einem Kandidaten ohne Oberwelle. hr_harm = 1 heißt nur "Spitze liegt auf
+ *      einer Oberwelle"; der Puls kann dort liegen (live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5).
+ *   5. Konfidenz (V1.3, signalQuality): Spitzenhöhe, Oberwelle, Einigkeit von Spektrum, Autokorrelation und
+ *      Einzelschlägen, Bewegung, Sprung. Die frühere Punkt-Einigkeit steht als point_agree_pct hinten in @DSP.
  *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
+ *      Gültig nur mit Lebenszeichen: sauberes Echo und Atmung (≥ 100 µm) oder angehaltener Atem mit klarer Pulsspitze,
+ *      höchstens 30 % Bewegung.
  *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
  *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
- *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub,
- *      Herz-Autokorrelation und Zeitbereichs-Schläge (IBI, RMSSD) auf dem Punkt mit dem klarsten Puls.
+ *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
+ *      Atmung mit sauberem Echo). Herz-Autokorrelation und Zeitbereichs-Schläge (IBI, RMSSD) auf dem Punkt mit dem
+ *      klarsten Puls, nach Abzug der Atem-Oberwellen außer denen am Puls (removeBreathHarmonics).
  *   7. Subsweep 2: Raum-Scan 0,30–2,67 m (30 mm) mit Rezoom-Empfehlung. Rauschpegel = unteres Viertel aller 80 Punkte
  *      (Amplitude und Bewegung getrennt). Ziel = lokales Maximum ab 2 × Rauschpegel, "bewegt" ab 3 × Bewegungs-Rauschpegel;
  *      gemeldet werden die 8 stärksten. Vorher galten feste Rohwerte (Wert > 120, Bewegung > 12), die unter dem Rauschen
@@ -64,16 +72,30 @@ static constexpr uint16_t kHrWin       = 900U;   /* 15 s Pulsfenster */
 static constexpr uint16_t kHrMinWin    = 480U;   /* ab 8 s Daten wird ein Puls berichtet */
 static constexpr uint16_t kRespMinWin  = 180U;   /* ab 3 s Atmung */
 static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
-static constexpr float    kHrFMin      = 0.88f;  /* 53 /min */
+static constexpr float    kHrFMin      = 0.64f;  /* 38 /min; mit 3 gesperrten Randschritten Suche ab 0,67 Hz = 40 /min (V1.2) */
 static constexpr float    kHrFStep     = 0.01f;  /* 0,6 /min (feiner bringt bei 15-s-Fenster nichts, am Datensatz geprüft) */
-static constexpr uint16_t kHrNumF      = 143U;   /* 0,88 .. 2,30 Hz */
+static constexpr uint16_t kHrNumF      = 240U;   /* 0,64 .. 3,03 Hz, gesucht 0,67 .. 3,00 Hz (40–180 /min) */
+static constexpr float    kHarm2W      = 0.5f;   /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) (2. Herz-Oberwelle) */
+static constexpr uint16_t kHr2Off      = (uint16_t)(kHrFMin / kHrFStep + 0.5f);  /* 2f_k = f_(kHr2Off + 2k) */
+static constexpr float    kHr2MaxHz    = 5.0f;   /* 2f über der Bandpass-Grenze nicht rechnen (Rechenzeit, V1.2) */
 static constexpr float    kBrFMin      = 0.10f;  /* Atem-Spektrum über alle Zoom-Punkte: 0,10 .. 0,60 Hz */
 static constexpr float    kBrFStep     = 0.005f;
 static constexpr uint16_t kBrNumF      = 101U;
 static constexpr uint16_t kBrEdgeBins  = 3U;     /* Atem-Spitze nicht am Bandrand (früher oft 6 /min) */
 static constexpr float    kBrMinQ      = 2.0f;   /* Atem-Spitze/Median: darunter keine Oberwellen-Prüfung */
 static constexpr float    kHarmTolHz   = 0.04f;  /* Puls-Kandidat gilt als Atem-Oberwelle, wenn |f − m·f_Atem| ≤ 0,04 Hz */
-static constexpr uint8_t  kHarmMMax    = 6U;     /* geprüfte Oberwellen m = 2 .. 6 */
+static constexpr uint8_t  kHarmMMax    = 8U;     /* geprüfte Oberwellen m = 2 .. 8 (V1.3) */
+static constexpr float    kHarmPenalty = 0.5f;   /* Kandidat auf einer Atem-Oberwelle m ≥ 4: S × 0,5 bei der Kandidatenwahl */
+static constexpr float    kHarmPenLow  = 0.02f;  /* m = 2, 3: S × 0,02 (praktisch gesperrt: Prüfstand 4–12 × Puls, × 0,1 reichte nicht) */
+static constexpr uint8_t  kHarmLowMax  = 3U;
+static constexpr float    kLowLobeHz   = 0.1f;   /* m = 2, 3: Toleranz ±0,1 Hz statt ±0,04 (Hauptkeule, Hann 15 s: ±0,13 Hz) */
+static constexpr float    kSubRel      = 0.5f;   /* Oktav-Prüfung: Spitze bei f/2 mit Wert ≥ 0,5 · Wert(f) gilt als Grundwelle */
+static constexpr float    kNearMinRel  = 0.5f;   /* naher Kandidat (±12 /min) gewinnt nur mit S ≥ 0,5 · S_max */
+static constexpr uint8_t  kAltReports  = 3U;     /* Wechsel weg von einer Oberwelle nach 3 Reports mit Alternative */
+static constexpr float    kMaxMotionPct = 30.0f; /* unter 70 % sauberer 1-s-Blöcke ist der Report ungültig */
+static constexpr float    kPulseHeldDb = 8.0f;   /* Atem angehalten: Pulsspitze ≥ 8 dB über dem Median */
+static constexpr float    kEchoSpreadMax = 0.4f; /* sauberes Echo: Abstand zum Kreismittelpunkt streut < 40 % (Rauschen ≈ 52 %) */
+static constexpr float    kBreathMinUm = 100.0f; /* Lebenszeichen: Atemhub ≥ 100 µm Spitze-Spitze am Atem-Punkt */
 static constexpr uint8_t  kHoldHarm    = 10U;    /* Sprung auf eine Oberwelle erst nach 10 Reports (sonst 3) */
 static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
 static constexpr uint16_t kGateBlk     = 60U;    /* Bewegungsdämpfung: 1-s-Blöcke im Herzband */
@@ -89,12 +111,13 @@ static constexpr float    kRoomSlowA   = 0.00554f; /* Glättung für das Zoom-Zi
 static constexpr float    kArcMinRad   = 2.0f;   /* Kreisfit gilt als schlecht bestimmt, wenn die Phase weniger überstreicht */
 static constexpr float    kCenterTol   = 0.5f;   /* gespeicherter Mittelpunkt gilt, solange er ≤ 0,5 Radien vom Fit liegt */
 
-/* Butterworth-Bandpass 4. Ordnung 0,8–3,0 Hz bei 60 Hz: scipy.signal.butter(4, [0.8, 3.0], 'band', fs=60, output='sos') */
+/* Butterworth-Bandpass 4. Ordnung 0,6–5,0 Hz bei 60 Hz (V1.2: Puls 40–180 /min samt 2. Oberwelle; vorher 0,8–3,0 Hz):
+ * scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') */
 static constexpr float kBpSos[4][6] = {
-    {0.00013253330021777534f, 0.00026506660043555067f, 0.00013253330021777534f, 1.0f, -1.7068261607237221f, 0.75242884221456008f},
-    {1.0f, 2.0f, 1.0f, 1.0f, -1.8535228619096662f, 0.86595611483803558f},
-    {1.0f, -2.0f, 1.0f, 1.0f, -1.7862894348694949f, 0.87269707452243317f},
-    {1.0f, -2.0f, 1.0f, 1.0f, -1.9543928216301054f, 0.96170037756512228f},
+    {0.0016470443743298322f, 0.0032940887486596643f, 0.0016470443743298322f, 1.0f, -1.3464578520633204f, 0.47760903309535657f},
+    {1.0f, 2.0f, 1.0f, 1.0f, -1.5148095433061484f, 0.7378001887686901f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.8687365868947912f, 0.8744518329372326f},
+    {1.0f, -2.0f, 1.0f, 1.0f, -1.9571506605508442f, 0.9612033138279775f},
 };
 
 /**
@@ -169,6 +192,111 @@ inline bool circleCenter(const float *ring, uint16_t start, uint16_t N, float me
     return true;
 }
 
+/** Autokorrelation des Herzsignals (40–180 /min, V1.2): größtes echtes lokales Maximum mit r > 0,05, sonst
+ *  out_peak = 0. Am kleinsten Abstand zählt nur eine Spitze, deren linker Nachbar mitgerechnet ist (vorher galt ein
+ *  dort abfallender Verlauf als Spitze: Prüfstand meldete 189,5 /min). */
+inline void cardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, float &out_peak) {
+    float e0 = 1e-6f;
+    for (uint16_t n = 0; n < N; n++) e0 += hr[n] * hr[n];
+    const uint16_t min_lag = (uint16_t)fmaxf(8.0f, floorf(fs * (60.0f / 185.0f)));
+    const uint16_t max_lag = (uint16_t)fminf((float)(N / 2U), ceilf(fs * (60.0f / 38.0f)));
+    float best_r = -1.0f, r_prev = 0.0f, r_curr = 0.0f;
+    uint16_t best_lag = 0;
+    for (uint16_t lag = min_lag - 1U; lag <= max_lag + 1U; lag++) {
+        float s = 0.0f;
+        for (uint16_t n = 0; n + lag < N; n++) s += hr[n] * hr[n + lag];
+        const float r_next = (s / e0) * ((float)N / (float)(N - lag));
+        if (lag >= min_lag + 1U && r_curr > r_prev && r_curr > r_next && r_curr > best_r) {
+            best_r   = r_curr;
+            best_lag = lag - 1U;
+        }
+        r_prev = r_curr;
+        r_curr = r_next;
+    }
+    if (best_r > 0.05f && best_lag > 0) {
+        out_peak = best_r;
+        out_bpm  = (60.0f * fs) / (float)best_lag;
+    } else {
+        out_peak = 0.0f;
+    }
+}
+
+/** Atem-Oberwellen m · f_breath (m = 1..kHarmMMax, unter fs/2) aus x abziehen: gemeinsamer Kleinste-Quadrate-Fit von
+ *  cos und sin aller m, Hann-gewichtet (sonst sickert eine starke Oberwelle in die Nachbarn und in den Puls). m mit
+ *  |m · f_breath − f_keep| < 0,1 Hz oder |m · f_breath − 2 f_keep| < 0,1 Hz bleiben, dort liegt der Puls (wie V3.3).
+ *  f_breath ≤ 0: nichts tun. Für AKF und Einzelschläge auf dem breiten Band 0,6–5 Hz, in dem die 3. Atem-Oberwelle
+ *  sonst den Herzschlag überdeckt (Prüfstand: AKF in 3 % der Reports beim Puls). */
+inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath, float f_keep) {
+    if (f_breath <= 0.0f || N < 2U) return;
+    constexpr uint8_t kP = 2U * kHarmMMax;
+    float cw[kHarmMMax], sw[kHarmMMax], c[kHarmMMax], sn[kHarmMMax];
+    uint8_t K = 0;
+    for (uint8_t m = 1; m <= kHarmMMax; m++) {
+        const float f = (float)m * f_breath;
+        if (f >= 0.5f * fs) break;
+        if (fabsf(f - f_keep) < 0.1f || fabsf(f - 2.0f * f_keep) < 0.1f) continue;
+        const float w = 2.0f * (float)M_PI * f / fs;
+        cw[K] = cosf(w);
+        sw[K] = sinf(w);
+        K++;
+    }
+    if (K == 0) return;
+    const uint8_t P = 2U * K;
+    float G[kP][kP] = {}, r[kP] = {}, phi[kP];
+    auto start = [&]() { for (uint8_t k = 0; k < K; k++) { c[k] = 1.0f; sn[k] = 0.0f; } };
+    auto step  = [&]() {
+        for (uint8_t k = 0; k < K; k++) {
+            const float c2 = c[k] * cw[k] - sn[k] * sw[k];
+            sn[k] = sn[k] * cw[k] + c[k] * sw[k];
+            c[k]  = c2;
+        }
+    };
+    start();
+    for (uint16_t n = 0; n < N; n++) {
+        const float wn = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)n / (float)(N - 1U)));
+        for (uint8_t k = 0; k < K; k++) { phi[2U * k] = c[k]; phi[2U * k + 1U] = sn[k]; }
+        for (uint8_t a = 0; a < P; a++) {
+            const float wp = wn * phi[a];
+            r[a] += wp * x[n];
+            for (uint8_t b = 0; b <= a; b++) G[a][b] += wp * phi[b];
+        }
+        step();
+    }
+    /* Cholesky G = L·Lᵀ (in G, untere Hälfte), kleine Regularisierung gegen fast gleiche Frequenzen */
+    float tr = 0.0f;
+    for (uint8_t a = 0; a < P; a++) tr += G[a][a];
+    for (uint8_t a = 0; a < P; a++) G[a][a] += 1e-6f * tr / (float)P;
+    for (uint8_t a = 0; a < P; a++) {
+        for (uint8_t b = 0; b <= a; b++) {
+            float v = G[a][b];
+            for (uint8_t k = 0; k < b; k++) v -= G[a][k] * G[b][k];
+            if (a == b) {
+                if (v <= 0.0f) return;
+                G[a][a] = sqrtf(v);
+            } else {
+                G[a][b] = v / G[b][b];
+            }
+        }
+    }
+    for (uint8_t a = 0; a < P; a++) {  /* L·y = r */
+        float v = r[a];
+        for (uint8_t k = 0; k < a; k++) v -= G[a][k] * r[k];
+        r[a] = v / G[a][a];
+    }
+    for (int a = (int)P - 1; a >= 0; a--) {  /* Lᵀ·coef = y */
+        float v = r[a];
+        for (uint8_t k = (uint8_t)(a + 1); k < P; k++) v -= G[k][a] * r[k];
+        r[a] = v / G[a][a];
+    }
+    start();
+    for (uint16_t n = 0; n < N; n++) {
+        float v = 0.0f;
+        for (uint8_t k = 0; k < K; k++) v += r[2U * k] * c[k] + r[2U * k + 1U] * sn[k];
+        x[n] -= v;
+        step();
+    }
+}
+
 struct Complex16 {
     int16_t real;
     int16_t imag;
@@ -180,6 +308,33 @@ struct RoomTarget {
     float motion_energy;   /* geglättete Abweichung vom Standbild (Rohwert; reines Rauschen ≈ Rausch-Amplitude) */
     bool  moving;          /* motion_energy ≥ kRoomMoveK × Bewegungs-Rauschpegel */
 };
+
+/** Eingänge der Konfidenz (V1.3). hr_fused_5s_ago ≤ 0 = unbekannt (kein Sprung-Abschlag). */
+struct QualityInputs {
+    float peak_db;          /* S an der verfolgten Frequenz über dem Median des kombinierten Spektrums */
+    bool  on_harmonic;      /* verfolgte Frequenz liegt auf einer Atem-Oberwelle */
+    float hr_spec, hr_acf, hr_ibi, hr_fused, hr_fused_5s_ago;
+    float motion_pct;       /* Anteil der 1-s-Blöcke mit Bewegung im Fenster */
+};
+
+/**
+ * Konfidenz 0–100 % aus unabhängigen Hinweisen statt aus der Einigkeit der 24 Zoom-Punkte (die sehen fast dasselbe
+ * Signal, B4): 100 × clamp((peak_db − 3) / 12) × 0,5 auf einer Oberwelle × 1 / 0,7 / 0,5 bei 3 / 2 / ≤ 1 Schätzern
+ * (Spektrum, Autokorrelation, Einzelschläge) innerhalb ±5 /min des Ergebnisses × (1 − Bewegungsanteil) × 0,7 bei einem
+ * Sprung > 8 /min in 5 s. Faktoren vorläufig (Prüfstand); an Tag A abstimmen, danach festhalten.
+ */
+inline float signalQuality(const QualityInputs &q) {
+    float c = (q.peak_db - 3.0f) / 12.0f;
+    c = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+    if (q.on_harmonic) c *= 0.5f;
+    const int agree = (fabsf(q.hr_spec - q.hr_fused) <= 5.0f) + (fabsf(q.hr_acf - q.hr_fused) <= 5.0f) +
+                      (fabsf(q.hr_ibi - q.hr_fused) <= 5.0f);
+    c *= (agree >= 3) ? 1.0f : (agree == 2) ? 0.7f : 0.5f;
+    const float mot = q.motion_pct < 0.0f ? 0.0f : (q.motion_pct > 100.0f ? 100.0f : q.motion_pct);
+    c *= 1.0f - mot / 100.0f;
+    if (q.hr_fused_5s_ago > 0.0f && fabsf(q.hr_fused - q.hr_fused_5s_ago) > 8.0f) c *= 0.7f;
+    return 100.0f * c;
+}
 
 struct VitalReport {
     bool     valid;
@@ -200,7 +355,8 @@ struct VitalReport {
     float    hr_fused_bpm;     /* verfolgter, geglätteter Puls (Hauptausgabe) */
     float    ibi_median_ms;
     float    rmssd_ms;
-    float    confidence_pct;   /* Übereinstimmung der Zoom-Punkte (gewichtet) */
+    float    confidence_pct;   /* signalQuality(): Spitzenhöhe, Oberwelle, Einigkeit der Schätzer, Bewegung, Sprung */
+    float    point_agree_pct;  /* frühere Konfidenz: gewichteter Anteil der Zoom-Punkte mit eigener Spitze ±5 /min */
     uint8_t  hr_bin;           /* Zoom-Punkt mit klarstem Puls */
     uint32_t compute_us;       /* Rechenzeit dieses Reports */
     bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
@@ -230,13 +386,16 @@ public:
             work_ext_    = allocFloat(kHrWin + 2U * kFiltPad);
             best_x_      = allocFloat(kHrWin);
             best_h_      = allocFloat(kHrWin);
+            br_x_        = allocFloat(kHrWin);
             dec_         = allocFloat(kHrWin / kDecim + 1U);
             spec_        = allocFloat(kHrNumF);
+            sum_         = allocFloat(kHrNumF);
             comb_        = allocFloat(kHrNumF);
             scratch_     = allocFloat(kHrNumF);
+            pen_         = allocFloat(kHrNumF);
             br_comb_     = allocFloat(kBrNumF);
-            allocated_   = hist_zoom_ && hist_um_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ &&
-                         dec_ && spec_ && comb_ && scratch_ && br_comb_;
+            allocated_   = hist_zoom_ && hist_um_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ && br_x_ &&
+                         dec_ && spec_ && sum_ && comb_ && scratch_ && br_comb_ && pen_;
         }
         resetState();
         return allocated_;
@@ -257,6 +416,8 @@ public:
         last_temp_c_          = 0;
         hr_prev_              = 0.0f;
         hr_miss_              = 0;
+        alt_count_            = 0;
+        hr_hist_n_            = 0;
 
         memset(zoom_clutter_i_, 0, sizeof(zoom_clutter_i_));
         memset(zoom_clutter_q_, 0, sizeof(zoom_clutter_q_));
@@ -451,6 +612,8 @@ public:
         /* Puls: Spektren aller Zoom-Punkte, gewichtet gemittelt */
         const uint16_t M = (uint16_t)((N + kDecim - 1U) / kDecim);
         float peak_hz[kZoomPoints], weight[kZoomPoints];
+        float br_best = -1.0f;
+        int16_t br_bin = -1;
         float wsum = 0.0f, best_q = -1.0f;
         uint8_t hr_bin = 0;
         uint32_t moving_blocks = 0, total_blocks = 0;
@@ -474,26 +637,45 @@ public:
                 const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
                 dec_[m] = work_x_[(uint32_t)m * kDecim] * w;
             }
-            for (uint16_t k = 0; k < kBrNumF; k++)
-                br_comb_[k] += wa * goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
+            float br_energy = 0.0f;
+            for (uint16_t k = 0; k < kBrNumF; k++) {
+                const float pk = goertzelPower(dec_, M, kFsHz / kDecim, kBrFMin + kBrFStep * k);
+                br_comb_[k] += wa * pk;
+                br_energy += pk;
+            }
+            /* Atem-Punkt: stärkste Atmung (Amplitude² × Atemband) unter den Punkten mit sauberem Echo. Reines Rauschen
+             * (kein Echo, Streuung ≈ 0,52) scheidet aus; dort läuft die Phase frei und täuscht Millimeter-Hub vor. */
+            if (spread < kEchoSpreadMax && wa * br_energy > br_best) {
+                br_best = wa * br_energy;
+                br_bin  = (int16_t)b;
+                memcpy(br_x_, work_x_, N * sizeof(float));
+            }
             total_blocks += N / kGateBlk;
             /* dezimieren + Hann */
             for (uint16_t m = 0; m < M; m++) {
                 const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
                 dec_[m] = h[(uint32_t)m * kDecim] * w;
             }
+            /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f): Ein Herzschlag ist ein kurzer Impuls mit kräftiger 2. Oberwelle,
+             * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). 2f_k liegt bis 1,5 Hz im selben Raster,
+             * darüber im 0,02-Hz-Raster bis kHr2MaxHz (Plan: Raster oberhalb 3 Hz vergröbern). */
             float pmax = 0.0f;
             uint16_t kmax = 0;
+            for (uint16_t k = 0; k < kHrNumF; k++) spec_[k] = goertzelPower(dec_, M, kFsHz / kDecim, kHrFMin + kHrFStep * k);
             for (uint16_t k = 0; k < kHrNumF; k++) {
-                spec_[k] = goertzelPower(dec_, M, kFsHz / kDecim, kHrFMin + kHrFStep * k);
-                if (spec_[k] > pmax) { pmax = spec_[k]; kmax = k; }
+                const uint32_t k2 = (uint32_t)kHr2Off + 2U * k;
+                const float f2 = 2.0f * (kHrFMin + kHrFStep * k);
+                const float p2 = (k2 < kHrNumF) ? spec_[k2]
+                                 : (f2 <= kHr2MaxHz ? goertzelPower(dec_, M, kFsHz / kDecim, f2) : 0.0f);
+                sum_[k] = spec_[k] + kHarm2W * p2;
+                if (sum_[k] > pmax) { pmax = sum_[k]; kmax = k; }
             }
-            memcpy(scratch_, spec_, kHrNumF * sizeof(float));
+            memcpy(scratch_, sum_, kHrNumF * sizeof(float));
             std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
             const float med = scratch_[kHrNumF / 2] + 1e-12f;
             const float q   = pmax / med;
             const float w   = q * q * (short_arc ? 0.5f : 1.0f);  /* kurzer Bogen: Phase weniger sicher */
-            for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] += w * (spec_[k] / med);
+            for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] += w * (sum_[k] / med);
             wsum += w;
             weight[b]  = w;
             peak_hz[b] = kHrFMin + kHrFStep * kmax;
@@ -508,31 +690,10 @@ public:
         rep.hr_bin     = hr_bin;
         rep.motion_pct = 100.0f * (float)moving_blocks / (float)(total_blocks ? total_blocks : 1U);
 
-        /* Kandidaten: Top 3 lokale Maxima mit ≥ 0,08 Hz Abstand, nicht am Bandrand (am Datensatz lag die häufigste
-         * Fehlspitze bei 54 /min = 0,90 Hz direkt über der Suchgrenze 0,88 Hz und wurde von vielen Punkten gestützt) */
-        int16_t cand[3] = {-1, -1, -1};
-        uint8_t n_cand  = 0;
-        for (uint8_t c = 0; c < 3; c++) {
-            int16_t bestk = -1;
-            for (uint16_t k = kHrEdgeBins; k + kHrEdgeBins < kHrNumF; k++) {
-                if (comb_[k] < comb_[k - 1] || comb_[k] < comb_[k + 1]) continue;
-                bool far = true;
-                for (uint8_t j = 0; j < n_cand; j++)
-                    if (fabsf((float)(k - cand[j]) * kHrFStep) <= 0.08f) far = false;
-                if (far && (bestk < 0 || comb_[k] > comb_[bestk])) bestk = (int16_t)k;
-            }
-            if (bestk < 0) break;
-            cand[n_cand++] = bestk;
-        }
-        if (n_cand == 0) {
-            rep.valid = false;
-            rep.compute_us = micros() - t0;
-            return false;
-        }
         /* Atmung über alle Punkte: größtes echtes lokales Maximum (nicht am Bandrand), parabolisch verfeinert.
          * Vorher zählte das größte Bin im Suchbereich; bei Lagewechseln (Stufen im Wegsignal) oder Rest-Drift steigt die
          * Leistung zu tiefen Frequenzen weiter an, und das Ergebnis klebte am Rand bei 6,9 /min. Ohne echte Spitze
-         * bleibt fb = 0 (br_bpm = 0 heißt: keine Atemspitze). */
+         * bleibt fb = 0 (br_bpm = 0 heißt: keine Atemspitze). Vor der Pulssuche, weil die Oberwellen-Prüfung fb braucht. */
         float fb = 0.0f, br_q = 0.0f;
         int16_t kb = -1;
         for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
@@ -548,80 +709,207 @@ public:
             std::nth_element(scratch_, scratch_ + kBrNumF / 2, scratch_ + kBrNumF);
             br_q = b / (scratch_[kBrNumF / 2] + 1e-12f);
         }
-        /* Atem-Oberwellen (m = 2..6) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
-         * und überdeckte den Puls ganz. Eine Oberwelle wird nicht entfernt (der Puls kann darauf liegen), aber ein
-         * Sprung dorthin braucht kHoldHarm statt 3 Reports. Am Datensatz mit schneller Atmung: ±8 /min von 47 auf 89 %. */
-        auto isHarm = [&](int16_t k) {
-            if (br_q < kBrMinQ) return false;
-            const float f = kHrFMin + kHrFStep * k;
+        /* Atem-Oberwellen (m = 2..8) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
+         * und überdeckte den Puls ganz. Kandidaten auf m ≥ 4 bekommen bei der Wahl S × 0,5 (der Puls kann darauf liegen,
+         * live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5), ein Sprung dorthin braucht kHoldHarm statt 3 Reports, und die
+         * Konfidenz halbiert sich (signalQuality). harmOrder: m, wenn f auf m · f_Atem liegt, sonst 0. Für m ≤ 3 gilt
+         * die ganze Hauptkeule (±kLowLobeHz) und S × 0,02: Diese Oberwellen sind 10–100 × stärker als der Puls, ein
+         * Puls darin ist spektral nicht zu trennen, und im ersten Report (8-s-Fenster) ist f_Atem bis 8 % ungenau
+         * (Prüfstand base/step/beweg: 3 × Atmung 4 s lang gemeldet). */
+        auto harmOrder = [&](float f) -> uint8_t {
+            if (br_q < kBrMinQ || fb <= 0.0f) return 0;
             for (uint8_t m = 2; m <= kHarmMMax; m++)
-                if (fabsf(f - (float)m * fb) <= kHarmTolHz) return true;
-            return false;
+                if (fabsf(f - (float)m * fb) <= (m <= kHarmLowMax ? kLowLobeHz : kHarmTolHz)) return m;
+            return 0;
         };
-        rep.hr_harm = isHarm(cand[0]);
-        const float raw_bpm = (kHrFMin + kHrFStep * cand[0]) * 60.0f;
+        auto isHarmHz = [&](float f) { return harmOrder(f) != 0; };
+        auto harmPenalty = [&](float f) {
+            const uint8_t m = harmOrder(f);
+            return m == 0 ? 1.0f : (m <= kHarmLowMax ? kHarmPenLow : kHarmPenalty);
+        };
+        auto binHz = [](int16_t k) { return kHrFMin + kHrFStep * (float)k; };
+        /* Abschlag je Spitze, nicht je Frequenzschritt: sonst entsteht in der Oberwellen-Spitze eine Kerbe, und ihre
+         * Flanke wird zum Scheinkandidaten (Prüfstand: 57 statt 54 /min). pen_ = S × Abschlag an lokalen Maxima von S. */
+        for (uint16_t k = 0; k < kHrNumF; k++) {
+            const bool peak = k > 0 && k + 1 < kHrNumF && comb_[k] >= comb_[k - 1] && comb_[k] >= comb_[k + 1];
+            pen_[k] = peak ? comb_[k] * harmPenalty(binHz((int16_t)k)) : 0.0f;
+        }
+
+        /* Kandidaten: Top 3 lokale Maxima nach pen_ mit ≥ 0,08 Hz Abstand, nicht am Bandrand (am Datensatz lag die
+         * häufigste Fehlspitze bei 54 /min = 0,90 Hz direkt über der Suchgrenze 0,88 Hz und wurde von vielen Punkten
+         * gestützt) */
+        int16_t cand[3] = {-1, -1, -1};
+        uint8_t n_cand  = 0;
+        for (uint8_t c = 0; c < 3; c++) {
+            int16_t bestk = -1;
+            for (uint16_t k = kHrEdgeBins; k + kHrEdgeBins < kHrNumF; k++) {
+                if (pen_[k] <= 0.0f) continue;
+                bool far = true;
+                for (uint8_t j = 0; j < n_cand; j++)
+                    if (fabsf((float)(k - cand[j]) * kHrFStep) <= 0.08f) far = false;
+                if (far && (bestk < 0 || pen_[k] > pen_[bestk])) bestk = (int16_t)k;
+            }
+            if (bestk < 0) break;
+            cand[n_cand++] = bestk;
+        }
+        if (n_cand == 0) {
+            rep.valid = false;
+            rep.compute_us = micros() - t0;
+            return false;
+        }
+        /* Oktav-Prüfung (B5) je Kandidat: Bei langsamem Puls ist die 2. Herz-Oberwelle oft stärker als die Grundwelle
+         * (Prüfstand: Puls 50 → 100 gemeldet), und die Verfolgung sprang sonst auch auf 2 × Puls (145 statt 72). Liegt
+         * bei f/2 (±0,02 Hz, im Suchband) eine Spitze mit S(f/2) ≥ kSubRel · S(f), steht der Kandidat für f/2; sein
+         * Wert ist der größere von beiden. S ohne Abschlag: Der Puls liegt oft auf einer Atem-Oberwelle m ≥ 4 (Prüfstand
+         * brady: 50 ≈ 4 × 12). Nicht, wenn f/2 in der Hauptkeule einer niedrigen Atem-Oberwelle (m ≤ 3, ±kLowLobeHz)
+         * liegt: Die ist 10–100 × stärker als der Puls, und S(f/2) enthält ohnehin 0,5 · P(f), sodass ihre Flanke dort
+         * eine Scheinspitze bildet (Prüfstand tachy: 120 → 60,6 bei 3 × 19 = 57). */
+        float cs[3] = {0.0f, 0.0f, 0.0f};
+        for (uint8_t j = 0; j < n_cand; j++) {
+            cs[j] = pen_[cand[j]];
+            const float half = 0.5f * binHz(cand[j]);
+            int16_t sub = -1;
+            for (int16_t k = (int16_t)kHrEdgeBins; k + (int16_t)kHrEdgeBins < (int16_t)kHrNumF; k++)
+                if (pen_[k] > 0.0f && fabsf(binHz(k) - half) <= 0.02f && (sub < 0 || comb_[k] > comb_[sub])) sub = k;
+            if (sub < 0) continue;
+            const uint8_t m_sub = harmOrder(binHz(sub));
+            if (m_sub != 0 && m_sub <= kHarmLowMax) continue;
+            if (comb_[sub] >= kSubRel * comb_[cand[j]]) {
+                cs[j]   = fmaxf(cs[j], pen_[sub]);
+                cand[j] = sub;
+            }
+        }
+        /* doppelte entfernen (≤ 0,08 Hz), nach Wert sortieren */
+        for (uint8_t j = 0; j < n_cand; j++)
+            for (uint8_t i2 = j + 1U; i2 < n_cand;) {
+                if (fabsf((float)(cand[i2] - cand[j]) * kHrFStep) <= 0.08f) {
+                    cs[j] = fmaxf(cs[j], cs[i2]);
+                    for (uint8_t r = i2; r + 1U < n_cand; r++) { cand[r] = cand[r + 1U]; cs[r] = cs[r + 1U]; }
+                    n_cand--;
+                } else {
+                    i2++;
+                }
+            }
+        for (uint8_t j = 1; j < n_cand; j++)
+            for (uint8_t r = j; r > 0 && cs[r] > cs[r - 1U]; r--) {
+                std::swap(cs[r], cs[r - 1U]);
+                std::swap(cand[r], cand[r - 1U]);
+            }
+        rep.hr_harm = isHarmHz(binHz(cand[0]));
+        const float raw_bpm = binHz(cand[0]) * 60.0f;
         rep.hr_spec_bpm = raw_bpm;
         memcpy(scratch_, comb_, kHrNumF * sizeof(float));
         std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
-        rep.zoom_snr_db = 10.0f * log10f(comb_[cand[0]] / (scratch_[kHrNumF / 2] + 1e-12f));
-
-        /* Verfolgung mit Haltezeit. Ein Abbruch der Haltezeit über die Punkt-Zustimmung wurde getestet und
-         * verworfen: Rhythmische Bewegung im Herzband wird von allen Punkten gestützt, der Puls sprang häufiger. */
-        auto agreeAt = [&](float bpm) {
-            float a = 0.0f;
-            for (uint8_t b = 0; b < kZoomPoints; b++)
-                if (fabsf(peak_hz[b] * 60.0f - bpm) <= 5.0f) a += weight[b];
-            return a / (wsum + 1e-12f);
+        const float comb_med = scratch_[kHrNumF / 2] + 1e-12f;
+        rep.zoom_snr_db = 10.0f * log10f(comb_[cand[0]] / comb_med);
+        auto sAtBpm = [&](float bpm) {  /* kombiniertes Spektrum (ohne Abschlag) am nächsten Frequenzschritt */
+            int k = (int)lroundf((bpm / 60.0f - kHrFMin) / kHrFStep);
+            k = k < 0 ? 0 : (k >= (int)kHrNumF ? (int)kHrNumF - 1 : k);
+            return comb_[k];
         };
+
+        /* Verfolgung mit Haltezeit. Ein naher Kandidat (±12 /min) gewinnt nur mit ≥ 0,5 × dem besten Kandidatenwert
+         * (vorher 0,4 ohne Abschlag: die Verfolgung blieb an starken Fremdspitzen hängen, B6). Liegt der verfolgte Wert
+         * auf 2 × / 3 × Atmung und gibt es 3 Reports lang einen Kandidaten ohne Oberwelle mit ≥ 0,5 × dem Wert dort,
+         * wird gewechselt. Ein Abbruch der Haltezeit über die Punkt-Zustimmung wurde 2026-11-01 verworfen (rhythmische
+         * Bewegung stützen alle Punkte). */
         if (hr_prev_ <= 0.0f) {
-            hr_prev_ = raw_bpm;
-            hr_miss_ = 0;
+            hr_prev_   = raw_bpm;
+            hr_miss_   = 0;
+            alt_count_ = 0;
         } else {
             int16_t near = -1;
             for (uint8_t j = 0; j < n_cand; j++) {
-                const float bpm = (kHrFMin + kHrFStep * cand[j]) * 60.0f;
-                if (comb_[cand[j]] >= 0.4f * comb_[cand[0]] && fabsf(bpm - hr_prev_) < 12.0f &&
-                    (near < 0 || comb_[cand[j]] > comb_[near]))
-                    near = cand[j];
+                const float bpm = binHz(cand[j]) * 60.0f;
+                if (cs[j] >= kNearMinRel * cs[0] && fabsf(bpm - hr_prev_) < 12.0f && (near < 0 || cs[j] > cs[near]))
+                    near = (int16_t)j;
             }
             if (near >= 0) {
-                hr_prev_ = 0.7f * hr_prev_ + 0.3f * (kHrFMin + kHrFStep * near) * 60.0f;
+                hr_prev_ = 0.7f * hr_prev_ + 0.3f * binHz(cand[near]) * 60.0f;
                 hr_miss_ = 0;
             } else if (++hr_miss_ >= (rep.hr_harm ? kHoldHarm : 3U)) {
                 hr_prev_ = raw_bpm;
                 hr_miss_ = 0;
             }
+            /* Vergleich mit Abschlag: Unbeschnitten bliebe die Verfolgung an einer starken Atem-Oberwelle hängen, weil
+             * deren Wert um die halbe Spitzenhöhe pendelt. Nur für m ≤ 3: Auf m ≥ 4 liegt oft der Puls selbst (Prüfstand
+             * harm4, brady), ein Wechsel ging dort auf die 3. Herz-Oberwelle (75 statt 50). */
+            int16_t alt = -1;
+            if (harmOrder(hr_prev_ / 60.0f) != 0 && harmOrder(hr_prev_ / 60.0f) <= kHarmLowMax) {
+                const float s_tr = sAtBpm(hr_prev_) * harmPenalty(hr_prev_ / 60.0f);
+                for (uint8_t j = 0; j < n_cand; j++) {
+                    const float bpm = binHz(cand[j]) * 60.0f;
+                    if (!isHarmHz(binHz(cand[j])) && fabsf(bpm - hr_prev_) >= 12.0f && cs[j] >= 0.5f * s_tr &&
+                        (alt < 0 || cs[j] > cs[alt]))
+                        alt = (int16_t)j;
+                }
+            }
+            if (alt >= 0 && ++alt_count_ >= kAltReports) {
+                hr_prev_   = binHz(cand[alt]) * 60.0f;
+                hr_miss_   = 0;
+                alt_count_ = 0;
+            } else if (alt < 0) {
+                alt_count_ = 0;
+            }
         }
-        rep.hr_fused_bpm   = hr_prev_;
-        rep.confidence_pct = 100.0f * agreeAt(hr_prev_);
+        rep.hr_fused_bpm = hr_prev_;
+
+        /* frühere Konfidenz als Diagnosewert: gewichteter Anteil der Punkte mit eigener Spitze ±5 /min am Ergebnis */
+        float agree = 0.0f;
+        for (uint8_t b = 0; b < kZoomPoints; b++)
+            if (fabsf(peak_hz[b] * 60.0f - hr_prev_) <= 5.0f) agree += weight[b];
+        rep.point_agree_pct = 100.0f * agree / (wsum + 1e-12f);
 
         /* Herzsignal des klarsten Punkts: Amplitude, Autokorrelation, Einzelschläge */
         float hr_rms = 0.0f;
         for (uint16_t n = 0; n < N; n++) hr_rms += best_h_[n] * best_h_[n];
         rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)N);
-        float acf_bpm = hr_prev_, acf_peak = 0.0f;
-        computeCardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
-        rep.hr_acf_bpm = acf_bpm;
-        float ibi_bpm = hr_prev_, ibi_ms = 60000.0f / hr_prev_, rmssd_ms = 0.0f;
+        removeBreathHarmonics(best_h_, N, kFsHz, (br_q >= kBrMinQ) ? fb : 0.0f, hr_prev_ / 60.0f);
+        float acf_bpm = 0.0f, acf_peak = 0.0f;
+        cardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
+        rep.hr_acf_bpm = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
+        float ibi_bpm = 0.0f, ibi_ms = 60000.0f / hr_prev_, rmssd_ms = 0.0f;
         uint8_t n_beats = 0;
         computeTimeDomainIbi(best_h_, N, kFsHz, ibi_bpm, ibi_ms, rmssd_ms, n_beats);
-        rep.hr_ibi_bpm    = ibi_bpm;
+        rep.hr_ibi_bpm    = (ibi_bpm > 0.0f) ? ibi_bpm : hr_prev_;
         rep.ibi_median_ms = ibi_ms;
         rep.rmssd_ms      = rmssd_ms;
 
-        /* Atemhub am Punkt mit klarstem Puls, bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann) */
+        /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
+         * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19) */
+        const bool echo_ok = br_bin >= 0;
         for (uint16_t m = 0; m < M; m++) {
             const float w = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
-            dec_[m] = best_x_[(uint32_t)m * kDecim] * w;
+            dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * w;
         }
         const float best_p = (fb > 0.0f) ? goertzelPower(dec_, M, kFsHz / kDecim, fb) : 0.0f;
         const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
         rep.br_bpm        = fb * 60.0f;
         rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
 
-        rep.valid      = true;
+        /* Konfidenz (V1.3) */
+        QualityInputs qi;
+        qi.peak_db         = 10.0f * log10f(sAtBpm(hr_prev_) / comb_med);
+        qi.on_harmonic     = isHarmHz(hr_prev_ / 60.0f);
+        qi.hr_spec         = rep.hr_spec_bpm;
+        qi.hr_acf          = (acf_peak > 0.0f) ? acf_bpm : 0.0f;  /* ohne Ergebnis keine Zustimmung (in @VITAL steht */
+        qi.hr_ibi          = ibi_bpm;                             /* dann wie bisher der verfolgte Wert)            */
+        qi.hr_fused        = hr_prev_;
+        qi.hr_fused_5s_ago = (hr_hist_n_ >= 5) ? hr_hist_[(hr_hist_n_ - 5) % 5] : 0.0f;
+        qi.motion_pct      = rep.motion_pct;
+        rep.confidence_pct = signalQuality(qi);
+        hr_hist_[hr_hist_n_ % 5] = hr_prev_;
+        if (hr_hist_n_ < 250) hr_hist_n_++;
+        else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
+
+        /* Lebenszeichen (B19): gültig nur mit sauberem Echo im Zoom-Fenster und Atmung (Atemspitze/Median ≥ kBrMinQ und
+         * ≥ 100 µm Hub am Atem-Punkt) oder bei angehaltenem Atem mit deutlicher Pulsspitze; dazu höchstens 30 %
+         * Bewegung im Fenster. Die Atemspitze allein reicht nicht: Rausch-Punkte erzeugen auch ohne Person Spitzen. */
+        const bool breath_ok  = echo_ok && br_q >= kBrMinQ && rep.resp_depth_um >= kBreathMinUm;
+        const bool held_pulse = echo_ok && breath_held_ && qi.peak_db >= kPulseHeldDb;
+        rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
         rep.compute_us = micros() - t0;
-        return true;
+        return rep.valid;
     }
 
 private:
@@ -837,32 +1125,6 @@ private:
         return power > 0.0f ? power : 0.0f;
     }
 
-    static void computeCardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, float &out_peak) {
-        float e0 = 1e-6f;
-        for (uint16_t n = 0; n < N; n++) e0 += hr[n] * hr[n];
-        const uint16_t min_lag = (uint16_t)fmaxf(8.0f, floorf(fs * (60.0f / 170.0f)));
-        const uint16_t max_lag = (uint16_t)fminf((float)(N / 2U), ceilf(fs * (60.0f / 50.0f)));
-        float best_r = -1.0f, r_prev = 0.0f, r_curr = 0.0f;
-        uint16_t best_lag = min_lag;
-        for (uint16_t lag = min_lag; lag <= max_lag; lag++) {
-            float s = 0.0f;
-            for (uint16_t n = 0; n + lag < N; n++) s += hr[n] * hr[n + lag];
-            const float r_next = (s / e0) * ((float)N / (float)(N - lag));
-            if (lag > min_lag && r_curr > r_prev && r_curr > r_next && r_curr > best_r) {
-                best_r   = r_curr;
-                best_lag = lag - 1U;
-            }
-            r_prev = r_curr;
-            r_curr = r_next;
-        }
-        if (best_r > 0.05f && best_lag > 0) {
-            out_peak = best_r;
-            out_bpm  = (60.0f * fs) / (float)best_lag;
-        } else {
-            out_peak = 0.0f;
-        }
-    }
-
     static void computeTimeDomainIbi(const float *hr, uint16_t N, float fs,
                                      float &out_bpm, float &out_ibi_ms, float &out_rmssd_ms, uint8_t &out_beats) {
         float rms = 0.0f;
@@ -1030,6 +1292,10 @@ private:
     uint16_t out_of_window_frames_ = 0;
     float    hr_prev_              = 0.0f;
     uint8_t  hr_miss_              = 0;
+    uint8_t  alt_count_            = 0;     /* Reports in Folge mit Alternative zur Oberwelle */
+    bool     breath_held_          = false; /* Atem angehalten (V1.4, br_state); bis dahin immer false */
+    float    hr_hist_[5]           = {};    /* hr_fused der letzten 5 Reports (Sprung-Abschlag) */
+    uint8_t  hr_hist_n_            = 0;
 
     float good_ci_[kZoomPoints]        = {};  /* letzter gut bestimmter Kreismittelpunkt je Zoom-Punkt (Bogen ≥ 2 rad) */
     float good_cq_[kZoomPoints]        = {};
@@ -1051,11 +1317,14 @@ private:
     float *work_ext_    = nullptr;  /* sosfiltfilt mit Rand: kHrWin + 2 * kFiltPad */
     float *best_x_      = nullptr;
     float *best_h_      = nullptr;
+    float *br_x_        = nullptr;  /* Wegsignal des Atem-Punkts (stärkste Atmung unter den Punkten mit sauberem Echo) */
     float *dec_         = nullptr;
-    float *spec_        = nullptr;
+    float *spec_        = nullptr;  /* P(f) je Punkt */
+    float *sum_         = nullptr;  /* S(f) = P(f) + 0,5 · P(2f) je Punkt */
     float *comb_        = nullptr;
     float *scratch_     = nullptr;
     float *br_comb_     = nullptr;
+    float *pen_         = nullptr;  /* comb_ mit Abschlag auf Atem-Oberwellen (Kandidatenwahl) */
 };
 
 /*
@@ -1090,7 +1359,7 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
 /*
  * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
  * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
- *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm
+ *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct
  *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
  *          target_mm,n_room
  *   @REZOOM,zoom_start_mm,zoom_end_mm
@@ -1102,9 +1371,9 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
-    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u", (unsigned long)t_ms, (unsigned)ok,
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f", (unsigned long)t_ms, (unsigned)ok,
                              (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us, rep.motion_pct,
-                             (unsigned)rep.hr_harm),
+                             (unsigned)rep.hr_harm, rep.point_agree_pct),
                     cap);
 }
 

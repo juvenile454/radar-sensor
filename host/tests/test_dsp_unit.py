@@ -93,5 +93,111 @@ class CircleCenterTest(unittest.TestCase):
         self.assertAlmostEqual(float(cq), 9.0, places=3)
 
 
+class BandpassTest(unittest.TestCase):
+    def test_coefficients_match_scipy(self):
+        """kBpSos = scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') (V1.2, Pulsband 40–180 /min)."""
+        import re
+        import numpy as np
+        from scipy import signal
+        txt = (FW / "a121_esp_dsp.h").read_text()
+        block = txt[txt.index("kBpSos[4][6]"):]
+        block = block[:block.index("};")]
+        nums = [float(x) for x in re.findall(r"-?\d+\.\d+(?:e-?\d+)?", block)]
+        sos = signal.butter(4, [0.6, 5.0], "band", fs=60, output="sos")
+        np.testing.assert_allclose(np.array(nums).reshape(4, 6), sos, rtol=1e-6, atol=1e-12)
+
+    def test_search_band_40_to_180(self):
+        out = run_cpp('printf("%.3f %.3f", (kHrFMin + kHrFStep * kHrEdgeBins) * 60, '
+                      '(kHrFMin + kHrFStep * (kHrNumF - 1 - kHrEdgeBins)) * 60);')
+        lo, hi = (float(x) for x in out.split())
+        self.assertAlmostEqual(lo, 40.2, delta=0.5)
+        self.assertAlmostEqual(hi, 180.0, delta=0.5)
+
+
+class SignalQualityTest(unittest.TestCase):
+    """Konfidenz aus Spitzenhöhe, Oberwelle, Einigkeit Spektrum/AKF/IBI, Bewegung und Sprung (V1.3)."""
+
+    def quality(self, **kw) -> float:
+        q = dict(peak_db=15.0, on_harmonic="false", hr_spec=72.0, hr_acf=72.0, hr_ibi=72.0, hr_fused=72.0,
+                 hr_fused_5s_ago=72.0, motion_pct=0.0)
+        q.update(kw)
+        init = ", ".join(str(q[k]) + ("f" if isinstance(q[k], float) else "") for k in
+                         ("peak_db", "on_harmonic", "hr_spec", "hr_acf", "hr_ibi", "hr_fused", "hr_fused_5s_ago",
+                          "motion_pct"))
+        return float(run_cpp(f"QualityInputs q = {{{init}}}; printf(\"%.3f\", signalQuality(q));"))
+
+    def test_clear_peak_full_agreement(self):
+        self.assertAlmostEqual(self.quality(), 100.0, places=2)
+
+    def test_peak_height_scales(self):
+        self.assertAlmostEqual(self.quality(peak_db=3.0), 0.0, places=2)
+        self.assertAlmostEqual(self.quality(peak_db=9.0), 50.0, places=2)
+        self.assertAlmostEqual(self.quality(peak_db=30.0), 100.0, places=2)
+
+    def test_harmonic_halves(self):
+        self.assertAlmostEqual(self.quality(on_harmonic="true"), 50.0, places=2)
+
+    def test_agreement_two_and_one(self):
+        self.assertAlmostEqual(self.quality(hr_ibi=90.0), 70.0, places=2)
+        self.assertAlmostEqual(self.quality(hr_ibi=90.0, hr_acf=50.0), 50.0, places=2)
+
+    def test_motion_and_jump(self):
+        self.assertAlmostEqual(self.quality(motion_pct=50.0), 50.0, places=2)
+        self.assertAlmostEqual(self.quality(hr_fused_5s_ago=60.0), 70.0, places=2)
+
+
+class CardiacAcfTest(unittest.TestCase):
+    """Autokorrelation des Herzsignals: nur echte lokale Maxima im Bereich 40–180 /min (V1.2)."""
+
+    def acf(self, expr: str) -> tuple[float, float]:
+        out = run_cpp(f"""
+        static float x[900];
+        for (int n = 0; n < 900; n++) {{ const float t = n / 60.0f; x[n] = {expr}; }}
+        float bpm = -1, peak = -1;
+        cardiacAcf(x, 900, 60.0f, bpm, peak);
+        printf("%.3f %.3f", bpm, peak);""")
+        bpm, peak = (float(v) for v in out.split())
+        return bpm, peak
+
+    def test_no_peak_at_lower_lag_edge(self):
+        # 37 /min liegt unter dem Suchbereich: Die AKF fällt am kleinsten Abstand nur ab, das ist keine Spitze
+        _, peak = self.acf("cosf(6.2832f * 0.62f * t)")
+        self.assertEqual(peak, 0.0)
+
+    def test_fundamental_with_strong_second_harmonic(self):
+        bpm, peak = self.acf("0.6f * cosf(6.2832f * 0.8333f * t) + cosf(6.2832f * 1.6667f * t)")
+        self.assertGreater(peak, 0.5)
+        self.assertAlmostEqual(bpm, 50.0, delta=1.5)
+
+
+class RemoveBreathHarmonicsTest(unittest.TestCase):
+    """Atem-Oberwellen m · f_Atem (m = 1..8) aus dem Herzsignal abziehen, bevor AKF und Einzelschläge rechnen; m nahe
+    am Puls (und an 2 × Puls) bleiben (wie V3.3, ±0,1 Hz)."""
+
+    def run_case(self, expr: str, fb: float, keep: float, ref: str) -> float:
+        out = run_cpp(f"""
+        static float x[900];
+        for (int n = 0; n < 900; n++) {{ const float t = n / 60.0f; x[n] = {expr}; }}
+        removeBreathHarmonics(x, 900, 60.0f, {fb}f, {keep}f);
+        double e = 0;
+        for (int n = 0; n < 900; n++) {{ const float t = n / 60.0f; const double d = x[n] - ({ref}); e += d * d; }}
+        printf("%.4f", sqrt(e / 900));""")
+        return float(out)
+
+    def test_removes_breath_harmonics_keeps_pulse(self):
+        rms = self.run_case("700 * cosf(6.2832f * 0.75f * t + 0.3f) + 300 * cosf(6.2832f * 1.0f * t - 1.0f) "
+                            "+ 30 * cosf(6.2832f * 1.2f * t)", 0.25, 1.2, "30 * cosf(6.2832f * 1.2f * t)")
+        self.assertLess(rms, 1.5)  # < 5 % der Puls-Amplitude, Atem-Oberwellen 10–20 × größer
+
+    def test_harmonic_on_pulse_stays(self):
+        # m = 4 liegt auf dem Puls und bleibt; die übrigen m nehmen ihm höchstens 2 % (Rest-Leckage über das Fenster)
+        rms = self.run_case("30 * cosf(6.2832f * 1.0f * t)", 0.25, 1.0, "30 * cosf(6.2832f * 1.0f * t)")
+        self.assertLess(rms, 0.6)
+
+    def test_no_breath_no_change(self):
+        rms = self.run_case("200 * cosf(6.2832f * 0.75f * t)", 0.0, 1.2, "200 * cosf(6.2832f * 0.75f * t)")
+        self.assertLess(rms, 0.01)
+
+
 if __name__ == "__main__":
     unittest.main()
