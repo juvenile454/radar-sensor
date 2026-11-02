@@ -345,13 +345,14 @@ for _scen in LIMITS:
 # V6: Ziele für „Puls nach Bewegung wiederfinden" (Plan 2026-11-02), nur angewendet, wenn der Schalter A121_DSP_REACQ
 # gesetzt ist (--define A121_DSP_REACQ). Ohne die DSP-Änderung verletzt der heutige Header sie, das ist erwartet.
 LIMITS_REACQ = {
-    "kurz":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
-    "zappel":    [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
-    "lang":      [("wiederfind_s", "<=", 10.0), ("falsch_nach_beweg_n", "<=", 0)],
-    "lage":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
-    "beweg_hr":  [("falsch_nach_beweg_n", "<=", 0)],
-    "beweg_weg": [("falsch_nach_beweg_n", "<=", 0), ("weg_gueltig_n", "<=", 0)],
-    "tippen":    [("falsch_nach_beweg_n", "<=", 0), ("abschnitt_gueltig_pct", ">=", 80.0), ("abschnitt_mae", "<=", 2.0)],
+    "kurz":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "zappel":    [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "lang":      [("wiederfind_s", "<=", 10.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "lage":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "beweg_hr":  [("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "beweg_weg": [("falsch_nach_beweg_n", "<=", 0), ("weg_gueltig_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "tippen":    [("falsch_nach_beweg_n", "<=", 0), ("abschnitt_gueltig_pct", ">=", 80.0), ("abschnitt_mae", "<=", 2.0),
+                  ("nie_gefunden_n", "<=", 0)],
 }
 
 
@@ -597,19 +598,23 @@ def early_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray) -> dict:
 
 def reacq_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, episodes: list[tuple[float, float]]) -> dict:
     """Wiederfinden nach Bewegung (V6). wiederfind_s: Median über die Episoden der Zeit vom Episodenende bis zum ersten
-    gültigen Report mit Fehler ≤ 5 /min (eine Episode, die bis Szenarioende nie wiedergefunden wird, zählt als ∞; ist der
-    Median ∞, ist das Ergebnis NaN). falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s],
-    überlappende Zeitfenster mehrerer Episoden werden nicht doppelt gezählt."""
+    gültigen Report mit Fehler ≤ 5 /min; nur Episoden, die wiedergefunden wurden, zählen, NaN wenn keine. nie_gefunden_n:
+    Zahl der Episoden ohne einen solchen Report bis Szenarioende (der Median allein würde sie verdecken).
+    falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s]; überlappende Zeitfenster mehrerer
+    Episoden werden nicht doppelt gezählt."""
     e = np.nan_to_num(err, nan=0.0)
     ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
     bad = valid & (e > 10.0)
-    found, in_win = [], np.zeros(len(t_s), bool)
+    found, never, in_win = [], 0, np.zeros(len(t_s), bool)
     for _a, b in episodes:
         after = ok & (t_s > b)
-        found.append(float(t_s[after][0] - b) if after.any() else np.inf)
+        if after.any():
+            found.append(float(t_s[after][0] - b))
+        else:
+            never += 1
         in_win |= (t_s > b) & (t_s <= b + 30.0)
-    med = float(np.median(found)) if found else np.nan
-    return {"wiederfind_s": med if np.isfinite(med) else np.nan, "falsch_nach_beweg_n": int(np.sum(bad & in_win))}
+    return {"wiederfind_s": float(np.median(found)) if found else np.nan, "nie_gefunden_n": never,
+            "falsch_nach_beweg_n": int(np.sum(bad & in_win))}
 
 
 def section_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, a: float, b: float) -> dict:
@@ -771,7 +776,8 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                 if r["episoden"]:
                     extra += (f"Zustand BEWEGUNG in {r['zustand_beweg_n']} Reports ({r['episoden'][0][0]:.0f}–"
                               f"{max(b for _a, b in r['episoden']) + 15:.0f} s), außerhalb {r['zustand_beweg_fehl']}"
-                              f"; wiederfind {r['wiederfind_s']:.0f} s, falsch danach {r['falsch_nach_beweg_n']}")
+                              f"; wiederfind {r['wiederfind_s']:.0f} s (nie {r['nie_gefunden_n']}), falsch danach "
+                              f"{r['falsch_nach_beweg_n']}")
                     if "abschnitt_gueltig_pct" in r:
                         extra += f", Abschnitt gültig {r['abschnitt_gueltig_pct']:.0f} % MAE {r['abschnitt_mae']:.1f}"
                 elif r["zustand_beweg_fehl"]:

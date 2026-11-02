@@ -292,6 +292,15 @@ class ReacqMetricsTest(unittest.TestCase):
         m = vital_sim.reacq_metrics(t, np.zeros_like(t, bool), np.ones_like(t), [(60.0, 63.0)])
         self.assertTrue(math.isnan(m["wiederfind_s"]))
         self.assertEqual(m["falsch_nach_beweg_n"], 0)
+        self.assertEqual(m["nie_gefunden_n"], 1)
+
+    def test_one_found_one_never_found(self):
+        t = np.arange(0.0, 100.0)
+        e = np.where(t <= 50, 1.0, 20.0)   # ab 51 s dauerhaft falsch
+        m = vital_sim.reacq_metrics(t, np.ones_like(t, bool), e, [(10.0, 12.0), (60.0, 62.0)])
+        self.assertEqual(m["nie_gefunden_n"], 1)
+        self.assertEqual(m["wiederfind_s"], 1.0)   # nur die gefundene Episode zählt, endlich
+        self.assertEqual(m["falsch_nach_beweg_n"], 30)
 
     def test_median_over_episodes_and_no_double_count(self):
         t = np.arange(0.0, 100.0)
@@ -299,6 +308,7 @@ class ReacqMetricsTest(unittest.TestCase):
         e = np.where(((t > 12) & (t < 17)) | ((t > 32) & (t < 40)), 20.0, 1.0)   # falsch 13–16 und 33–39
         m = vital_sim.reacq_metrics(t, v, e, [(10.0, 12.0), (30.0, 32.0)])
         self.assertEqual(m["wiederfind_s"], (5.0 + 8.0) / 2)   # Median aus 17 - 12 und 40 - 32
+        self.assertEqual(m["nie_gefunden_n"], 0)
         self.assertEqual(m["falsch_nach_beweg_n"], 4 + 7)
 
 
@@ -394,9 +404,27 @@ class ReacqLimitsTest(unittest.TestCase):
         self.assertEqual(lim[("lang", "wiederfind_s")], ("<=", 10.0))
         for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
             self.assertEqual(lim[(s, "falsch_nach_beweg_n")], ("<=", 0))
+            self.assertEqual(lim[(s, "nie_gefunden_n")], ("<=", 0))
         self.assertEqual(lim[("beweg_weg", "weg_gueltig_n")], ("<=", 0))
         self.assertEqual(lim[("tippen", "abschnitt_gueltig_pct")], (">=", 80.0))
         self.assertEqual(lim[("tippen", "abschnitt_mae")], ("<=", 2.0))
+
+    def test_active_limits_switch(self):
+        old = list(vital_sim.DEFINES)
+        self.addCleanup(lambda: vital_sim.DEFINES.__setitem__(slice(None), old))
+        vital_sim.DEFINES[:] = []
+        self.assertEqual(vital_sim.active_limits(), vital_sim.LIMITS)
+        vital_sim.DEFINES[:] = ["A121_DSP_VITERBI"]
+        self.assertEqual(vital_sim.active_limits(), vital_sim.LIMITS)
+        want = {k: vital_sim.LIMITS.get(k, []) + vital_sim.LIMITS_REACQ.get(k, [])
+                for k in {**vital_sim.LIMITS, **vital_sim.LIMITS_REACQ}}
+        for define in ("A121_DSP_REACQ", "A121_DSP_REACQ=1"):
+            vital_sim.DEFINES[:] = [define]
+            got = vital_sim.active_limits()
+            self.assertEqual(got, want, define)
+            self.assertIn(("wiederfind_s", "<=", 8.0), got["kurz"])
+            self.assertEqual(got["base"], vital_sim.LIMITS["base"])
+        self.assertNotIn(("wiederfind_s", "<=", 8.0), vital_sim.LIMITS["kurz"])   # LIMITS selbst bleibt unverändert
 
     def test_new_scenarios_have_baseline_limits(self):
         for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
