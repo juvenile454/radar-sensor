@@ -309,6 +309,31 @@ class DspLineTest(unittest.TestCase):
                       'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
         self.assertEqual(out.split(",")[13], "1234")
 
+    def test_reacq_fields_at_end(self):
+        """V6: win_s und reacq hinten (Feld 15, 16); Feld 14 (n_eff) ist ohne A121_DSP_COMBINE leer."""
+        out = run_cpp('VitalReport r{}; r.win_s = 7; r.reacq = 2; char b[256]; '
+                      'formatDspLine(b, sizeof b, 1000, true, r, 5); puts(b);', ("-DA121_DSP_REACQ",))
+        p = out.strip().split(",")
+        self.assertEqual(len(p), 17)
+        self.assertEqual(p[14], "")
+        self.assertEqual((p[15], p[16]), ("7", "2"))
+
+    def test_reacq_with_combine_has_n_eff(self):
+        out = run_cpp('VitalReport r{}; r.n_eff = 1.4f; r.win_s = 7; r.reacq = 1; char b[256]; '
+                      'formatDspLine(b, sizeof b, 1000, true, r, 5); puts(b);',
+                      ("-DA121_DSP_REACQ", "-DA121_DSP_COMBINE"))
+        p = out.strip().split(",")
+        self.assertEqual(len(p), 17)
+        self.assertEqual((p[14], p[15], p[16]), ("1.4", "7", "1"))
+
+    def test_reacq_constants(self):
+        out = run_cpp('printf("%u %u %u", (unsigned)kReacqNone, (unsigned)kReacqShort, (unsigned)kReacqMemory);')
+        self.assertEqual(out.split(), ["0", "1", "2"])
+
+    def test_line_unchanged_without_switch(self):
+        out = run_cpp('VitalReport r{}; char b[256]; formatDspLine(b, sizeof b, 1000, true, r, 5); puts(b);')
+        self.assertEqual(len(out.strip().split(",")), 14)
+
 
 class FrameFlagsTest(unittest.TestCase):
     """V1.5 (B15, B16): Sensor-Flags je Frame, Zähler je Report (seit dem letzten), tick-Lücken > 25 ms ohne Rezoom."""

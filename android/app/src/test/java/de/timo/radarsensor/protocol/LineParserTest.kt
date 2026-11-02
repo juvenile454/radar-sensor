@@ -132,6 +132,20 @@ class LineParserTest {
         assertEquals(1.4f, komb.nEff)
     }
 
+    /** V6: win_s und reacq als Felder 15 und 16 (A121_DSP_REACQ); Feld 14 (n_eff) bleibt ohne A121_DSP_COMBINE leer. */
+    @Test fun dspWithReacqFields() {
+        val d = parse<Dsp>("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60,,7,2")
+        assertEquals(7, d.winS)
+        assertEquals(2, d.reacq)
+        assertEquals(null, d.nEff)
+    }
+
+    @Test fun dspWithoutReacqFields() {
+        val d = parse<Dsp>("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60")
+        assertEquals(null, d.winS)
+        assertEquals(null, d.reacq)
+    }
+
     /** V3.5/V5.1: Zustand der Messung je Report. */
     @Test fun messZustand() {
         val m = parse<MeasState>("@STATE,12000,2,4000")

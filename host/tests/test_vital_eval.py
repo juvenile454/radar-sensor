@@ -384,6 +384,29 @@ class EffectivePointsTest(unittest.TestCase):
         self.assertNotIn("effektive Punktzahl", ve.format_report("x", r0))
 
 
+class ReacqFieldsTest(unittest.TestCase):
+    def _load(self, dsp_lines: str):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        p = pathlib.Path(d.name)
+        (p / "stream.log").write_text("@IQ3_START,610,670,60.0,1\n" + dsp_lines)
+        n = dsp_lines.count("\n")
+        (p / "rxtime.csv").write_text("line,rx_ms\n" + "".join(f"{i},{i * 1000}\n" for i in range(n + 1)))
+        return ve.load_recording(p).dsp
+
+    def test_reacq_fields_parsed(self):
+        """V6: @DSP-Felder 15 und 16 (win_s, reacq) hinter n_eff."""
+        dd = self._load("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60,,7,2\n")
+        self.assertEqual(list(dd["win_s"]), [7.0])
+        self.assertEqual(list(dd["reacq"]), [2.0])
+        self.assertTrue(math.isnan(dd["n_eff"][0]))
+
+    def test_old_line_without_reacq_fields(self):
+        dd = self._load("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60\n")
+        self.assertTrue(math.isnan(dd["win_s"][0]))
+        self.assertTrue(math.isnan(dd["reacq"][0]))
+
+
 class RefIbiTest(unittest.TestCase):
     def test_median_rr_and_rmssd_in_window(self):
         """Gurt im Fenster (t − 15 s, t]: Median der RR und RMSSD aufeinanderfolgender RR; das erste RR im Fenster

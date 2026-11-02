@@ -96,6 +96,8 @@ object LineParser {
                     pointAgreePct = p.getOrNull(8)?.toFloatOrNull(),
                     brState = p.getOrNull(9)?.toIntOrNull(),
                     nEff = p.getOrNull(14)?.toFloatOrNull(),
+                    winS = p.getOrNull(15)?.toIntOrNull(),
+                    reacq = p.getOrNull(16)?.toIntOrNull(),
                 )
             "@STATE" -> MeasState(p[1].toLong(), p[2].toInt(), p[3].toLong())
             "@BREATH" -> Breath(p[1].toLong(), p[2].toLong(), p[3].toLong(), p[4].toFloat(), p[5].toFloat())

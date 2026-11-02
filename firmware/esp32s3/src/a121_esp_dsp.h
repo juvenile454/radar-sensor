@@ -1234,6 +1234,11 @@ inline float combinePrincipal(const float *const *rings, const float *ci, const 
 }
 #endif
 
+/* V6: Wert von VitalReport::reacq */
+static constexpr uint8_t kReacqNone = 0U;    /* normal */
+static constexpr uint8_t kReacqShort = 1U;   /* kurzes Fenster nach Bewegung */
+static constexpr uint8_t kReacqMemory = 2U;  /* über das Gedächtnis wiedergefunden */
+
 struct VitalReport {
     bool     valid;
     uint32_t frame_count;
@@ -1274,6 +1279,8 @@ struct VitalReport {
     uint8_t  state;            /* Zustand der Messung kSt* (V3.5) */
     uint32_t state_since_ms;   /* … seit (Frames × 1000 / 60) */
     float    n_eff;            /* effektive Punktzahl des kombinierten Kanals (V3.1, nur mit A121_DSP_COMBINE) */
+    uint8_t  win_s;            /* Länge des Pulsfensters dieses Reports in s (V6, Ausgabe nur mit A121_DSP_REACQ) */
+    uint8_t  reacq;            /* Wiederfinden nach Bewegung (V6): kReacq* */
 };
 
 /**
@@ -2546,6 +2553,7 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
  * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
  * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
  *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct,br_state,n_delayed,n_sat,n_tickgap
+ *        (+ mit A121_DSP_COMBINE n_eff als 15. Feld; + mit A121_DSP_REACQ: n_eff (ggf. leer), win_s, reacq)
  *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
  *          target_mm,n_room
  *   @REZOOM,zoom_start_mm,zoom_end_mm
@@ -2557,7 +2565,20 @@ static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
+#ifdef A121_DSP_REACQ
+    /* V6: Feld 14 n_eff (Zahl mit A121_DSP_COMBINE, sonst leer), Feld 15 win_s, Feld 16 reacq; nur mit Schalter */
+    char n_eff[16] = "";
 #ifdef A121_DSP_COMBINE
+    snprintf(n_eff, sizeof n_eff, "%.1f", rep.n_eff);
+#endif
+    return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu,%s,%u,%u",
+                             (unsigned long)t_ms, (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct,
+                             (unsigned long)compute_us, rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct,
+                             (unsigned)rep.br_state, (unsigned)rep.n_delayed, (unsigned)rep.n_sat,
+                             (unsigned)rep.n_tickgap, (unsigned long)rep.frame_count, n_eff, (unsigned)rep.win_s,
+                             (unsigned)rep.reacq),
+                    cap);
+#elif defined(A121_DSP_COMBINE)
     /* V3.1: effektive Punktzahl als 15. Feld, nur mit Schalter (Standardzeile unverändert) */
     return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu,%.1f", (unsigned long)t_ms,
                              (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,

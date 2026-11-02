@@ -38,7 +38,9 @@ from a121_esp_ultimate import VITAL_FIELDS, run_replay_cpp  # noqa: E402
 # @DSP-Felder nach dem Tag; neue Felder kommen nur hinten dazu (fehlende = NaN)
 DSP_FIELDS = ["t_ms", "ok", "hr_bin", "conf", "compute_us", "motion_pct", "hr_harm",
               "point_agree_pct", "br_state", "n_delayed", "n_sat", "n_tickgap", "snap_frame",
-              "n_eff"]  # n_eff: effektive Punktzahl, nur mit Schalter A121_DSP_COMBINE (V3.1), sonst NaN
+              "n_eff", "win_s", "reacq"]
+# n_eff: effektive Punktzahl, nur mit Schalter A121_DSP_COMBINE (V3.1), sonst NaN; win_s (Pulsfenster in s) und reacq
+# (0 normal, 1 kurzes Fenster nach Bewegung, 2 über Gedächtnis wiedergefunden) nur mit A121_DSP_REACQ (V6), sonst NaN
 BR_STATE_APNEA = 2
 START_TAGS = ("@IQ3_START", "@REZOOM", "@RECAL")
 
