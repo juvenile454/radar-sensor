@@ -38,8 +38,9 @@ Der Prüfstand bildet das kaum ab: `beweg` (10 s Zufallsbewegung ±3 mm, ohne Ab
 
 ## Entwurf
 
-Alles hinter dem Übersetzungsschalter `A121_DSP_REACQ` (Standard aus, siehe „Einführung“). Ohne Schalter bleibt die
-Ausgabe bitgleich zum heutigen Stand.
+Alles hinter Übersetzungsschaltern, Standard aus (siehe „Einführung“): `A121_DSP_REACQ` für 1.–5. und 7.,
+`A121_DSP_REACQ_PERIOD` (Variante in 1.) und `A121_DSP_PHASE_SLOPE` (6.). Ohne Schalter bleibt die Ausgabe bitgleich zum
+heutigen Stand.
 
 ### 1. Bewegungskarte vor den Spektren
 
@@ -48,6 +49,12 @@ Ausgabe bitgleich zum heutigen Stand.
   (wie `gateMotion`). Ein Block gilt als bewegt, wenn er bei mindestens 2 der 3 Punkte über `kMotionK` × Bezug liegt.
 - Ergebnis: Bitmaske der bewegten Blöcke im Fenster und `clean_tail_s` = ruhige Sekunden seit dem letzten bewegten Block.
 - Funktion `motionMap(start, N, use) → {mask, clean_tail_blocks}`; eigenständig testbar über `host/dsp_replay`.
+- **Variante Periodizität** (`A121_DSP_REACQ_PERIOD`, nur zusammen mit `A121_DSP_REACQ`; nach Vital-Radio, siehe
+  Quellen): Ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn herum (3-s-Ausschnitt, Herzband) nicht
+  periodisch ist: Spektrum des Ausschnitts, stärkste Spitze < `kPeriodK` (5) × Mittel der übrigen Bins. Ziel: kleine
+  unregelmäßige Bewegungen (Tippen) nicht als Bewegung werten, wenn der Puls sichtbar bleibt. Risiko: rhythmische
+  Bewegung (Fußwippen) ist auch periodisch; deshalb nur übernehmen, wenn `zappel`, `lage` und `beweg_hr` ihre Grenzen
+  halten und `tippen` besser wird.
 
 ### 2. Fensterwahl
 
@@ -84,7 +91,17 @@ Ausgabe bitgleich zum heutigen Stand.
 `mem_ok`), mit `mem_ok` = Gedächtnis aktiv **und** Wert wiedergefunden (Bestätigung aus 4.).
 Ohne vorherigen gültigen Wert gibt es kein Gedächtnis; die Fälle „leer“, „niemand“ und „weg“ ändern sich dadurch nicht.
 
-### 6. Ausgabe
+### 6. Feinschätzung über die Phasensteigung
+
+Variante `A121_DSP_PHASE_SLOPE` (unabhängig von `A121_DSP_REACQ` schaltbar; nach Vital-Radio): Statt der parabolischen
+Verfeinerung der Spektrumsspitze wird die Frequenz des gewählten Kandidaten so bestimmt: im Spektrum des Weg-Signals
+(klarster Punkt bzw. kombiniertes Signal) nur die Spitze und ihre beiden Nachbar-Bins behalten, inverse FFT zum
+komplexen Zeitsignal, Phase abwickeln, Steigung per Geradenfit (kleinste Quadrate) → Frequenz. Nutzen vor allem im
+kurzen Fenster (6 s: Hauptkeule ≈ 20 /min breit). Prüfung: Prüfstand mit und ohne Variante, besonders `step`
+(Reaktion), `kurz`, `zappel` und Fensterlänge 10 s (V2.5); übernehmen nur, wenn MAE und Grenzwerte nicht schlechter
+werden. Rechenzeit: eine komplexe inverse FFT (1024 Punkte) je Report.
+
+### 7. Ausgabe
 
 `@DSP` bekommt hinten zwei Felder (nach `n_eff`, das ohne `A121_DSP_COMBINE` leer bleibt):
 
@@ -103,6 +120,7 @@ wie bisher. `@VITAL` und `@STATE` unverändert.
 | `kMemBandBpm` | 15 /min | Suchband um den gemerkten Wert |
 | `kMemMinConf` | 50 % | Konfidenz, ab der ein Wert ins Gedächtnis geht |
 | Bewegungskarte | 2 von 3 Punkten | Block gilt als bewegt |
+| `kPeriodK` | 5 | Periodizität: Spitze / Mittel der übrigen Bins (Variante `A121_DSP_REACQ_PERIOD`) |
 
 ## Prüfung
 
@@ -120,6 +138,7 @@ Neue Szenarien (je 120–180 s, Puls und Atmung bekannt):
 | `lage` | Haltungswechsel bei 60 s: Abstand springt um 8 mm, Echo-Amplitude −30 %, 2 s Übergang |
 | `beweg_hr` | 10 s Bewegung bei 60 s, Puls springt dabei von 70 auf 85 |
 | `beweg_weg` | 5 s Bewegung bei 50 s, Person geht bei 60 s |
+| `tippen` | 60–120 s unregelmäßige kleine Bewegung (Arme/Schultern, ±0,3 mm am Brust-Echo, Stöße 0,2–0,5 s), kein Lagewechsel |
 
 Neue Kennzahlen in `bench`: `wiederfind_s` (Ende jeder Bewegung bis zum ersten gültigen Wert innerhalb ±5 /min der
 Wahrheit, Median über die Bewegungen), `falsch_nach_beweg_n` (gültige Reports > 10 /min daneben in den 30 s nach
@@ -127,7 +146,9 @@ Bewegungsende).
 
 Grenzwerte (`--check`): `wiederfind_s ≤ 8` in `kurz`, `zappel`, `lage`; `≤ 10` in `lang`; `falsch_nach_beweg_n = 0`
 überall; in `beweg_hr` erster gültiger Wert nach der Bewegung innerhalb ±5 /min von 85 (nicht 70); in `beweg_weg` kein
-gültiger Report ab 65 s. Alle bisherigen Grenzwerte gelten weiter, mit und ohne Schalter.
+gültiger Report ab 65 s; in `tippen` mindestens 80 % gültig im Abschnitt 60–120 s mit MAE ≤ 2 /min. Alle bisherigen
+Grenzwerte gelten weiter, mit und ohne Schalter. Varianten (`A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE`) laufen als
+eigene Spalten im Bench-Bericht (`--define`).
 
 ### Nachrechnung echter Aufnahmen (ohne Referenz)
 
@@ -154,7 +175,9 @@ Ziel an T1: Median der Bewegungs-Ausfälle ≤ 15 s (heute 40 s), Sprünge nicht
 
 ## Einführung
 
-1. Schalter `A121_DSP_REACQ` aus: Implementierung, Tests, Prüfstand mit und ohne Schalter, Nachrechnung.
+1. Alle Schalter aus: Implementierung, Tests, Prüfstand mit und ohne Schalter, Nachrechnung. Varianten
+   (`A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE`) einzeln gegen `A121_DSP_REACQ` allein vergleichen; nur übernehmen,
+   was die Grenzwerte hält und besser ist.
 2. Prüfstand und T1-Ziel erfüllt: Build mit Schalter an flashen und live prüfen (Projektinhaber bedient, Handzählung).
 3. Polar H9 Tag A bestätigt: Schalter Standard an, Firmware-Kennung erhöhen; Tag B zur Abnahme.
 
@@ -168,6 +191,15 @@ Ziel an T1: Median der Bewegungs-Ausfälle ≤ 15 s (heute 40 s), Sprünge nicht
   Abnahme).
 - **Rechenzeit:** Die Bewegungskarte rechnet 3 Punkte vorab (heute laufen alle 24, bei 48 Zoom-Punkten 16); danach ein Durchlauf über das gewählte
   Fenster. Erwartet + 15–25 %; Grenze ≤ 400 ms je Report (Kern 0, 1 Report/s), heute 91–152 ms.
+
+## Quellen
+
+- Adib, Mao, Kabelac, Katabi, Miller 2015, Smart Homes that Monitor Breathing and Heart Rate (Vital-Radio), *ACM CHI*,
+  https://doi.org/10.1145/2702123.2702200. FMCW 5,46–7,25 GHz, 8-cm-Entfernungsstufen, Periodizitätstest je 30-s-Fenster
+  (Spitze ≥ 5 × Mittel der übrigen Bins, sonst Fenster verworfen), Puls im 10-s-Fenster mit Feinschätzung über die
+  Phasensteigung. Median-Genauigkeit 98,5 % (Puls, 1 m) gegen Pulsoximeter, nur ruhige Abschnitte, je 2 min; bewegte
+  Zeit wird verworfen, nicht wiedergefunden. Reichweite 8 m und Messung durch Wände gelten für deren Hardware, nicht für
+  den A121 bei 60 GHz.
 
 ## Später (nicht Teil dieses Entwurfs)
 

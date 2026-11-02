@@ -388,6 +388,8 @@ Nutzung prüfen; Daten nach `~/Data/radar-sensor/public/`, nicht ins Repo.
 - Gilgen-Ammann, Schweizer, Wyss 2019, RR intervals Polar H10, *Eur J Appl Physiol* 119.
   https://link.springer.com/10.1007/s00421-019-04142-5
 - Schellenberger et al. 2020, *Sci Data* 7:291. https://www.nature.com/articles/s41597-020-00629-5
+- Adib et al. 2015, Vital-Radio, *ACM CHI*. https://doi.org/10.1145/2702123.2702200 (Periodizitätstest, Feinschätzung
+  über die Phasensteigung; ausgewertet in `docs/superpowers/specs/2026-11-02-puls-wiederfinden-design.md`)
 - Lund-Abschlussarbeit (A111): https://lup.lub.lu.se/student-papers/record/9094792 ·
   KTU-Abschlussarbeit (A121): https://epubl.ktu.edu/object/elaba:199466836/index.html
 
