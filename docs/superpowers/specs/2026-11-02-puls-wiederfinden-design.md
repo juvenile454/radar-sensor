@@ -146,7 +146,7 @@ Bewegungsende).
 
 Grenzwerte (`--check`): `wiederfind_s ≤ 8` in `kurz`, `zappel`, `lage`; `≤ 10` in `lang`; `falsch_nach_beweg_n = 0`
 überall; in `beweg_hr` erster gültiger Wert nach der Bewegung innerhalb ±5 /min von 85 (nicht 70); in `beweg_weg` kein
-gültiger Report ab 65 s; in `tippen` mindestens 80 % gültig im Abschnitt 60–120 s mit MAE ≤ 2 /min. Alle bisherigen
+gültiger Report ab 76 s (Gehen bei 60 s + 16 s, wie `weg`: bis dahin liegen noch Daten der Person im 15-s-Fenster); in `tippen` mindestens 80 % gültig im Abschnitt 60–120 s mit MAE ≤ 2 /min. Alle bisherigen
 Grenzwerte gelten weiter, mit und ohne Schalter. Varianten (`A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE`) laufen als
 eigene Spalten im Bench-Bericht (`--define`).
 
