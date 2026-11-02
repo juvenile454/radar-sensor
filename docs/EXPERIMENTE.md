@@ -40,6 +40,11 @@ Vital-Tab oder `adb shell am broadcast … ref_scan` / `ref_connect --es addr <m
 schreibt `ref_hr.csv` (rx_ms, Puls, RR-Intervalle) und `events.csv` (Marker) in denselben Aufnahme-Ordner.
 Gurt vor Beginn anfeuchten, 2 min tragen, bis die Polar-App einen stabilen Wert zeigt.
 
+**Referenz ohne RR (ab 2026-11-02):** Sendet ein Gurt oder eine Uhr nur Pulswerte (`ref_hr.csv` mit leerem `rr_ms`),
+nimmt `vital_eval.py` den Mittelwert der Pulswerte im 15-s-Fenster (Bericht: „nur Pulswerte ohne RR“). Dann sind
+Puls-MAE, Anteil ±5 und Verfügbarkeit messbar, nicht IBI/RMSSD (V1.6/V3.6). Apple Watch ohne iPhone ist nicht nutzbar
+(kein BLE-Pulsdienst, kein Export); als Gurt ist ein Polar H9 bestellt (RR-Intervalle über BLE).
+
 **Ablage:** `~/Data/radar-sensor/ref/<datum>_<tag>_<sitzung>_<person>/` (z. B. `2026-11-08_A_R1_p1`).
 Personen nur pseudonym (`p1`, `p2`), weitere Personen nur mit Einwilligung.
 

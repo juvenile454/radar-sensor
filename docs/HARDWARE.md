@@ -113,6 +113,13 @@ Flashen: `pio run -t upload --upload-port <by-id-Port>`. Danach bleibt der S3 im
 (PIO-esptool 4.5 kann am USB-JTAG nicht sauber neu starten) → `esptool --chip esp32s3 -p <Port>
 --after watchdog-reset read-mac` (esptool ≥ 4.8, `uv tool install esptool`) oder RST drücken.
 Erstes Flashen über der Händler-Demo ging nur per BOOT+RST von Hand (Demo nutzt keinen USB-JTAG-Modus).
+2026-11-02: `pio run -t upload` brach zweimal reproduzierbar beim Umschalten auf 460 800 Baud ab („No serial data
+received“, vor dem Schreiben). Gegangen ist dieselbe Schreibfolge mit esptool 5.6 ohne Umschalten, mit Neustart:
+`esptool --chip esp32s3 --port <by-id-Port> --baud 115200 --after watchdog-reset write-flash -z --flash-mode dio
+--flash-freq 80m --flash-size 16MB 0x0 .pio/build/esp32s3-n16r8/bootloader.bin 0x8000 …/partitions.bin 0xe000
+~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin 0x10000 …/firmware.bin`
+(im Ordner `firmware/esp32s3`, nach `pio run`). Zugriff auf den Port braucht die Gruppe `dialout` in der laufenden
+Anmeldung; bei aktivem Linger erst nach einem Neustart.
 Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
 
 1. **Kabel prüfen:** Liegt der Box ein MX1.25→Dupont-Kabel bei? Dann zuerst ohne Löten auf die

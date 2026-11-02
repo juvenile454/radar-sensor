@@ -55,6 +55,9 @@ class Recording:
     end_ms: float                    # letzte Empfangszeit
     n_recal: int = 0                 # @RECAL-Zeilen (Neu-Kalibrierung, V1.5)
     breath: dict | None = None       # @BREATH (V3.4): rx_ms, t_ms, interval_ms, depth_um, rate
+    # Pulswerte der Referenz (Spalte hr_bpm); genutzt nur ohne RR (Gurt/Uhr ohne RR-Intervalle)
+    ref_rx_ms: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
+    ref_bpm: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -155,10 +158,13 @@ def load_recording(folder: pathlib.Path, lines: list[str] | None = None) -> Reco
     ref = _read_csv(folder / "ref_hr.csv")
     beats, rr = beats_from_ref(np.array([_num(r[0]) for r in ref], float),
                                np.array([_num(r[2]) if len(r) > 2 else math.nan for r in ref], float))
+    ref_rx = np.array([_num(r[0]) for r in ref], float)
+    ref_bpm = np.array([_num(r[1]) if len(r) > 1 else math.nan for r in ref], float)
+    keep = np.isfinite(ref_rx) & np.isfinite(ref_bpm) & (ref_bpm > 0)
     events = [(_num(r[0]), ",".join(r[1:]).strip()) for r in _read_csv(folder / "events.csv")]
     end = float(np.nanmax(rx)) if rx.size else 0.0
     n_recal = sum(1 for ln in orig if ln.startswith("@RECAL,"))
-    return Recording(folder, vd, dd, beats, rr, events, starts, end, n_recal, br)
+    return Recording(folder, vd, dd, beats, rr, events, starts, end, n_recal, br, ref_rx[keep], ref_bpm[keep])
 
 
 def _t_to_rx(lines: list[str], rx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -187,6 +193,16 @@ def ref_hr_at(beats_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, rr_ms:
     else:
         ibi = np.diff(beats_ms[m])
     return 60000.0 / float(np.mean(ibi))
+
+
+def ref_bpm_at(rx_ms: np.ndarray, bpm: np.ndarray, t_end_ms: float, win_s: float = 15.0, min_n: int = 2) -> float:
+    """Referenzpuls ohne Schläge (nur Pulswerte, z. B. Gurt ohne RR oder Uhr): Mittel der Werte im Fenster (t_end − win, t_end].
+    Solche Geräte glätten selbst über einige Sekunden; der Wert ist gröber als der aus Gurt-RR. NaN bei weniger als min_n
+    Werten im Fenster."""
+    m = (rx_ms > t_end_ms - win_s * 1000.0) & (rx_ms <= t_end_ms)
+    if m.sum() < min_n:
+        return math.nan
+    return float(np.mean(bpm[m]))
 
 
 def ref_ibi_at(beats_ms: np.ndarray, rr_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0) -> tuple[float, float]:
@@ -366,10 +382,23 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         hr[idx[good]] = rec.vital["hr_fused"][good]
         br[idx[good]] = rec.vital["br"][good]
     ok &= np.isfinite(hr)
-    have_ref = rec.beats_ms.size >= 3
     rr = rec.rr_ms if rec.rr_ms.size == rec.beats_ms.size else None
-    ref = np.array([ref_hr_at(rec.beats_ms, x, win_s, rr) for x in t]) if have_ref else np.full(t.size, math.nan)
-    res = {"reports": int(t.size), "valid": int(ok.sum()), "have_ref": have_ref, "jumps": count_jumps(hr, ok)}
+    if rec.beats_ms.size >= 3:  # Gurt mit RR: Schläge
+        ref_kind = "rr"
+
+        def ref_fn(x):
+            return ref_hr_at(rec.beats_ms, x, win_s, rr)
+    elif rec.ref_bpm.size >= 3:  # nur Pulswerte (ohne RR): keine Einzelschläge, kein IBI/RMSSD-Vergleich
+        ref_kind, rr = "bpm", None
+
+        def ref_fn(x):
+            return ref_bpm_at(rec.ref_rx_ms, rec.ref_bpm, x, win_s)
+    else:
+        ref_kind = None
+    have_ref = ref_kind is not None
+    ref = np.array([ref_fn(x) for x in t]) if have_ref else np.full(t.size, math.nan)
+    res = {"reports": int(t.size), "valid": int(ok.sum()), "have_ref": have_ref, "ref_kind": ref_kind,
+           "jumps": count_jumps(hr, ok)}
     n_eff = d["n_eff"][np.isfinite(d["n_eff"])]
     res["n_eff"] = float(np.median(n_eff)) if n_eff.size else None  # V3.1
     res["hr"] = metrics(hr, ref, ok) if have_ref else None
@@ -377,8 +406,7 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         err = np.abs(hr - ref)
         res["calibration"] = calibration(np.where(ok, d["conf"], math.nan), np.where(ok, err, math.nan))
         if np.nanmax(ref) - np.nanmin(ref) >= 15.0:  # Verzug nur, wenn sich der Puls deutlich ändert (R4)
-            res["lag_s"] = best_lag_s(t[ok], hr[ok],
-                                      lambda tt: np.array([ref_hr_at(rec.beats_ms, x, win_s, rr) for x in tt]))
+            res["lag_s"] = best_lag_s(t[ok], hr[ok], lambda tt: np.array([ref_fn(x) for x in tt]))
     if have_ref and rr is not None:  # V1.6/V3.6 (Tag A): Einzelschläge gegen Gurt-RR je Report
         res["ibi_ref"] = beats_vs_strap(rec, t, ok, win_s)
     marks = np.array([tm for tm, text in rec.events if text == "ein"], float)
@@ -445,6 +473,8 @@ def format_report(name: str, r: dict) -> str:
     else:
         h = r["hr"]
         w("| Puls | Wert |\n|---|---|\n")
+        if r.get("ref_kind") == "bpm":
+            w("| Referenz | nur Pulswerte ohne RR (Gurt ohne RR oder Uhr); „Gurt“ unten = diese Referenz |\n")
         w(f"| Reports mit Referenz | {h['n']} |\n| Verfügbarkeit | {_f(h['coverage_pct'])} % |\n")
         w(f"| MAE / RMSE | {_f(h['mae'])} / {_f(h['rmse'])} /min |\n| Bias (Radar − Gurt) | {_f(h['bias'])} /min |\n")
         w(f"| Bland-Altman-Grenzen | {_f(h['loa_low'])} … {_f(h['loa_high'])} /min |\n")

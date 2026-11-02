@@ -49,7 +49,7 @@ static HardwareSerial &SrvUart = Serial2;
 
 // Stand der Firmware für '@HELLO' (App/PC erkennen damit Protokoll und Fähigkeiten, docs/ANDROID_APP.md).
 // proto 1: @IQ3 mit Frame-Zähler + Sensor-tick, @RAW, @RECONNECT, @DOPPLER mit Frame-Zähler + tick.
-static const char *FW_VERSION = "2026-11-01-app1";
+static const char *FW_VERSION = "2026-11-02-vital1";  // DSP-Stand Audit V0–V5 (vorher 2026-11-01-app1 = Basislinie)
 static const int PROTO_VERSION = 1;
 static String g_serverVersion = "-";  // rss_version der letzten erfolgreichen Server-Verbindung
 

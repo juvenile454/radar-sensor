@@ -121,9 +121,15 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   zusammengefassten Multiply-Add-Befehlen (FMA) ändert daran fast nichts. Der Shim rechnet `atan2f`, `cosf`, `powf`,
   `log10f` über double; damit sind PC und Handy gleich, gegen den ESP32 so gut wie die Float-Funktionen.
   Seit dem Abschluss-Review des Vital-Plans übersetzt auch die Firmware mit `-ffp-contract=off` (`platformio.ini`;
-  vorher durfte GCC am ESP32-S3 zu `madd.s` zusammenfassen, die Nachrechnung nicht). Nicht gebaut, nicht geflasht:
-  Erste Prüfung nach dem nächsten Flashen ist `replay-cpp` gegen eine neue Live-Aufnahme, Zahl gleicher Zeilen gegen
-  die Tabelle oben, und `compute_us` in `@DSP` gegen vorher (ohne `madd.s` etwas langsamer).
+  vorher durfte GCC am ESP32-S3 zu `madd.s` zusammenfassen, die Nachrechnung nicht).
+  **Am Gerät geprüft 2026-11-02** (Firmware `2026-11-02-vital1`, `iq3 60 raw` am PC über `esp_record.py`, 60 s,
+  `app-fixtures/2026-11-02_vital1_iq3raw_60s`): 3569 Frames, 0 Lücken, 59,5 Hz. `replay-cpp` gegen die Live-Ausgabe:
+  `@DSP` 59/59, `@VITAL` 17/17, `@STATE` 59/59, `@BREATH` 5/5, `@ROOM` 59/59, `@ROOMPROF` 297/297, `@REZOOM` 5/5
+  gleich; `@IQ3` 3531/3569 (Rest 1 in der letzten Stelle). `compute_us` je Report Median 91 ms, max. 155 ms (vorher
+  270–320 ms in der Leseschleife; jetzt im eigenen Task auf Kern 0). Nur 60 s und ohne Referenz; 30-min-Lauf offen.
+  Gleicher Test über die App am Handy (USB, Aufnahme per Debug-Befehl, `phone/2026-11-02_171254_livetest_vital1`):
+  3594 Frames, 0 Lücken, 59,9 Hz; Nachrechnung `@DSP`/`@STATE`/`@BREATH`/`@ROOM` gleich, `@VITAL` 50/51 (1 in der
+  letzten Stelle); `compute_us` Median 152 ms, max. 155 ms (51 statt 17 `@VITAL`, vermutlich Person vor dem Sensor).
 
 ## Bedienung und Werkzeuge
 

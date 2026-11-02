@@ -419,8 +419,10 @@ Report (auch in APNOE); keine APNOE mehr im leeren Raum nach dem Gehen (Prüfsta
 ersten *richtigen* Wert und frühe Fehlwerte (`erst_ok_s`, `frueh_falsch_n`); Handy-DSP liefert auch mitten im Stream
 eingeschaltet Werte; Firmware mit `-ffp-contract=off` wie die Nachrechnung; eine Zeit je Report für
 `@DSP`/`@ROOM`/`@VITAL`/`@STATE`; Gurt verbindet nach fehlgeschlagener Dienstsuche wieder; Metronom gibt seinen
-Tongeber erst nach dem letzten Ton frei. Am Gerät offen: Firmware bauen/flashen, danach `replay-cpp` gegen eine neue
-Live-Aufnahme und `compute_us` gegen vorher; Gurt-Wiederverbindung und Metronom am Handy.
+Tongeber erst nach dem letzten Ton frei. Firmware-Kennung dieses Stands in `@HELLO`: `fw=2026-11-02-vital1`
+(`2026-11-01-app1` = Basislinie vor dem Audit). **2026-11-02 geflasht und 60 s live geprüft:** Nachrechnung gleich
+zur Live-Ausgabe in allen Report-Zeilen, `compute_us` Median 91 ms statt 270–320 ms (Einzelheiten `ANDROID_APP.md`,
+A5). Am Gerät offen: 30-min-Lauf, App mit neuer Firmware am Handy, Gurt-Wiederverbindung und Metronom am Handy.
 
 ### Leitlinien
 

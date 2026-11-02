@@ -46,6 +46,35 @@ class BeatsFromCsvTest(unittest.TestCase):
         np.testing.assert_allclose(beats, [2000.0])
 
 
+class RefBpmTest(unittest.TestCase):
+    """Referenz ohne RR (Gurt ohne RR-Intervalle oder Uhr): Mittel der Pulswerte im Fenster."""
+
+    def test_mean_in_window(self):
+        rx = np.array([-2000.0, 0.0, 5000.0, 10000.0, 20000.0])
+        bpm = np.array([60.0, 70.0, 72.0, 74.0, 90.0])
+        self.assertAlmostEqual(ve.ref_bpm_at(rx, bpm, 10000.0), 69.0)  # (−5000, 10000]: 60, 70, 72, 74
+        self.assertAlmostEqual(ve.ref_bpm_at(rx, bpm, 10000.0, win_s=6.0), 73.0)
+
+    def test_too_few_values_is_nan(self):
+        self.assertTrue(math.isnan(ve.ref_bpm_at(np.array([1000.0]), np.array([70.0]), 2000.0)))
+
+    def test_bpm_only_used_without_rr(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d)
+            (p / "stream.log").write_text(
+                "@IQ3_START,610,670,60.0,1\n"
+                "@DSP,1000,1,5,88.0,300000,0,0\n"
+                "@VITAL,1001,15.0,74.0,74.0,71.5,73.0,830.0,40.0,88,2400.0,90.0,12.3,1.20,640,4\n")
+            (p / "rxtime.csv").write_text("line,rx_ms\n0,10.0\n1,1020.0\n2,1021.0\n")
+            (p / "ref_hr.csv").write_text("rx_ms,hr_bpm,rr_ms,contact\n-2000.0,70,,\n0.0,72,,\n1000.0,74,,\n")
+            r = ve.evaluate(ve.load_recording(p))
+        self.assertEqual(r["ref_kind"], "bpm")
+        self.assertEqual(r["hr"]["n"], 1)
+        self.assertAlmostEqual(r["hr"]["mae"], 2.0)
+        self.assertNotIn("ibi_ref", r)
+        self.assertIn("nur Pulswerte ohne RR", ve.format_report("x", r))
+
+
 class MetricsTest(unittest.TestCase):
     def test_metrics_basic(self):
         m = ve.metrics(np.array([70.0, 72.0, 80.0]), np.array([70.0, 70.0, 70.0]), np.array([True, True, True]))
@@ -207,6 +236,24 @@ class SyntheticRecordingTest(unittest.TestCase):
         self.assertLessEqual(r["apnea"]["delays_s"][0], 12.0)
         self.assertEqual(r["apnea"]["false_alarms"], 0)
         self.assertIn("Puls", ve.format_report("sim", r))
+
+    def test_report_against_bpm_only_reference(self):
+        """Wie eine Uhr: Pulswerte alle 5 s ohne RR aus den Gurt-Schlägen der Simulation; MAE bleibt klein."""
+        import shutil
+        with tempfile.TemporaryDirectory() as d:
+            q = pathlib.Path(d) / "watch"
+            shutil.copytree(self.folder, q)
+            rec = ve.load_recording(self.folder)
+            rows = ["rx_ms,hr_bpm,rr_ms,contact"]
+            for t in np.arange(5000.0, rec.end_ms, 5000.0):
+                hr = ve.ref_hr_at(rec.beats_ms, t, 5.0)
+                if np.isfinite(hr):
+                    rows.append(f"{t:.1f},{round(hr)},,")
+            (q / "ref_hr.csv").write_text("\n".join(rows) + "\n")
+            r = ve.evaluate(ve.load_recording(q))
+        self.assertEqual(r["ref_kind"], "bpm")
+        self.assertGreater(r["hr"]["n"], 80)
+        self.assertLess(r["hr"]["mae"], 5.0)
 
     def test_replay_unchanged_header_gives_same_numbers(self):
         live = ve.evaluate(ve.load_recording(self.folder))
