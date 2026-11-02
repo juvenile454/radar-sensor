@@ -276,5 +276,136 @@ class IbiTemplateBenchTest(unittest.TestCase):
             self.assertGreater(share[k], share_std[k] + 20, (k, share, share_std))
 
 
+class ReacqMetricsTest(unittest.TestCase):
+    """V6: Wiederfinden nach Bewegung (Zeit bis zum ersten richtigen Report, falsche Reports danach)."""
+
+    def test_first_correct_after_episode(self):
+        t = np.arange(50.0, 100.0)
+        v = t >= 66
+        e = np.where(t >= 68, 1.0, 20.0)
+        m = vital_sim.reacq_metrics(t, v, e, [(60.0, 63.0)])
+        self.assertEqual(m["wiederfind_s"], 5.0)          # 68 - 63
+        self.assertEqual(m["falsch_nach_beweg_n"], 2)     # 66, 67 gültig und > 10 daneben
+
+    def test_never_found_is_nan(self):
+        t = np.arange(50.0, 100.0)
+        m = vital_sim.reacq_metrics(t, np.zeros_like(t, bool), np.ones_like(t), [(60.0, 63.0)])
+        self.assertTrue(math.isnan(m["wiederfind_s"]))
+        self.assertEqual(m["falsch_nach_beweg_n"], 0)
+
+    def test_median_over_episodes_and_no_double_count(self):
+        t = np.arange(0.0, 100.0)
+        v = np.ones_like(t, bool)
+        e = np.where(((t > 12) & (t < 17)) | ((t > 32) & (t < 40)), 20.0, 1.0)   # falsch 13–16 und 33–39
+        m = vital_sim.reacq_metrics(t, v, e, [(10.0, 12.0), (30.0, 32.0)])
+        self.assertEqual(m["wiederfind_s"], (5.0 + 8.0) / 2)   # Median aus 17 - 12 und 40 - 32
+        self.assertEqual(m["falsch_nach_beweg_n"], 4 + 7)
+
+
+class SectionMetricsTest(unittest.TestCase):
+    def test_share_and_mae(self):
+        t = np.arange(0.0, 10.0)
+        v = t % 2 == 0
+        e = np.full(10, 1.5)
+        m = vital_sim.section_metrics(t, v, e, 0.0, 10.0)
+        self.assertAlmostEqual(m["abschnitt_gueltig_pct"], 44.4, places=1)  # t = 2,4,6,8 von 1…9
+        self.assertAlmostEqual(m["abschnitt_mae"], 1.5)
+
+    def test_no_valid_report_is_nan_mae(self):
+        t = np.arange(0.0, 10.0)
+        m = vital_sim.section_metrics(t, np.zeros(10, bool), np.ones(10), 2.0, 8.0)
+        self.assertEqual(m["abschnitt_gueltig_pct"], 0.0)
+        self.assertTrue(math.isnan(m["abschnitt_mae"]))
+
+
+class MotionModelTest(unittest.TestCase):
+    """V6: Bewegungsarten von make_frames (Verschiebung, Stöße, mehrere Episoden), NUR SIMULATION."""
+
+    def frames(self, **kw):
+        """Zoom-Phase (relativ zum ruhigen Anfang) am stärksten Punkt, ohne Atmung und Herzschlag."""
+        kw = dict(T=100.0, breath_pp_mm=0.0, heart_pp_um=0.0) | kw
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "m"
+            vital_sim.make_frames(p, seed=3, **kw)
+            iq = np.fromfile(f"{p}.iq", "<i2").reshape(-1, vital_sim.ZOOM_N + vital_sim.ROOM_N + 1, 2).astype(float)
+        z = (iq[:, 1:1 + vital_sim.ZOOM_N, 0] + 1j * iq[:, 1:1 + vital_sim.ZOOM_N, 1])
+        k = int(np.argmax(np.abs(z[:int(10 * vital_sim.FS)]).mean(axis=0)))
+        z = z[:, k]
+        t = np.arange(len(z)) / vital_sim.FS
+        return t, z, z[:int(10 * vital_sim.FS)].mean()
+
+    def test_shift_moves_chest_echo(self):
+        t, z, z0 = self.frames(shift=(60.0, 2.0, 8.0, 0.7))
+        ph = np.unwrap(np.angle(z))
+        jump = abs(ph[(t > 66) & (t < 74)].mean() - ph[(t > 50) & (t < 58)].mean())
+        self.assertGreater(jump, 15.0)    # 4π · 8 mm / λ ≈ 20 rad
+        self.assertLess(jump, 25.0)
+        self.assertLess(np.abs(z[(t > 66) & (t < 74)]).mean(), np.abs(z[(t > 50) & (t < 58)]).mean())
+
+    def test_jolts_only_inside_window(self):
+        t, z, z0 = self.frames(jolts=(60.0, 80.0, 2.0))
+        dev = np.angle(z * np.conj(z0))
+        inside = np.sqrt(np.mean(dev[(t > 60) & (t < 80)] ** 2))
+        outside = np.sqrt(np.mean(dev[(t < 59.5) | (t > 80.5)] ** 2))
+        self.assertGreater(inside, 0.3)
+        self.assertLess(outside, 0.1 * inside)
+
+    def test_motion_list(self):
+        eps = [(20.0, 22.0, 4.0), (40.0, 42.0, 4.0), (60.0, 62.0, 4.0)]
+        t, z, z0 = self.frames(motion=eps)
+        dev = np.abs(np.angle(z * np.conj(z0)))
+        inside = np.zeros(len(t), bool)
+        for a, b, _ in eps:
+            inside |= (t > a) & (t < b)
+            self.assertGreater(np.sqrt(np.mean(dev[(t > a) & (t < b)] ** 2)), 0.5, (a, b))
+        self.assertLess(np.sqrt(np.mean(dev[~inside] ** 2)), 0.1 * np.sqrt(np.mean(dev[inside] ** 2)))
+
+    def test_single_tuple_equals_list_of_one(self):
+        _, z1, _ = self.frames(motion=(20.0, 22.0, 4.0))
+        _, z2, _ = self.frames(motion=[(20.0, 22.0, 4.0)])
+        self.assertTrue(np.array_equal(z1, z2))
+
+    def test_new_scenarios_defined(self):
+        for nm in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
+            self.assertIn(nm, vital_sim.SCENARIOS)
+        self.assertEqual(vital_sim.SCENARIOS["lang"][1]["T"], 150.0)
+        self.assertEqual(vital_sim.SCENARIOS["lage"][1]["shift"], (60, 2, 8.0, 0.7))
+        self.assertEqual(vital_sim.SCENARIOS["tippen"][1]["jolts"], (60, 120, 0.3))
+        self.assertEqual(vital_sim.SCENARIOS["beweg_weg"][1]["leave"], 60)
+        # bestehende Szenarien behalten ihre Seeds (Index in SCENARIOS), neue stehen hinten
+        self.assertEqual(list(vital_sim.SCENARIOS)[13:15], ["weg", "kurz"])
+
+    def test_episodes_cover_all_motion_kinds(self):
+        S = vital_sim.SCENARIOS
+        self.assertEqual(vital_sim.episodes_of(S["beweg"][1]), [(50, 60)])
+        self.assertEqual(vital_sim.episodes_of(S["zappel"][1]), [(40, 42), (60, 62), (80, 82)])
+        self.assertEqual(vital_sim.episodes_of(S["lage"][1]), [(60, 62)])
+        self.assertEqual(vital_sim.episodes_of(S["tippen"][1]), [(60, 120)])
+        self.assertEqual(vital_sim.episodes_of(S["base"][1]), [])
+
+
+class ReacqLimitsTest(unittest.TestCase):
+    """V6: LIMITS_REACQ gilt nur mit dem Schalter A121_DSP_REACQ; die neuen Szenarien haben Grenzen ohne Schalter."""
+
+    def test_limits_reacq_values(self):
+        lim = {(s, k): (op, x) for s, xs in vital_sim.LIMITS_REACQ.items() for k, op, x in xs}
+        for s in ("kurz", "zappel", "lage"):
+            self.assertEqual(lim[(s, "wiederfind_s")], ("<=", 8.0))
+        self.assertEqual(lim[("lang", "wiederfind_s")], ("<=", 10.0))
+        for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
+            self.assertEqual(lim[(s, "falsch_nach_beweg_n")], ("<=", 0))
+        self.assertEqual(lim[("beweg_weg", "weg_gueltig_n")], ("<=", 0))
+        self.assertEqual(lim[("tippen", "abschnitt_gueltig_pct")], (">=", 80.0))
+        self.assertEqual(lim[("tippen", "abschnitt_mae")], ("<=", 2.0))
+
+    def test_new_scenarios_have_baseline_limits(self):
+        for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
+            names = [k for k, _, _ in vital_sim.LIMITS[s]]
+            self.assertIn("falsch_nach_beweg_n", names)
+            self.assertIn("zustand_beweg_fehl", names)
+            self.assertIn("atemzug_mae", names)
+            self.assertNotIn("wiederfind_s", names)    # ohne Schalter keine Wiederfind-Grenze
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -145,12 +145,34 @@ def gauss_env(dd, fwhm):
     return np.exp(-0.5 * (dd / (fwhm / 2.3548)) ** 2)
 
 
+def motion_list(motion) -> list[tuple[float, float, float]]:
+    """motion als Liste von (t0, t1, pp_mm): None → [], ein Tupel → [Tupel], eine Liste bleibt."""
+    if not motion:
+        return []
+    return [tuple(motion)] if np.isscalar(motion[0]) else [tuple(m) for m in motion]
+
+
+def episodes_of(kw: dict) -> list[tuple[float, float]]:
+    """Bewegungsepisoden (Beginn, Ende) eines Szenarios aus motion, shift (t0, t0 + Dauer) und jolts (t0, t1)."""
+    eps = [(m[0], m[1]) for m in motion_list(kw.get("motion"))]
+    if kw.get("shift"):
+        eps.append((kw["shift"][0], kw["shift"][0] + kw["shift"][1]))
+    if kw.get("jolts"):
+        eps.append((kw["jolts"][0], kw["jolts"][1]))
+    return sorted(eps)
+
+
 def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=lambda t: 15.0, breath_pp_mm=2.5,
-                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True, leave=None):
+                heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True, leave=None,
+                shift=None, jolts=None):
     """Schreibt <path>.iq (int16 real/imag je Punkt, 105 Punkte je Frame) und <path>_truth.npz.
 
     person=False: nur Tisch, Wand und Möbel (leerer Platz vor dem Sensor). leave=t: Die Person geht bei t s (ihre
-    Streuzentren blenden in 1 s aus, Tisch, Wand und Möbel bleiben)."""
+    Streuzentren blenden in 1 s aus, Tisch, Wand und Möbel bleiben).
+    V6, Bewegungsarten: motion = (t0, t1, pp_mm) oder Liste davon (Zufallsweg des Oberkörpers je Episode);
+    shift = (t0, dauer_s, dd_mm, amp_faktor): alle Brust-Streuzentren wandern ab t0 in dauer_s linear um dd_mm und
+    ihre Amplitude auf amp_faktor (Lageänderung); jolts = (t0, t1, pp_mm): zufällige Stöße am Brust-Echo (Länge
+    0,2–0,5 s, Abstand 0,5–3 s, Halbsinus mit zufälligem Vorzeichen und 50–100 % der Höhe pp_mm)."""
     rng = np.random.default_rng(seed)
     n = int(T * FS)
     t = np.arange(n) / FS
@@ -162,10 +184,22 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
     beats = heart_beats(rng, T, hr_fn, hrv_ms)
     h = heart_wave(t, beats, heart_pp_um * 1e-6)
     body = np.zeros(n)
-    if motion:  # Zufallsbewegung des Oberkörpers
-        k = (t > motion[0]) & (t < motion[1])
+    for m0, m1, m_pp in motion_list(motion):  # Zufallsbewegung des Oberkörpers (eine Episode oder mehrere)
+        k = (t > m0) & (t < m1)
         walk = np.convolve(np.cumsum(rng.normal(0, 1, k.sum())), np.ones(15) / 15, mode="same")
-        body[k] = walk / (np.ptp(walk) + 1e-9) * motion[2] * 1e-3
+        body[k] = walk / (np.ptp(walk) + 1e-9) * m_pp * 1e-3
+    if jolts:  # Stöße (z. B. Tippen): Halbsinus, zufälliges Vorzeichen; Zufallszahlen nur hier gezogen
+        tc = jolts[0]
+        while True:
+            tc += rng.uniform(0.5, 3.0)
+            dur = rng.uniform(0.2, 0.5)
+            amp = jolts[2] * 1e-3 * rng.uniform(0.5, 1.0) * rng.choice([-1.0, 1.0])
+            if tc + dur > jolts[1]:
+                break
+            k = (t >= tc) & (t < tc + dur)
+            body[k] += amp * np.sin(np.pi * (t[k] - tc) / dur)
+            tc += dur
+    sh = np.clip((t - shift[0]) / shift[1], 0.0, 1.0) if shift else None  # Lageänderung: 0 → 1
     # Streuzentren: Abstand (m), Amplitude, Atem-Anteil, Herz-Anteil, Phase. Vorderbrust, Bauch, Schulter, Tisch, Wand, Möbel
     scat = [(0.640, 1500, 1.0, 1.0, 0.3), (0.668, 900, 1.3, 0.5, 1.9), (0.730, 800, 0.3, 0.2, 4.0),
             (0.450, 600, 0.0, 0.0, 2.2), (2.200, 1500, 0.0, 0.0, 5.1), (1.300, 500, 0.0, 0.0, 0.9)]
@@ -178,10 +212,14 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
     pres = np.clip(1.0 - (t - leave), 0.0, 1.0) if leave is not None else np.ones(n)  # Person da (1) / weg (0)
     for r0, A, bs, hs, p0 in scat:
         r = r0 + bs * b + hs * h + (body if bs > 0 else 0.0)
+        if shift and bs > 0:
+            r = r + sh * shift[2] * 1e-3
         rot = np.exp(1j * (p0 - 4 * np.pi * r / LAM))
         a_t = A * (1 + 0.08 * bs * np.sin(ph + 0.7))  # Amplitude schwankt etwas mit der Atmung
         if bs > 0:
             a_t = a_t * pres
+            if shift:
+                a_t = a_t * (1.0 + (shift[3] - 1.0) * sh)
         Z += (a_t * rot)[:, None] * gauss_env(zd[None, :] - r[:, None], 0.040)   # Profil 1
         R += (a_t * rot)[:, None] * gauss_env(rd[None, :] - r[:, None], 0.140)   # Profil 3
     Z += 25 * (rng.normal(size=Z.shape) + 1j * rng.normal(size=Z.shape)) / np.sqrt(2)
@@ -218,6 +256,15 @@ SCENARIOS = {
     "takt6":  ("Metronom 6 /min (R3), Puls 64", dict(rr_fn=lambda t: 6.0, hr_fn=lambda t: 64.0)),
     # Person steht auf und geht (Abschluss-Review C1): danach weder gültiger Puls noch „Apnoe" (Prüfen Nr. 1 und 4)
     "weg":    ("Person geht bei 60 s", dict(leave=60.0)),
+    # V6, Puls nach Bewegung wiederfinden (Plan 2026-11-02): neue Szenarien hinten, damit die Seeds der übrigen bleiben
+    "kurz":   ("Bewegung 3 s (±2 mm) bei 60–63 s", dict(motion=(60, 63, 4.0))),
+    "zappel": ("3 × Bewegung 2 s bei 40/60/80 s", dict(motion=[(40, 42, 4.0), (60, 62, 4.0), (80, 82, 4.0)])),
+    "lang":   ("Bewegung 20 s (±3 mm) bei 50–70 s", dict(motion=(50, 70, 6.0), T=150.0)),
+    "lage":   ("Lageänderung 8 mm, Echo 70 % bei 60 s", dict(shift=(60, 2, 8.0, 0.7))),
+    "beweg_hr": ("Bewegung 60–70 s, Puls 70 → 85", dict(motion=(60, 70, 6.0), T=150.0,
+                                                     hr_fn=lambda t: 70.0 if t < 60 else 70 + 15 * min(1, (t - 60) / 10))),
+    "beweg_weg": ("Bewegung 50–55 s, Person geht bei 60 s", dict(motion=(50, 55, 4.0), leave=60)),
+    "tippen": ("Stöße 0,3 mm (Tippen) 60–120 s", dict(jolts=(60, 120, 0.3), T=150.0)),
 }
 
 # Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
@@ -244,6 +291,16 @@ LIMITS = {
     "takt6":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8)],                                           # V3.4
     # Person geht (Abschluss-Review C1): Puls bis dahin wie base, danach kein gültiger Wert und keine Apnoe
     "weg":     [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("weg_gueltig_n", "<=", 0), ("weg_apnoe_n", "<=", 0)],
+    # V6, Basislinie ohne Schalter (heutiger Header, gemessen 2026-11-02): falsche Reports (> 10 /min) in den 30 s nach
+    # der Bewegung höchstens wie gemessen. Gemessene Wiederfindzeit (wiederfind_s) im Kommentar, keine Grenze: kurz 14 s,
+    # zappel 1 s, lang 11 s, lage 1 s, beweg_hr 12 s, beweg_weg 3 s, tippen 5 s. Die Ziele stehen in LIMITS_REACQ.
+    "kurz":    [("falsch_nach_beweg_n", "<=", 2)],
+    "zappel":  [("falsch_nach_beweg_n", "<=", 10)],
+    "lang":    [("falsch_nach_beweg_n", "<=", 3)],
+    "lage":    [("falsch_nach_beweg_n", "<=", 0)],
+    "beweg_hr": [("falsch_nach_beweg_n", "<=", 0)],
+    "beweg_weg": [("falsch_nach_beweg_n", "<=", 2)],
+    "tippen":  [("falsch_nach_beweg_n", "<=", 4)],
     # über alle Szenarien mit Person: Konfidenz der Reports mit > 10 /min Fehler bzw. ≤ 5 /min (V1.3)
     "alle":    [("konf_falsch", "<=", 40.0), ("konf_richtig", ">=", 70.0)],
 }
@@ -252,12 +309,17 @@ PERSON_FREE = ("leer", "niemand")
 # V2.4: erster gültiger Wert nach höchstens 6 s (wachsendes Fenster). base, harm4, brady, tachy6: Im 6-s-Fenster liegt
 # die stärkste Spitze dort auf 2 × Puls oder am Bandrand, Autokorrelation/Einzelschläge bestätigen sie nicht, der
 # vorläufige Wert wird verworfen; Grenze dort wie vor V2.4 (8 s).
-FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0, "takt6": 10.0}
+# V6 (neue Szenarien, Stand 2026-11-02 gemessen): Die Streuzentren sind dieselben wie in base, nur andere Zufallszahlen;
+# im 6-s-Fenster liegt die stärkste Spitze mal auf der Oberwelle (dann kommt der erste Wert erst nach 7–8 s).
+FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0, "takt6": 10.0,
+                 "zappel": 7.0, "lang": 7.0, "lage": 8.0, "beweg_hr": 8.0, "beweg_weg": 8.0, "tippen": 7.0}
 # Abschluss-Review I1: erster richtiger Wert (≤ 5 /min) und falsche Werte (> 10 /min) in den ersten 15 s, Stand der
 # Messung als Grenze (keine Ziele): brady meldet 8–13 s den doppelten Puls (98,6, Konfidenz 18–43 %), tief nach 6 s die
 # 3. Atem-Oberwelle (40,3 statt 71, Konfidenz 28 %); Autokorrelation und Einzelschläge sehen auf demselben Signal dasselbe
-FIRST_OK_S = {"base": 8.0, "harm4": 8.0, "brady": 14.0, "tief": 7.0, "tachy6": 8.0, "takt6": 10.0}
-EARLY_WRONG_N = {"brady": 6, "tief": 1}
+FIRST_OK_S = {"base": 8.0, "harm4": 8.0, "brady": 14.0, "tief": 7.0, "tachy6": 8.0, "takt6": 10.0,
+              "zappel": 7.0, "lang": 7.0, "lage": 8.0, "beweg_hr": 8.0, "beweg_weg": 8.0, "tippen": 7.0}   # V6, wie oben
+# V6: zappel meldet in den ersten 15 s (vor der ersten Bewegung bei 40 s) dreimal einen falschen Puls, wie brady
+EARLY_WRONG_N = {"brady": 6, "tief": 1, "zappel": 3}
 for _scen in LIMITS:
     if _scen not in PERSON_FREE + ("alle",):
         LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
@@ -272,13 +334,32 @@ for _scen in LIMITS:
 # dem Anhalten; flach mit 48 Zoom-Punkten 93 %), erster Wert nach höchstens 2,5 Atemzügen (flach: Telemetrie-Strahl
 # schwingt bei 0,6 mm Atemhub erst nach ≈ 9 s ein, 4,1 Atemzüge); ohne Person kein @BREATH
 BREATH_FIRST_N = {"flach": 4.5}
-BREATH_P1 = {"anhalt": 90.0, "flach": 90.0}
+BREATH_P1 = {"anhalt": 90.0, "flach": 90.0, "zappel": 90.0}   # V6 zappel: 90 % gemessen (3 von 30 Atemzügen > 1 /min daneben)
 for _scen in LIMITS:
     if _scen in PERSON_FREE:
         LIMITS[_scen].append(("atemzug_n", "<=", 0))
     elif _scen != "alle":
         LIMITS[_scen] += [("atemzug_mae", "<=", 1.0), ("atemzug_p1", ">=", BREATH_P1.get(_scen, 100.0)),
                           ("atemzug_erst_n", "<=", BREATH_FIRST_N.get(_scen, 2.5))]
+
+# V6: Ziele für „Puls nach Bewegung wiederfinden" (Plan 2026-11-02), nur angewendet, wenn der Schalter A121_DSP_REACQ
+# gesetzt ist (--define A121_DSP_REACQ). Ohne die DSP-Änderung verletzt der heutige Header sie, das ist erwartet.
+LIMITS_REACQ = {
+    "kurz":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
+    "zappel":    [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
+    "lang":      [("wiederfind_s", "<=", 10.0), ("falsch_nach_beweg_n", "<=", 0)],
+    "lage":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0)],
+    "beweg_hr":  [("falsch_nach_beweg_n", "<=", 0)],
+    "beweg_weg": [("falsch_nach_beweg_n", "<=", 0), ("weg_gueltig_n", "<=", 0)],
+    "tippen":    [("falsch_nach_beweg_n", "<=", 0), ("abschnitt_gueltig_pct", ">=", 80.0), ("abschnitt_mae", "<=", 2.0)],
+}
+
+
+def active_limits() -> dict:
+    """LIMITS, mit Schalter A121_DSP_REACQ (DEFINES) zusätzlich LIMITS_REACQ."""
+    if not any(x.partition("=")[0] == "A121_DSP_REACQ" for x in DEFINES):
+        return LIMITS
+    return {k: LIMITS.get(k, []) + LIMITS_REACQ.get(k, []) for k in {**LIMITS, **LIMITS_REACQ}}
 
 
 def check_limits(results: dict, limits: dict) -> list[str]:
@@ -514,6 +595,31 @@ def early_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray) -> dict:
     return {"erst_ok_s": float(t_s[ok][0]) if ok.any() else np.nan, "frueh_falsch_n": int(bad.sum())}
 
 
+def reacq_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, episodes: list[tuple[float, float]]) -> dict:
+    """Wiederfinden nach Bewegung (V6). wiederfind_s: Median über die Episoden der Zeit vom Episodenende bis zum ersten
+    gültigen Report mit Fehler ≤ 5 /min (eine Episode, die bis Szenarioende nie wiedergefunden wird, zählt als ∞; ist der
+    Median ∞, ist das Ergebnis NaN). falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s],
+    überlappende Zeitfenster mehrerer Episoden werden nicht doppelt gezählt."""
+    e = np.nan_to_num(err, nan=0.0)
+    ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
+    bad = valid & (e > 10.0)
+    found, in_win = [], np.zeros(len(t_s), bool)
+    for _a, b in episodes:
+        after = ok & (t_s > b)
+        found.append(float(t_s[after][0] - b) if after.any() else np.inf)
+        in_win |= (t_s > b) & (t_s <= b + 30.0)
+    med = float(np.median(found)) if found else np.nan
+    return {"wiederfind_s": med if np.isfinite(med) else np.nan, "falsch_nach_beweg_n": int(np.sum(bad & in_win))}
+
+
+def section_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, a: float, b: float) -> dict:
+    """Anteil gültiger Reports und Puls-MAE der gültigen Reports im Abschnitt a < t ≤ b (V6, z. B. Tippen)."""
+    sel = (t_s > a) & (t_s <= b)
+    v = valid & sel
+    return {"abschnitt_gueltig_pct": float(100 * v.sum() / sel.sum()) if sel.any() else np.nan,
+            "abschnitt_mae": float(np.mean(err[v])) if v.any() else np.nan}
+
+
 def conf_stats(conf: np.ndarray, err: np.ndarray) -> dict:
     """Konfidenz-Median der falschen (> 10 /min) und der richtigen (≤ 5 /min) Reports. Keine falschen Reports →
     konf_falsch = 0 (nichts war falsch hoch bewertet)."""
@@ -587,10 +693,18 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
     res.update(early_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0])))
     # Zustand BEWEGUNG (V3.5): Reports im Bewegungsabschnitt (bis 15 s danach, so lange liegt er im Fenster) und außerhalb
-    mot = SCENARIOS[name][1].get("motion")
-    in_mot = (d["t_s"] > mot[0]) & (d["t_s"] <= mot[1] + 15.0) if mot else np.zeros(len(d["t_s"]), bool)
+    kw = SCENARIOS[name][1]
+    eps = episodes_of(kw)   # Bewegung, Lageänderung und Stöße (V6)
+    in_mot = np.zeros(len(d["t_s"]), bool)
+    for a, b in eps:
+        in_mot |= (d["t_s"] > a) & (d["t_s"] <= b + 15.0)
     res["zustand_beweg_n"] = int(np.sum((d["state"] == 4) & in_mot))
     res["zustand_beweg_fehl"] = int(np.sum((d["state"] == 4) & ~in_mot))
+    res["episoden"] = eps
+    if eps:  # V6: Wiederfinden nach Bewegung; Abschnitt der Stöße (tippen)
+        res.update(reacq_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), eps))
+    if kw.get("jolts"):
+        res.update(section_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), kw["jolts"][0], kw["jolts"][1]))
     if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
         ok = (d["t_s"] >= 70) & v & (np.abs(d["hr"] - 90) <= 5)
         res["reaktion_s"] = float(d["t_s"][ok][0] - 70.0) if ok.any() else np.nan
@@ -654,9 +768,12 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                     extra = f"Reaktion {r['reaktion_s']:.0f} s"
                 if "atem_beim_anhalten" in r:
                     extra = f"Atem beim Anhalten {r['atem_beim_anhalten']}, angehalten erkannt nach {r['apnoe_verzug_s']:.0f} s"
-                if mot_scen := SCENARIOS[nm][1].get("motion"):
-                    extra += (f"Zustand BEWEGUNG in {r['zustand_beweg_n']} Reports ({mot_scen[0]:.0f}–"
-                              f"{mot_scen[1] + 15:.0f} s), außerhalb {r['zustand_beweg_fehl']}")
+                if r["episoden"]:
+                    extra += (f"Zustand BEWEGUNG in {r['zustand_beweg_n']} Reports ({r['episoden'][0][0]:.0f}–"
+                              f"{max(b for _a, b in r['episoden']) + 15:.0f} s), außerhalb {r['zustand_beweg_fehl']}"
+                              f"; wiederfind {r['wiederfind_s']:.0f} s, falsch danach {r['falsch_nach_beweg_n']}")
+                    if "abschnitt_gueltig_pct" in r:
+                        extra += f", Abschnitt gültig {r['abschnitt_gueltig_pct']:.0f} % MAE {r['abschnitt_mae']:.1f}"
                 elif r["zustand_beweg_fehl"]:
                     extra += f" Zustand BEWEGUNG ohne Bewegung: {r['zustand_beweg_fehl']}"
                 if r.get("apnoe_fehl"):
@@ -681,7 +798,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
               f"({p['n_falsch']} Reports), bei ≤ 5 /min {p['konf_richtig']:.0f} %")
     if not check:
         return 0
-    msgs = check_limits(results, LIMITS)
+    msgs = check_limits(results, active_limits())
     print(f"\nPrüfung gegen LIMITS ({header}):")
     for m in msgs:
         print("  VERLETZT", m)
