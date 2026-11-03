@@ -321,7 +321,7 @@ keiner dieser Aufnahmen. Nur Rechnung auf dem PC (Replay), kein Lauf am Gerät.
 Idee (Vital-Radio, Adib et al. 2015): Ein zu starker Block der Bewegungskarte zählt nur als bewegt, wenn das Signal um ihn
 (3-s-Ausschnitt am stärksten Punkt, 15 Hz, Hann, Herzband 0,674–3,003 Hz) nicht periodisch ist; Ziel war `tippen`
 (kleine unregelmäßige Stöße). Messung: `.venv/bin/python host/vital_sim.py bench --check --define A121_DSP_REACQ [--define A121_DSP_REACQ_PERIOD]`,
-nur Simulation (PC-Rechnung, kein Lauf am Gerät). Mit dem Schalter, aber ohne Periodenprüfung, ist die Ausgabe zeilengleich zu
+nur Simulation (PC-Rechnung, kein Lauf am Gerät). Mit dem Schalter, aber ohne Periodenprüfung (`kPeriodK` = 100), ist die Ausgabe zeilengleich zu
 `A121_DSP_REACQ` allein.
 
 Schwelle: Mit allen übrigen Bins im Band als Bezug ist ein reiner Sinus im 3-s-Ausschnitt nur Spitze/Mittel ≈ 4,7 (Hann-Hauptkeule
@@ -403,12 +403,72 @@ Zur Orientierung (nicht übernommen, an `kPhaseSlopeWalk` = 0, also ohne Spitzen
 0 → 3 Verletzungen (`brady` `erst_ok_s` 15 s / `frueh_falsch_n` 7, `tippen` falsch 5), Summe MAE 19,5 → 20,2; im 10-s-Fenster 9 → 9, Summe MAE
 49,0 → 50,0; auch dort ist es nicht besser als die Parabel.
 
-**Verworfen**: Der Prüfstand wird in beiden Fensterlängen schlechter (Puls-MAE in 12 von 19 Szenarien höher, in einem niedriger; neue
-Verletzungen), die Übernahmeregel (MAE und alle Grenzen nicht schlechter) ist nicht erfüllt. Der Code bleibt hinter dem Schalter als
-Experiment; einen Bench-Test dafür gibt es nicht (`PhaseSlopeTest` in `host/tests/test_dsp_unit.py` prüft nur die Funktion). Kosten mit
+**Verworfen**: Der Prüfstand wird in beiden Fensterlängen schlechter (Puls-MAE höher im 15-s-Fenster in 12 von 19 Szenarien, in einem
+niedriger; im 10-s-Fenster in 13 von 19, in einem niedriger; neue Verletzungen), die Übernahmeregel (MAE und alle Grenzen nicht schlechter)
+ist nicht erfüllt. Das Urteil gilt nur für die 3-Bin-Variante des Entwurfs: k0 ± 1 einer 1024er FFT rastet auf dem flachen Gipfel der
+Hann-Hauptkeule auf den Mittenbin ein; ein Band von etwa ± 2 · 1024 / m Bins (m = Fensterlänge in Abtastwerten) wurde nicht gegen die Parabel
+probiert. Der Code bleibt hinter dem Schalter als Experiment; einen Bench-Test dafür gibt es nicht (`PhaseSlopeTest` in `host/tests/test_dsp_unit.py` prüft nur die Funktion). Kosten mit
 Schalter: 14 KB RAM (`ComplexFft<1024>` 6 KB, zwei Arbeitsfelder je 4 KB), zwei komplexe FFT (1024) und höchstens 225 Phasen je Report
 (geschätzt unter 2 ms auf dem ESP32-S3, nicht gemessen); ohne Schalter nichts davon. Alle Zahlen sind Simulation; Aussagen über die Genauigkeit
 am Menschen sind erst mit einer Pulsreferenz möglich.
+
+### V6 Gesamtprüfung: Schalter `A121_DSP_REACQ` (2026-11-03)
+
+Stand des Zweigs `feature/v6-wiederfinden`; nur Simulation und Nachrechnung am PC, **keine Referenz, kein Lauf am Gerät**. Aussagen über
+die Genauigkeit des Pulses sind damit nicht möglich, nur über Verfügbarkeit und Verhalten im Prüfstand. Übernommen ist nur
+`A121_DSP_REACQ` (Bewegungskarte, Puls auf dem ruhigen Endstück, Gedächtnis); `A121_DSP_REACQ_PERIOD` und `A121_DSP_PHASE_SLOPE` sind
+verworfen (Abschnitte oben) und bleiben aus.
+
+**Prüfstand** (`.venv/bin/python host/vital_sim.py bench --check [--define A121_DSP_REACQ]`, 15-s-Fenster, Szenarien mit Bewegung;
+`wiederfind_s` = Ende der Bewegung bis zum ersten gültigen Wert innerhalb ± 5 /min der Wahrheit, Median; `falsch` = gültige Reports > 10 /min daneben
+in den 30 s danach; `nie_gefunden_n` ist überall 0):
+
+| Szenario | gültig ohne → mit | Puls-MAE ohne → mit | wiederfind_s ohne → mit | falsch ohne → mit | Grenzen mit Schalter |
+|---|---|---|---|---|---|
+| beweg | 101 → 100 /120 | 0,8 → 0,4 | 11 → 6 | 2 → 0 | hält |
+| kurz | 104 → 102 /120 | 0,9 → 0,4 | 14 → 8 | 2 → 0 | hält (Grenze ≤ 8) |
+| zappel | 114 → 81 /120 | 3,9 → 3,1 | 1 → 7 | 10 → 0 | hält (Grenze ≤ 8) |
+| lang | 143 → 125 /150 | 1,5 → 0,8 | 11 → 6 | 3 → 2 | **verletzt**: falsch 2 (Grenze 0) |
+| lage | 111 → 104 /120 | 0,3 → 0,3 | 1 → 2 | 0 → 0 | hält |
+| beweg_hr | 126 → 124 /150 | 0,4 → 0,4 | 12 → 7 | 0 → 0 | hält (Puls springt dabei von 70 auf 85, erster gültiger Wert bei 85) |
+| beweg_weg | 51 → 46 /120 | 0,8 → 0,3 | 3 → 6 | 2 → 0 | hält |
+| tippen | 144 → 137 /150 | 2,6 → 2,7 | 5 → 5 | 4 → 4 | **verletzt**: falsch 4 (Grenze 0), Abschnitt-MAE 4,4 (Grenze ≤ 2,0) |
+
+Ohne Schalter meldet `bench --check` „OK (alle Grenzwerte eingehalten)“. Mit dem Schalter endet es mit Exit 1 („VERSCHLECHTERT“) und genau diesen drei
+Verletzungen (`lang` falsch 2, `tippen` falsch 4, `tippen` Abschnitt-MAE 4,4); das ist der bekannte Stand, kein neuer Fehler. Der Gültig-Anteil
+sinkt in den Bewegungsszenarien (am stärksten in `zappel`, 114 → 81); vermutlich, weil ein Wert im kurzen Fenster bestätigt sein muss (nicht einzeln untersucht).
+
+**T1** (`.venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus --replay firmware/esp32s3/src [--define A121_DSP_REACQ]`,
+31,7 min, Personenfilter wie oben, Zeit = Empfangszeit):
+
+| T1 | gültig | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | Sprünge > 15 /min |
+|---|---|---|---|---|
+| ohne Schalter | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 13 |
+| mit `A121_DSP_REACQ` | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 9 |
+
+Das Ziel des Entwurfs (Median der Bewegungs-Ausfälle ≤ 15 s) ist mit 15,7 s knapp verfehlt; die Summe der Bewegungs-Ausfallzeit steigt
+(591 → 714 s) bei mehr Bewegungs-Ausfällen (22 statt 15; Ursache nicht untersucht). Der Gültig-Anteil sinkt; das liegt zum Teil daran, dass die
+bisherigen Werte zwischen 41, 58, 73 und 97 /min sprangen. Ob das ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen),
+lässt sich nur mit der Referenz entscheiden (Polar H9, erwartet ca. 2026-11-05). Keine Aussage über die Genauigkeit. Auf T1 ist das Echo nach
+einer Bewegung oft nicht sauber (`echo_ok` = 0); das begrenzt das Wiederfinden, weil das Gedächtnis an `echo_ok` hängt (Entwurf, Abschnitt 4).
+
+**Rechenzeit am PC** (Spalte `us` des Prüfstands, Median je Szenario, zwei Läufe, x86-PC, kein ESP32): 884 → 974 µs und 887 → 972 µs, also
+**rund + 10 %**; je Szenario + 8 bis + 27 % (am meisten `weg`, `beweg_weg`), `leer` 9 % weniger. Erwartet waren + 15–25 %. Die Zahl sagt nur
+etwas über das Verhältnis; die Rechenzeit am ESP32 (Entwurf: ≤ 400 ms je Report, heute 91–152 ms) ist nicht gemessen.
+
+**Firmware-Build** (nur Übersetzung und Linken mit `pio run`, **keine Laufzeitprüfung am Gerät**, nichts geflasht):
+
+| Umgebung | RAM (statisch) | Flash |
+|---|---|---|
+| `esp32s3-n16r8` | 74 644 B (22,8 %) | 407 717 B (6,2 %) |
+| `esp32s3-n16r8-reacq` (`-DA121_DSP_REACQ`) | 75 572 B (23,1 %) | 410 237 B (6,3 %) |
+
+Unterschied + 928 B RAM und + 2520 B Flash; zur Laufzeit angelegte Puffer (Heap/PSRAM) zählt `pio` nicht. `@HELLO` meldet die Firmware mit
+Schalter als `2026-11-02-vital1-reacq`, ohne unverändert als `2026-11-02-vital1`. Neue Felder in `@DSP` nur mit Schalter: `win_s`, `reacq` (`docs/HARDWARE.md`).
+
+**Offen**: `lang` liefert weiter 2 falsche Werte nach der Bewegung; `tippen` ist ungelöst (die Variante Periodizität half nicht); auf T1
+begrenzt ein unsauberes Echo nach der Bewegung das Wiederfinden; ein Rezoom auf ein anderes Ziel löscht das Gedächtnis nur über
+`target_in_zoom`. Nächster Schritt ist ein Lauf der Firmware `esp32s3-n16r8-reacq` am Gerät (nach Freigabe) mit Handzählung und danach Polar H9 Tag A.
 
 ## Nicht möglich mit einem Sensor
 

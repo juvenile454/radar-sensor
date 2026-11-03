@@ -49,7 +49,14 @@ static HardwareSerial &SrvUart = Serial2;
 
 // Stand der Firmware für '@HELLO' (App/PC erkennen damit Protokoll und Fähigkeiten, docs/ANDROID_APP.md).
 // proto 1: @IQ3 mit Frame-Zähler + Sensor-tick, @RAW, @RECONNECT, @DOPPLER mit Frame-Zähler + tick.
-static const char *FW_VERSION = "2026-11-02-vital1";  // DSP-Stand Audit V0–V5 (vorher 2026-11-01-app1 = Basislinie)
+// Mit dem Schalter A121_DSP_REACQ (V6, Umgebung esp32s3-n16r8-reacq) hängt die Kennung "-reacq" an, damit Aufnahmen
+// mit und ohne Wiederfinden in @HELLO unterscheidbar sind. Ohne Schalter bleibt die Kennung unverändert.
+#ifdef A121_DSP_REACQ
+#define FW_VERSION_SUFFIX "-reacq"
+#else
+#define FW_VERSION_SUFFIX ""
+#endif
+static const char *FW_VERSION = "2026-11-02-vital1" FW_VERSION_SUFFIX;  // DSP-Stand Audit V0–V5 (vorher 2026-11-01-app1 = Basislinie)
 static const int PROTO_VERSION = 1;
 static String g_serverVersion = "-";  // rss_version der letzten erfolgreichen Server-Verbindung
 

@@ -23,6 +23,10 @@ nachgerechnet (`vital_eval.replay_lines`):
 - Zustand „Suche“ (555 Reports): 508 davon ohne Atemspitze (`br_state` 1); 182 mit > 30 % Bewegung.
 - Minute 6–22 meist „keine Person“ (ob die Testperson da war, ist unbekannt; diese Abschnitte zählen nicht als Ausfall).
 
+*Nachtrag 2026-11-03:* Mit dem Personenfilter von `host/reacq_eval.py` (Ausfälle mit Zustand KEINE_PERSON in der Mehrheit
+zählen nicht) lautet die T1-Basislinie: 15 Bewegungs-Ausfälle, Median 23,7 s, Summe 591 s (neben der obigen Handzählung
+18 / ≈ 40 s / ≈ 1627 s; ohne Filter 18 / 39,0 s / 1609 s). Das Ziel „Median ≤ 15 s“ ist an den Zahlen mit Filter zu messen.
+
 Ursachen im Code (`computeReport` u. a.):
 
 1. **Alles oder nichts über 15 s:** `rep.valid` verlangt `motion_pct ≤ kMaxMotionPct` (30 %). 5 bewegte Sekunden im
@@ -55,6 +59,8 @@ heutigen Stand.
   unregelmäßige Bewegungen (Tippen) nicht als Bewegung werten, wenn der Puls sichtbar bleibt. Risiko: rhythmische
   Bewegung (Fußwippen) ist auch periodisch; deshalb nur übernehmen, wenn `zappel`, `lage` und `beweg_hr` ihre Grenzen
   halten und `tippen` besser wird.
+  *Nachtrag 2026-11-03:* Umgesetzt mit dem Mittel der Bins außerhalb der Hann-Hauptkeule (± 2 Auflösungszellen) als Bezug,
+  nicht aller übrigen Bins (Begründung und Zahlen in `docs/EXPERIMENTE.md`, V6). Variante verworfen.
 
 ### 2. Fensterwahl
 
@@ -65,6 +71,9 @@ heutigen Stand.
 - Bewegung und `clean_tail_s < 6 s`: Puls ungültig, Zustand BEWEGUNG wie heute; Atmung, Atemzustand und Raum werden
   wie heute auf dem vollen Fenster gerechnet.
 - Die Regel `motion_pct ≤ 30 %` entfällt unter dem Schalter; `motion_pct` wird weiter berechnet und ausgegeben.
+- *Nachtrag 2026-11-03:* Umsetzung (Ruling R8): Atmung und Oberwellen-Sperre bleiben auf dem vollen Fenster N, nur der
+  Pulsteil läuft auf dem Endstück; Grund: im 6-s-Fenster wird die Atmung zu ungenau (13,6 statt 15 /min) und die
+  m ≤ 3-Sperre verfehlt 3 × Atmung.
 
 ### 3. Verfolgung während Bewegung einfrieren
 

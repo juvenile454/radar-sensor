@@ -412,6 +412,10 @@ Alle Zahlen zu Varianten stammen aus dem Prüfstand **[Sim]**; ob sie an echten 
 | V3 | V3.4 Atemzüge (`@BREATH`) und V3.5 Zustand (`@STATE`) im Standard; V3.1 Kombination, V3.2 Viterbi, V3.3 Oberwellen-Abzug, V3.6 Vorlage für Einzelschläge als Schalter, Standard aus; V3.7 nicht begonnen (Voraussetzung fehlt) | A/B an Tag A, Übernahme nur nach Tag B |
 | V4 | Messplan (`EXPERIMENTE.md`, „V4 Sensor-Konfiguration"), `host/noise_floor.py` (Weg-Rauschen, Aufnahme über `bridge`), iq3-Preset als Übersetzungsschalter, Kennung in `@HELLO` | alle Messungen V4.1–V4.4 |
 | V5 | V5.1 Gütezustand und Abweichung gegen den Gurt, V5.2 Handy-DSP live aus `@RAW` (`A121_DSP_HEAVY`), V5.3 alte PC-Skripte als Archiv | Screenshots je Zustand, 30 min live mit CPU ≤ 20 %, NDK-Build |
+| V6 (2026-11-03) | Puls nach Bewegung wiederfinden hinter `A121_DSP_REACQ` (Standard aus): Bewegungskarte, Puls auf dem ruhigen Endstück, Gedächtnis; `@DSP` mit `win_s`/`reacq`; `host/reacq_eval.py`; Prüfstand-Szenarien `kurz`…`tippen`; Firmware-Umgebung `esp32s3-n16r8-reacq` (`pio run` übersetzt, `-reacq` in `@HELLO`); Varianten `A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE` gemessen und verworfen. Zahlen: `EXPERIMENTE.md`, „V6“ | Lauf am Gerät (nicht geflasht), Handzählung, Polar H9 Tag A; Prüfstand mit Schalter noch 3 Verletzungen (`lang` 2 falsche Werte, `tippen` 4 falsche Werte und Abschnitt-MAE 4,4); T1: Median der Bewegungs-Ausfälle 23,7 → 15,7 s (Ziel ≤ 15 s knapp verfehlt), gültig 20,7 → 13,7 %; Echo nach Bewegung oft unsauber; Rezoom auf ein anderes Ziel löscht das Gedächtnis nur über `target_in_zoom` |
+
+Zeile V6 (Nachtrag 2026-11-03): Firmware beider Umgebungen (`esp32s3-n16r8`, `esp32s3-n16r8-reacq`) mit `pio run` gebaut, Python-Suite, Prüfstand
+und Android-Unit-Tests am PC gelaufen; **nichts davon ist am Gerät gelaufen** und keine Zahl hat eine Referenz.
 
 Einzelergebnisse und Befehle je Aufgabe: `docs/EXPERIMENTE.md` (Prüfstand, Messpläne), `docs/ANDROID_APP.md` (App,
 offene Gerätetests), `docs/HARDWARE.md` (Befehle, Schalter).

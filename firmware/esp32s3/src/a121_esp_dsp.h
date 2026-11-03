@@ -63,9 +63,10 @@
  *      Der gewählte Kandidat (cf[0]) kommt aus der Steigung der abgewickelten Phase des 3-Bin-Schmalbands (phaseSlopeHz,
  *      1024er FFT, Herzsignal des klarsten Punkts) statt aus der Parabel. Bench (Simulation): schlechter als die Parabel
  *      (auf dem 1024er Raster liegen die drei Bins auf dem flachen Gipfel der Hauptkeule, die Steigung rastet auf den
- *      Mittenbin ein: Fehler bis 0,007 Hz statt < 0,0001 Hz), Puls-MAE in 12 von 19 Szenarien höher (1 niedriger), 7 neue
- *      Verletzungen (allein), im 10-s-Fenster ebenfalls schlechter. Zahlen in docs/EXPERIMENTE.md (V6). Kosten mit Schalter: 14 KB RAM, zwei
- *      komplexe FFT (1024) je Report.
+ *      Mittenbin ein: Fehler bis 0,007 Hz statt < 0,0001 Hz), Puls-MAE in 12 von 19 Szenarien höher (1 niedriger; im
+ *      10-s-Fenster 13 von 19), 7 neue Verletzungen (allein). Das Urteil gilt nur für die 3-Bin-Variante des Entwurfs
+ *      (k0 ± 1 rastet auf den Mittenbin ein); ein Band von etwa ± 2 · 1024 / m Bins (m = Fensterlänge in Abtastwerten) wurde nicht gegen die Parabel probiert.
+ *      Zahlen in docs/EXPERIMENTE.md (V6). Kosten mit Schalter: 14 KB RAM, zwei komplexe FFT (1024) je Report.
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
