@@ -316,6 +316,39 @@ neu gerechnete DSP hält T1 nur zu 11 % der Reports für gültig (211 von 1899);
 (`ok` im Original-Log), deshalb ist die Basislinie ausdrücklich die des aktuellen Header-Stands. Eine Pulsreferenz gibt es in
 keiner dieser Aufnahmen. Nur Rechnung auf dem PC (Replay), kein Lauf am Gerät.
 
+### V6 Variante Periodizität (`A121_DSP_REACQ_PERIOD`): verworfen
+
+Idee (Vital-Radio, Adib et al. 2015): Ein zu starker Block der Bewegungskarte zählt nur als bewegt, wenn das Signal um ihn
+(3-s-Ausschnitt am stärksten Punkt, 15 Hz, Hann, Herzband 0,674–3,003 Hz) nicht periodisch ist; Ziel war `tippen`
+(kleine unregelmäßige Stöße). Messung: `.venv/bin/python host/vital_sim.py bench --check --define A121_DSP_REACQ [--define A121_DSP_REACQ_PERIOD]`,
+nur Simulation (PC-Rechnung, kein Lauf am Gerät). Mit dem Schalter, aber ohne Periodenprüfung, ist die Ausgabe zeilengleich zu
+`A121_DSP_REACQ` allein.
+
+Schwelle: Mit allen übrigen Bins im Band als Bezug ist ein reiner Sinus im 3-s-Ausschnitt nur Spitze/Mittel ≈ 4,7 (Hann-Hauptkeule
+1,3 Hz von 2,3 Hz Band), Rauschen bis 7: `kPeriodK` = 5 trennt dann nichts. Umgesetzt ist deshalb "übrige Bins = außerhalb der
+Hauptkeule der Spitze (± 2 Auflösungszellen)". Dann liegt der Sinus bei 420–1080, weißes Rauschen im Mittel bei 5 (500 Seeds: bis 39,
+rund ein Drittel über 5, denn 3 s haben nur ≈ 9 unabhängige Bins im Band), unregelmäßige Stöße im Mittel bei 6 (bis 167).
+
+| Szenario | gültig REACQ → +PERIOD | wiederfind_s | falsch_nach_beweg_n | nie_gefunden_n | Grenzen |
+|---|---|---|---|---|---|
+| beweg | 100 → 105 /120 | 6 → 11 | 0 → 9 | 0 → 0 | neu verletzt: hr_p5 91,4 (≥ 95), hr_mae 2,2 (≤ 1,3) |
+| kurz | 102 → 115 /120 | 8 → 1 | 0 → 7 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 7 (≤ 0 und ≤ 2) |
+| zappel | 81 → 104 /120 | 7 → 1 | 0 → 7 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 7 (≤ 0) |
+| lang | 125 → 142 /150 | 6 → 6 | 2 → 1 | 0 → 0 | weiter verletzt (≤ 0) |
+| lage | 104 → 111 /120 | 2 → 1 | 0 → 0 | 0 → 0 | hält |
+| beweg_hr | 124 → 142 /150 | 7 → 1 | 0 → 0 | 0 → 0 | hält (Puls-MAE 0,4 → 0,9) |
+| beweg_weg | 46 → 55 /120 | 6 → 1 | 0 → 2 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 2 (≤ 0) |
+| tippen | 137 → 144 /150 | 5 → 5 | 4 → 4 | 0 → 0 | Abschnitt gültig 88 → 100 %, Abschnitt-MAE 4,4 → 4,0 (Grenze ≤ 2,0 weiter verletzt) |
+
+Die übrigen Szenarien (base, anhalt, …) ohne neue Verletzung. Ergebnis: Mit `kPeriodK` = 5 brechen `beweg`, `kurz`, `zappel` und
+`beweg_weg` ihre Grenzen, weil die simulierte Bewegung ein Sinus ist, also periodisch, und deshalb nicht mehr als Bewegung
+zählt; `tippen` behält seine 4 falschen Werte (nur Gültig-Anteil und MAE im Abschnitt etwas besser). Zur Orientierung
+(nicht übernommen, Schwelle laut Entwurf fest 5): `kPeriodK` = 20 lässt `kurz` bei 2 falschen Werten (Grenze ≤ 0), `lang` bei 1 und `tippen`
+unverändert; `kPeriodK` = 100 ist zeilengleich zu REACQ allein. **Verworfen**: Grenzen von `zappel` (und `beweg`, `kurz`,
+`beweg_weg`) nicht gehalten, `tippen` nicht behoben (in `tippen` kommt der Zustand BEWEGUNG nie vor; die falschen Werte
+kommen laut Task 6 aus der normalen Verfolgung). Der Code bleibt hinter dem Schalter als Experiment; ein Bench-Test dafür gibt es
+nicht. Rechenzeit: je als bewegt gezählter Block eine FFT (1024) des vorhandenen `fft_`, höchstens 15 je Report.
+
 ## Nicht möglich mit einem Sensor
 
 - `bilateration` braucht zwei Sensoren.

@@ -54,6 +54,11 @@
  *      Gedächtnis (ReacqMemory): sicherer Wert (Konfidenz ≥ 50 %, Fenster ≥ 8 s) gilt 60 s, solange Echo und Ziel im
  *      Zoom bleiben; im Endstück wird zuerst der stärkste Kandidat ±15 /min um ihn gewählt (preferMemoryCandidate),
  *      bestätigt zählt er als Lebenszeichen (reacq = 2). Die 30-%-Bewegungsregel entfällt. @DSP: win_s, reacq.
+ *      Variante A121_DSP_REACQ_PERIOD (nur mit A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
+ *      ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s, 15 Hz, Hann, Herzband) nicht periodisch ist
+ *      (Spitze < 5 × Mittel der Bins außerhalb der Hauptkeule; segmentPeriodic). Bench (Simulation): hält die Grenzen
+ *      nicht (beweg hr_mae, kurz, zappel, beweg_weg falsch nach Bewegung), tippen bleibt bei 4 falschen Werten; die
+ *      simulierte Bewegung ist ein Sinus, also periodisch. Zahlen in docs/EXPERIMENTE.md (V6).
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
@@ -285,6 +290,9 @@ inline void selectStrongest(const float *v, uint16_t n, uint16_t k, bool *sel) {
     }
 }
 
+#if defined(A121_DSP_REACQ_PERIOD) && !defined(A121_DSP_REACQ)
+#error "A121_DSP_REACQ_PERIOD gibt es nur zusammen mit A121_DSP_REACQ"
+#endif
 #ifdef A121_DSP_REACQ
 /* V6: Bewegungskarte */
 static constexpr uint8_t kReacqMinS    = 6U;     /* kürzestes Fenster (s) nach Bewegung, auf dem noch ein Puls gesucht wird */
@@ -333,6 +341,62 @@ inline MotionMap motionMapFromRms(const float *rms, uint8_t n_pts, uint8_t nb, f
     }
     return m;
 }
+
+#ifdef A121_DSP_REACQ_PERIOD
+/* V6, Variante Periodizität (Experiment, siehe Kopfkommentar und docs/EXPERIMENTE.md) */
+static constexpr float    kPeriodK     = 5.0f;   /* periodisch: stärkste Spitze ≥ 5 × Mittel der übrigen Bins im Herzband */
+static constexpr uint16_t kPeriodK0    = 46U;    /* Herzband-Bins 46 .. 205 = 0,674 .. 3,003 Hz (wie die Pulssuche) */
+static constexpr uint16_t kPeriodK1    = 205U;
+static constexpr uint16_t kPeriodSegS  = 3U;     /* Ausschnitt um den Block: 3 s */
+static constexpr uint16_t kPeriodSegN  = (uint16_t)(kPeriodSegS * (uint16_t)kFsHz / kDecim);  /* 45 Werte bei 15 Hz */
+
+/**
+ * Ausschnitt für segmentPeriodic: bis zu 3 s des bandgefilterten Wegsignals h[0 .. N) (60 Hz) um die Stelle center,
+ * auf 15 Hz dezimiert (jeder kDecim-te Wert) und mit Hann gewichtet, nach out (≥ kPeriodSegN Werte). Der Ausschnitt wird
+ * am Rand verschoben statt gekürzt (center bleibt darin); N unter 3 s: ganzes Signal. Rückgabe: Zahl der Werte.
+ */
+inline uint16_t periodSegment(const float *h, uint16_t N, uint16_t center, float *out) {
+    const uint16_t len = std::min<uint16_t>(N, (uint16_t)(kPeriodSegS * (uint16_t)kFsHz));
+    int32_t a = (int32_t)center - (int32_t)len / 2;
+    a = std::max<int32_t>(0, std::min<int32_t>(a, (int32_t)N - (int32_t)len));
+    const uint16_t n = (uint16_t)((len + kDecim - 1U) / kDecim);
+    for (uint16_t m = 0; m < n; m++) {
+        const float w = (n > 1U) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(n - 1U))) : 1.0f;
+        out[m] = h[(uint32_t)a + (uint32_t)m * kDecim] * w;
+    }
+    return n;
+}
+
+/**
+ * Periodisch im Herzband? x: n gewichtete Werte aus periodSegment (15 Hz). Spektrum |X|² über fft (spec: ≥ kPeriodK1 + 1
+ * Werte, Arbeitsfeld); wahr, wenn die stärkste Spitze in den Bins kPeriodK0 .. kPeriodK1 mindestens k × Mittel der
+ * übrigen Bins im Band ist (nach Vital-Radio, Adib et al. 2015). Ein Ausschnitt ohne Leistung ist nicht periodisch.
+ * Abweichung vom Entwurf: "übrige" Bins sind die außerhalb der Hann-Hauptkeule der Spitze (± 2 Auflösungszellen
+ * kFftN / n Bins). Mit allen übrigen Bins liegt schon ein reiner Sinus im 3-s-Ausschnitt nur bei Spitze/Mittel ≈ 4,7
+ * (die Hauptkeule ist 1,3 Hz breit, das Band 2,3 Hz), Rauschen bis 7: k = 5 trennt dann nichts.
+ */
+inline bool segmentPeriodic(const float *x, uint16_t n, a121_fft::RealFft<kFftN> &fft, float *spec, float k = kPeriodK) {
+    if (n < 4U) return false;
+    fft.power(x, n, spec, kPeriodK1 + 1U);
+    float peak = 0.0f;
+    uint16_t pk = kPeriodK0;
+    for (uint16_t b = kPeriodK0; b <= kPeriodK1; b++)
+        if (spec[b] > peak) {
+            peak = spec[b];
+            pk = b;
+        }
+    const int32_t excl = (int32_t)(2U * kFftN / n);
+    float sum = 0.0f;
+    uint16_t cnt = 0;
+    for (uint16_t b = kPeriodK0; b <= kPeriodK1; b++) {
+        if (abs((int32_t)b - (int32_t)pk) <= excl) continue;
+        sum += spec[b];
+        cnt++;
+    }
+    if (cnt == 0U || sum <= 0.0f) return false;
+    return peak >= k * (sum / (float)cnt);
+}
+#endif
 #endif
 
 /**
@@ -2569,12 +2633,25 @@ private:
         bool sel[kZoomPoints];
         selectStrongest(strength, kZoomPoints, kMotionPoints, sel);
         float rms[kMotionPoints * kMaxBlocks];
+        uint8_t pts[kMotionPoints];
         uint8_t n_pts = 0;
-        for (uint8_t b = 0; b < kZoomPoints && nb; b++) {
-            if (!sel[b] || !use[b]) continue;  /* selectStrongest füllt bei wenigen Punkten in use mit unbenutzten auf */
+        for (uint8_t b = 0; b < kZoomPoints && nb; b++)
+            if (sel[b] && use[b]) pts[n_pts++] = b;  /* selectStrongest füllt bei wenigen Punkten in use mit unbenutzten auf */
+#ifdef A121_DSP_REACQ_PERIOD
+        /* der stärkste Punkt kommt zuletzt: sein gefiltertes Wegsignal bleibt in work_ext_ für die Periodizitätsprüfung */
+        if (n_pts > 1U) {
+            uint8_t top = 0;
+            for (uint8_t i = 1; i < n_pts; i++)
+                if (strength[pts[i]] > strength[pts[top]]) top = i;
+            const uint8_t t = pts[top];
+            for (uint8_t j = top; j + 1U < n_pts; j++) pts[j] = pts[j + 1U];
+            pts[n_pts - 1U] = t;
+        }
+#endif
+        for (uint8_t i = 0; i < n_pts; i++) {
             bool short_arc = false;
             float spread = 0.0f;
-            binDisplacement(b, start, N, work_x_, short_arc, spread);
+            binDisplacement(pts[i], start, N, work_x_, short_arc, spread);
             removeLinearTrend(work_x_, N);
             sosFiltFilt(work_x_, N);
             const float *h = work_ext_ + kFiltPad;
@@ -2582,11 +2659,27 @@ private:
                 const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);  /* wie gateMotion */
                 float acc = 0.0f;
                 for (uint16_t n = a; n < e; n++) acc += h[n] * h[n];
-                rms[n_pts * nb + k] = sqrtf(acc / (float)(e - a));
+                rms[i * nb + k] = sqrtf(acc / (float)(e - a));
             }
-            n_pts++;
         }
-        return motionMapFromRms(rms, n_pts, nb);
+        MotionMap mm = motionMapFromRms(rms, n_pts, nb);
+#ifdef A121_DSP_REACQ_PERIOD
+        /* Variante: ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s am stärksten Punkt) nicht
+         * periodisch ist. Der Ausschnitt liegt in dec_ (wird in der Hauptschleife vor der Nutzung neu gefüllt). */
+        if (mm.mask) {
+            const float *h = work_ext_ + kFiltPad;  /* Weg des stärksten Punkts (zuletzt gerechnet) */
+            for (uint8_t k = 0; k < mm.n_blocks; k++) {
+                if (!(mm.mask & ((uint32_t)1U << k))) continue;
+                const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);
+                const uint16_t n = periodSegment(h, N, (uint16_t)((a + e) / 2U), dec_);
+                if (segmentPeriodic(dec_, n, fft_, spec_)) mm.mask &= ~((uint32_t)1U << k);
+            }
+            mm.clean_tail_blocks = mm.n_blocks;
+            for (uint8_t k = 0; k < mm.n_blocks; k++)
+                if (mm.mask & ((uint32_t)1U << k)) mm.clean_tail_blocks = (uint8_t)(mm.n_blocks - 1U - k);
+        }
+#endif
+        return mm;
     }
 #endif
 

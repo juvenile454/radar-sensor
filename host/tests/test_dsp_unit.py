@@ -17,7 +17,7 @@ SHIM = HOST / "dsp_replay"
 
 def run_cpp(body: str, flags: tuple[str, ...] = ()) -> str:
     """Übersetzt ein kleines Programm gegen a121_esp_dsp.h und gibt seine Ausgabe zurück (flags: z. B. -D…)."""
-    src = ('#include <Arduino.h>\n#include <vector>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n'
+    src = ('#include <Arduino.h>\n#include <vector>\n#include <random>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n'
            + body + "\nreturn 0; }\n")
     with tempfile.TemporaryDirectory() as d:
         c = pathlib.Path(d) / "t.cpp"
@@ -1167,6 +1167,72 @@ class MotionMapTest(unittest.TestCase):
 
     def test_mask_fits_all_blocks(self):
         self.assertEqual(run_cpp('printf("%d", (int)(kMaxBlocks <= 32U));', self.FLAGS), "1")
+
+
+class SegmentPeriodicTest(unittest.TestCase):
+    """V6 Variante Periodizität: 3-s-Ausschnitt des Wegsignals (60 Hz → 15 Hz, Hann) auf eine Spitze im Herzband prüfen.
+
+    Spitze/Mittel der Bins außerhalb der Hauptkeule: Sinus (mit 10 % Rauschen) über 400, weißes Rauschen im Mittel 5
+    (bis 39 in 500 Seeds), unregelmäßige Stöße bis 167. Mit kPeriodK = 5 gilt also gut ein Drittel der Rausch-Ausschnitte
+    als periodisch (nur ≈ 9 unabhängige Bins in 3 s). Getrennt wird erst bei großem k; dort prüfen die Tests mit klarem
+    Abstand, bei k = 5 nur den Sinus und je einen festen Seed für Rauschen und Stöße."""
+    FLAGS = ("-DA121_DSP_REACQ", "-DA121_DSP_REACQ_PERIOD")
+
+    def periodic(self, signal: str, n_seeds: int, k: str = "kPeriodK") -> list[int]:
+        """C++: signal füllt h[180] (60 Hz) je seed; Ausschnitt um die Mitte, dann segmentPeriodic mit Schwelle k."""
+        out = run_cpp(f"""
+        static a121_fft::RealFft<kFftN> fft;
+        static float h[180], seg[kPeriodSegN], spec[kPeriodK1 + 1];
+        for (int seed = 0; seed < {n_seeds}; seed++) {{
+            {signal}
+            const uint16_t n = periodSegment(h, 180, 90, seg);
+            printf("%d ", (int)segmentPeriodic(seg, n, fft, spec, {k}));
+        }}""", self.FLAGS)
+        return [int(v) for v in out.split()]
+
+    SINE = ("std::mt19937 g(seed + 1); std::normal_distribution<float> nd(0.0f, 0.1f);"
+            "for (int i = 0; i < 180; i++) h[i] = sinf(6.2832f * {f} * i / 60.0f) + nd(g);")
+    NOISE = ("std::mt19937 g(seed + 100); std::normal_distribution<float> nd(0.0f, 1.0f);"
+             "for (int i = 0; i < 180; i++) h[i] = nd(g);")
+    IMPULSES = """std::mt19937 g(seed + 7); std::uniform_int_distribution<int> gap(24, 60);
+            for (int i = 0; i < 180; i++) h[i] = 0.0f;
+            for (int t = gap(g) / 2; t < 180; t += gap(g))
+                for (int j = 0; j < 12 && t + j < 180; j++) h[t + j] += 0.5f * (1.0f - cosf(6.2832f * j / 12.0f));"""
+
+    def test_sine_is_periodic(self):
+        # 1,2 Hz (72 /min); ebenso 0,9 und 2,4 Hz; auch bei k = 100
+        for f in ("1.2f", "0.9f", "2.4f"):
+            sig = self.SINE.replace("{f}", f)
+            self.assertEqual(self.periodic(sig, 5), [1] * 5, f)
+            self.assertEqual(self.periodic(sig, 5, "100.0f"), [1] * 5, f)
+
+    def test_noise_is_not_periodic(self):
+        # Seed 100: bei k = 5 nicht periodisch; 40 feste Seeds bei k = 100 keiner
+        self.assertEqual(self.periodic(self.NOISE, 1), [0])
+        self.assertEqual(self.periodic(self.NOISE, 40, "100.0f"), [0] * 40)
+
+    def test_impulses_irregular_not_periodic(self):
+        # Stöße (Hann-förmig, 0,2 s) in zufälligen Abständen 0,4–1,0 s: Seed 7 bei k = 5 nicht periodisch;
+        # 20 feste Seeds bei k = 500 keiner
+        self.assertEqual(self.periodic(self.IMPULSES, 1), [0])
+        self.assertEqual(self.periodic(self.IMPULSES, 20, "500.0f"), [0] * 20)
+
+    def test_silence_and_short_segment_not_periodic(self):
+        self.assertEqual(self.periodic("for (int i = 0; i < 180; i++) h[i] = 0.0f;", 1), [0])
+
+    def test_period_without_reacq_is_compile_error(self):
+        with self.assertRaises(AssertionError) as e:
+            run_cpp('printf("x");', ("-DA121_DSP_REACQ_PERIOD",))
+        self.assertIn("nur zusammen mit A121_DSP_REACQ", str(e.exception))
+
+    def test_segment_is_shifted_at_the_edges(self):
+        # Mitte nahe am Rand: Ausschnitt bleibt 3 s lang (45 Werte), N unter 3 s: ganzes Signal
+        out = run_cpp("""
+        static float h[400], seg[kPeriodSegN];
+        for (int i = 0; i < 400; i++) h[i] = (float)i;
+        printf("%u %u %u %u", periodSegment(h, 400, 10, seg), periodSegment(h, 400, 395, seg),
+               periodSegment(h, 400, 200, seg), periodSegment(h, 100, 50, seg));""", self.FLAGS)
+        self.assertEqual(out.split(), ["45", "45", "45", "25"])
 
 
 class ReacqMemoryTest(unittest.TestCase):

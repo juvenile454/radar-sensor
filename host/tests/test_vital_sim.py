@@ -402,7 +402,8 @@ class ReacqBenchTest(unittest.TestCase):
     3 × ruhiges Viertel) sieht die zweite Hälfte der 20-s-Bewegung in lang nicht (Bezug ist dort selbst Bewegung, Blöcke
     1,4–2,9 ×), das 6-s-Endstück bei 71–72 s liegt noch in der Bewegung (83 statt 72 /min, von AKF/Einzelschlägen
     bestätigt). tippen: Stöße überschreiten 3 × Bezug kaum, die normale Verfolgung springt bei 114 s auf 99 /min (wie
-    ohne Schalter: falsch 4, MAE 4,0); Ziel der Variante A121_DSP_REACQ_PERIOD (Task 7). Kleinere Schwelle (2,5 / 2)
+    ohne Schalter: falsch 4, MAE 4,0); die Variante A121_DSP_REACQ_PERIOD (Task 7) hilft nicht und ist verworfen (docs/
+    EXPERIMENTE.md, V6). Kleinere Schwelle (2,5 / 2)
     oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg)."""
 
     KNOWN = ["VERLETZT lang: falsch_nach_beweg_n = 2, Grenze <= 0",
