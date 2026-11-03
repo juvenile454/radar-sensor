@@ -293,7 +293,8 @@ Details und Werkzeuge: `docs/ANDROID_APP.md`. Aufnahmen unter `~/Data/radar-sens
 
 Messwerkzeug: `host/reacq_eval.py` (Plan `2026-11-02-puls-wiederfinden`, Aufgabe 3). Ein Ausfall ist eine Folge von @DSP-Reports
 mit `ok == 0` nach einem gültigen Report; Dauer = erster ungültiger Report bis zum nächsten gültigen. Ursache `bewegung`
-(im Ausfall `motion_pct > 30` oder Zustand BEWEGUNG), sonst `keine_atemspitze` (`br_state == 1` in der Mehrheit), sonst `rest`.
+(im Ausfall `motion_pct > 30` oder Zustand BEWEGUNG; mit `A121_DSP_REACQ` zusätzlich `win_s == 0` ab 6 s nach Start/Rezoom, Ruling
+R10; `--ohne-karte` zählt nach der Basisregel ohne `win_s`, Ruling R16), sonst `keine_atemspitze` (`br_state == 1` in der Mehrheit), sonst `rest`.
 Läufe mit mehr als 50 % Zustand KEINE_PERSON zählen nicht (Standard); `--keine-person-zaehlen` schaltet das ab. Gültig-Anteil ohne
 Zustand 0. Alle Zahlen: Firmware-Stand dieses Zweigs (a121_esp_dsp.h ohne `A121_DSP_REACQ`), `stream.log` neu gerechnet
 (`--replay firmware/esp32s3/src`), Zeit = Empfangszeit, Referenz fehlt (keine Aussage über Genauigkeit, nur über Verfügbarkeit).
@@ -420,37 +421,57 @@ die Genauigkeit des Pulses sind damit nicht möglich, nur über Verfügbarkeit u
 verworfen (Abschnitte oben) und bleiben aus.
 
 **Prüfstand** (`.venv/bin/python host/vital_sim.py bench --check [--define A121_DSP_REACQ]`, 15-s-Fenster, Szenarien mit Bewegung;
-`wiederfind_s` = Ende der Bewegung bis zum ersten gültigen Wert innerhalb ± 5 /min der Wahrheit, Median; `falsch` = gültige Reports > 10 /min daneben
-in den 30 s danach; `nie_gefunden_n` ist überall 0):
+`wiederfind_s` = Ende der Bewegung bis zum ersten gültigen Wert innerhalb ± 5 /min der Wahrheit, Median; `falsch danach` = gültige Reports > 10 /min
+daneben in den 30 s danach; `falsch in` = dasselbe in (Beginn, Ende] der Bewegung (`falsch_in_beweg_n`, Ruling R15, mit Schalter Grenze 0, ohne
+nur berichtet); `nie_gefunden_n` ist überall 0; Stand nach dem Final-Review-Fix, Simulation):
 
-| Szenario | gültig ohne → mit | Puls-MAE ohne → mit | wiederfind_s ohne → mit | falsch ohne → mit | Grenzen mit Schalter |
-|---|---|---|---|---|---|
-| beweg | 101 → 100 /120 | 0,8 → 0,4 | 11 → 6 | 2 → 0 | hält |
-| kurz | 104 → 102 /120 | 0,9 → 0,4 | 14 → 8 | 2 → 0 | hält (Grenze ≤ 8) |
-| zappel | 114 → 81 /120 | 3,9 → 3,1 | 1 → 7 | 10 → 0 | hält (Grenze ≤ 8) |
-| lang | 143 → 125 /150 | 1,5 → 0,8 | 11 → 6 | 3 → 2 | **verletzt**: falsch 2 (Grenze 0) |
-| lage | 111 → 104 /120 | 0,3 → 0,3 | 1 → 2 | 0 → 0 | hält |
-| beweg_hr | 126 → 124 /150 | 0,4 → 0,4 | 12 → 7 | 0 → 0 | hält (Puls springt dabei von 70 auf 85, erster gültiger Wert bei 85) |
-| beweg_weg | 51 → 46 /120 | 0,8 → 0,3 | 3 → 6 | 2 → 0 | hält |
-| tippen | 144 → 137 /150 | 2,6 → 2,7 | 5 → 5 | 4 → 4 | **verletzt**: falsch 4 (Grenze 0), Abschnitt-MAE 4,4 (Grenze ≤ 2,0) |
+| Szenario | gültig ohne → mit | Puls-MAE ohne → mit | wiederfind_s ohne → mit | falsch danach ohne → mit | falsch in ohne → mit | Grenzen mit Schalter |
+|---|---|---|---|---|---|---|
+| beweg | 101 → 100 /120 | 0,8 → 0,4 | 11 → 6 | 2 → 0 | 0 → 0 | hält |
+| kurz | 104 → 102 /120 | 0,9 → 0,4 | 14 → 8 | 2 → 0 | 0 → 0 | hält (Grenze ≤ 8) |
+| zappel | 114 → 81 /120 | 3,9 → 3,1 | 1 → 7 | 10 → 0 | 0 → 0 | hält (Grenze ≤ 8) |
+| lang | 143 → 125 /150 | 1,5 → 0,8 | 11 → 6 | 3 → 2 | 0 → 2 | **verletzt**: falsch danach 2, falsch in 2 (Grenzen 0) |
+| lage | 111 → 104 /120 | 0,3 → 0,3 | 1 → 2 | 0 → 0 | 0 → 0 | hält |
+| beweg_hr | 126 → 124 /150 | 0,4 → 0,4 | 12 → 7 | 0 → 0 | 0 → 0 | hält; Puls springt dabei von 70 auf 85, erster gültiger Wert danach (77 s) 81,4 /min, 3,6 neben dem wahren Puls 85 (Grenze `erst_nach_beweg_fehler` ≤ 5) |
+| beweg_weg | 51 → 46 /120 | 0,8 → 0,3 | 3 → 6 | 2 → 0 | 0 → 0 | hält |
+| tippen | 144 → 137 /150 | 2,6 → 2,7 | 5 → 5 | 4 → 4 | 7 → 7 | **verletzt**: falsch danach 4, falsch in 7 (Grenzen 0), Abschnitt-MAE 4,4 (Grenze ≤ 2,0) |
 
-Ohne Schalter meldet `bench --check` „OK (alle Grenzwerte eingehalten)“. Mit dem Schalter endet es mit Exit 1 („VERSCHLECHTERT“) und genau diesen drei
-Verletzungen (`lang` falsch 2, `tippen` falsch 4, `tippen` Abschnitt-MAE 4,4); das ist der bekannte Stand, kein neuer Fehler. Der Gültig-Anteil
-sinkt in den Bewegungsszenarien (am stärksten in `zappel`, 114 → 81); vermutlich, weil ein Wert im kurzen Fenster bestätigt sein muss (nicht einzeln untersucht).
+Ohne Schalter meldet `bench --check` „OK (alle Grenzwerte eingehalten)“. Mit dem Schalter endet es mit Exit 1 („VERSCHLECHTERT“) und genau fünf
+Verletzungen (`lang` falsch danach 2 und falsch in der Bewegung 2; `tippen` falsch danach 4, falsch in der Bewegung 7, Abschnitt-MAE 4,4); vor dem
+Final-Review waren es drei, die zwei neuen kommen allein von der neuen Kennzahl `falsch_in_beweg_n` (die Reports sind dieselben). In `lang` liegen
+die vier Fehlwerte bei 60, 63 s (in der Bewegung) und 71, 72 s (danach), 83–85 statt ≈ 72,5 /min, alle mit `reacq` = 2: Die Bewegungskarte sieht die
+zweite Hälfte der 20-s-Bewegung nicht, das Endstück liegt noch in der Bewegung, der stärkste Kandidat liegt im Band ± 15 um das Gedächtnis (≈ 73)
+und AKF/Einzelschläge auf denselben bewegten Daten bestätigen ihn. Alle vier haben eine Atemspitze (`breath_ok`, Atmung auf dem vollen
+Fenster, Ruling R8; mit einer Kopie des Headers mit Ausgabe nachgeprüft); die Regel `kMemSubstBpm` (unten) ändert an ihnen deshalb nichts, der Prüfstand ist
+mit und ohne sie zeilengleich. Der Gültig-Anteil sinkt in den Bewegungsszenarien (am stärksten in `zappel`, 114 → 81); vermutlich, weil ein Wert im
+kurzen Fenster bestätigt sein muss (nicht einzeln untersucht).
 
-**T1** (`.venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus --replay firmware/esp32s3/src [--define A121_DSP_REACQ]`,
-31,7 min, Personenfilter wie oben, Zeit = Empfangszeit):
+**Final-Review-Fix (Ruling R15)**: Ein über das Gedächtnis wiedergefundener Wert (`reacq` = 2) ersetzt die Atemspitze als Lebenszeichen nur
+noch, wenn er höchstens `kMemSubstBpm` = 5 /min vom gemerkten Puls liegt; sonst braucht er `breath_ok` wie jeder andere Report. Das Band
+± 15 für die Kandidaten-Bevorzugung bleibt.
 
-| T1 | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | Sprünge > 15 /min |
-|---|---|---|---|---|
-| ohne Schalter | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 13 |
-| mit `A121_DSP_REACQ` | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 9 |
+**T1** (`.venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus --replay firmware/esp32s3/src [--define A121_DSP_REACQ] [--ohne-karte]`,
+31,7 min, Personenfilter wie oben, Zeit = Empfangszeit; Nachrechnung am PC, keine Referenz). Zählregel „Basis“ = Bewegung nur über
+`motion_pct > 30` oder Zustand BEWEGUNG (`--ohne-karte`), „R10“ = zusätzlich `win_s == 0`. Ohne Schalter gibt es `win_s` nicht, beide Regeln
+zählen dort gleich. Nur Zeilen derselben Regel sind vergleichbar.
 
-Das Ziel des Entwurfs (Median der Bewegungs-Ausfälle ≤ 15 s) ist mit 15,7 s knapp verfehlt; die Summe der Bewegungs-Ausfallzeit steigt
-(591 → 714 s) bei mehr Bewegungs-Ausfällen (22 statt 15; Ursache nicht untersucht). Der Gültig-Anteil sinkt; möglicherweise zum Teil, weil die
-bisherigen Werte zwischen 41, 58, 73 und 97 /min sprangen (nicht untersucht). Ob das ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen),
-lässt sich nur mit der Referenz entscheiden (Polar H9, erwartet ca. 2026-11-05). Keine Aussage über die Genauigkeit. Auf T1 ist das Echo nach
-einer Bewegung oft nicht sauber (`echo_ok` = 0); das begrenzt das Wiederfinden, weil das Gedächtnis an `echo_ok` hängt (Entwurf, Abschnitt 4).
+| T1 | Regel | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | keine_atemspitze: n, Median / Summe | rest: n, Median / Summe | Ausfallzeit gesamt | Sprünge > 15 /min |
+|---|---|---|---|---|---|---|---|---|
+| ohne Schalter | Basis = R10 | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 14, 2,0 s / 60,1 s | 1, 9,2 s / 9,2 s | 660,2 s | 13 |
+| mit `A121_DSP_REACQ` | Basis | 13,4 % | 29 / 14 | **35,9 s** / 659,8 s | 4, 2,0 s / 35,9 s | 11, 1,0 s / 33,2 s | 728,8 s | 9 |
+| mit `A121_DSP_REACQ` | R10 | 13,4 % | 29 / 20 | 28,3 s / 716,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 728,8 s | 9 |
+| zum Vergleich: mit Schalter vor R15 (Stand `de29b2e`) | Basis | 13,7 % | 31 / 14 | 35,9 s / 659,8 s | 4, 2,0 s / 16,0 s | 13, 1,0 s / 50,0 s | 725,8 s | 9 |
+| zum Vergleich: mit Schalter vor R15 (Stand `de29b2e`) | R10 | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 725,8 s | 9 |
+
+**Auf T1 ist der Schalter schlechter:** Verfügbarkeit (gültig 20,7 → 13,4 %, Ausfallzeit über alle Ursachen 660 → 729 s) und der gleichartige
+Median der Bewegungs-Ausfälle (Basisregel 23,7 → 35,9 s) werden schlechter; nur die Sprünge > 15 /min gehen zurück (13 → 9). Die früher
+genannten 15,7 s waren mit der Regel R10 gezählt, die ohne Schalter gar nicht greifen kann, und sind kein gleichartiger Vergleich. Das Ziel des
+Entwurfs (Median ≤ 15 s) ist nicht erreicht. R15 nimmt auf T1 drei Reports aus dem Gedächtnispfad heraus (`t_ms` 157 354, 158 354, 170 354;
+72,2 / 72,0 / 65,0 /min, `reacq` = 2, mehr als 5 /min vom gemerkten Wert und ohne Atemspitze); dadurch wachsen nach R10 gezählt der
+Median von 15,7 auf 28,3 s und die Ausfallzeit um 3 s. Ob diese drei Werte richtig waren, ist ohne Referenz nicht zu sagen. Ob der Schalter
+insgesamt ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen), lässt sich nur mit der Referenz entscheiden (Polar H9,
+erwartet ca. 2026-11-05). Keine Aussage über die Genauigkeit. Auf T1 ist das Echo nach einer Bewegung oft nicht sauber (`echo_ok` = 0); das
+begrenzt das Wiederfinden, weil das Gedächtnis an `echo_ok` hängt (Entwurf, Abschnitt 4).
 
 **Rechenzeit am PC** (Spalte `us` des Prüfstands, Median je Szenario, zwei Läufe, x86-PC, kein ESP32): 884 → 974 µs und 887 → 972 µs, also
 **rund + 10 %**; je Szenario + 8 bis + 27 % (am meisten `weg`, `beweg_weg`), `leer` 9 % weniger. Erwartet waren + 15–25 %. Die Zahl sagt nur
@@ -461,14 +482,22 @@ etwas über das Verhältnis; die Rechenzeit am ESP32 (Entwurf: ≤ 400 ms je Rep
 | Umgebung | RAM (statisch) | Flash |
 |---|---|---|
 | `esp32s3-n16r8` | 74 644 B (22,8 %) | 407 717 B (6,2 %) |
-| `esp32s3-n16r8-reacq` (`-DA121_DSP_REACQ`) | 75 572 B (23,1 %) | 410 237 B (6,3 %) |
+| `esp32s3-n16r8-reacq` (`-DA121_DSP_REACQ`) | 75 572 B (23,1 %) | 410 309 B (6,3 %) |
 
-Unterschied + 928 B RAM und + 2520 B Flash; zur Laufzeit angelegte Puffer (Heap/PSRAM) zählt `pio` nicht. `@HELLO` meldet die Firmware mit
+Unterschied + 928 B RAM und + 2592 B Flash (nach dem Final-Review-Fix; vorher 410 237 B); zur Laufzeit angelegte Puffer (Heap/PSRAM) zählt `pio` nicht. `@HELLO` meldet die Firmware mit
 Schalter als `2026-11-02-vital1-reacq`, ohne unverändert als `2026-11-02-vital1`. Neue Felder in `@DSP` nur mit Schalter: `win_s`, `reacq` (`docs/HARDWARE.md`).
 
-**Offen**: `lang` liefert weiter 2 falsche Werte nach der Bewegung; `tippen` ist ungelöst (die Variante Periodizität half nicht); auf T1
-begrenzt ein unsauberes Echo nach der Bewegung das Wiederfinden; ein Rezoom auf ein anderes Ziel löscht das Gedächtnis nur über
-`target_in_zoom`. Nächster Schritt ist ein Lauf der Firmware `esp32s3-n16r8-reacq` am Gerät (nach Freigabe) mit Handzählung und danach Polar H9 Tag A.
+**Offen**: `lang` liefert weiter 4 falsche Werte (2 in, 2 nach der Bewegung; R15 ändert daran nichts, siehe oben); `tippen` ist ungelöst
+(7 falsche Werte in, 4 nach dem Abschnitt der Stöße; die Variante Periodizität half nicht); auf T1 ist der Schalter nach gleicher Zählregel
+schlechter (oben); auf T1 begrenzt ein unsauberes Echo nach der Bewegung das Wiederfinden. Rezoom: Das Gedächtnis überlebt einen Rezoom
+auf ein anderes Ziel nur, wenn alle Reports vor diesem Rezoom in den ersten 6 s nach einem vorigen Rezoom lagen; diese Reports enden vor der
+Prüfung `mem_.active` (zu wenig Daten). Sonst hat schon ein Report mit dem Ziel außerhalb des Zoom-Fensters (`target_in_zoom` = 0) das
+Gedächtnis gelöscht (`ReacqBenchTest.test_rezoom_keeps_or_clears_memory`). Mit `A121_DSP_VITERBI` (auch über `A121_DSP_HEAVY`) zusammen mit
+`A121_DSP_REACQ` kann der eingefrorene Viterbi-Pfad nach einem bestätigten Endstück `hr_prev_` auf den Wert vor der Bewegung zurückziehen; keine
+ausgelieferte Umgebung kombiniert das (Kommentar im Header), vor einer solchen Kombination zu lösen.
+Nächster Schritt ist ein Lauf der Firmware `esp32s3-n16r8-reacq` am Gerät (nach Freigabe) mit Handzählung und danach Polar H9 Tag A. Beim
+ersten Lauf mit `-reacq` einmal `uxTaskGetStackHighWaterMark` der DSP-Task ausgeben: Die Stack-Reserve ist ungemessen (Stack der DSP-Task
+10 240 B; Rahmen von `computeVitalReport` ≈ 1,3 KB und `motionMap` ≈ 0,7 KB, am x86-PC bestimmt, nicht am ESP32).
 
 ## Nicht möglich mit einem Sensor
 

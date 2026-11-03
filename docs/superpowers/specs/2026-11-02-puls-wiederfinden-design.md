@@ -100,6 +100,10 @@ heutigen Stand.
 `mem_ok`), mit `mem_ok` = Gedächtnis aktiv **und** Wert wiedergefunden (Bestätigung aus 4.).
 Ohne vorherigen gültigen Wert gibt es kein Gedächtnis; die Fälle „leer“, „niemand“ und „weg“ ändern sich dadurch nicht.
 
+*Nachtrag 2026-11-03 (Ruling R15):* `mem_ok` verlangt zusätzlich |gemeldeter Wert − `mem_hr_`| ≤ `kMemSubstBpm` (5 /min,
+gleiche Toleranz wie die Bestätigung, enger als die Fehlergrenze 10 /min des Prüfstands). Ein wiedergefundener Wert weiter
+weg (im Band ±15) braucht `breath_ok` wie jeder andere Report; das Band ±15 für die Kandidaten-Bevorzugung bleibt.
+
 ### 6. Feinschätzung über die Phasensteigung
 
 Variante `A121_DSP_PHASE_SLOPE` (unabhängig von `A121_DSP_REACQ` schaltbar; nach Vital-Radio): Statt der parabolischen
@@ -128,6 +132,7 @@ wie bisher. `@VITAL` und `@STATE` unverändert.
 | `kMemS` | 60 s | Lebensdauer des Gedächtnisses |
 | `kMemBandBpm` | 15 /min | Suchband um den gemerkten Wert |
 | `kMemMinConf` | 50 % | Konfidenz, ab der ein Wert ins Gedächtnis geht |
+| `kMemSubstBpm` | 5 /min | Nachtrag 2026-11-03 (Ruling R15): größter Abstand zum Gedächtnis, bei dem ein wiedergefundener Wert die Atemspitze als Lebenszeichen ersetzt |
 | Bewegungskarte | 2 von 3 Punkten | Block gilt als bewegt |
 | `kPeriodK` | 5 | Periodizität: Spitze / Mittel der übrigen Bins (Variante `A121_DSP_REACQ_PERIOD`) |
 
@@ -152,6 +157,9 @@ Neue Szenarien (je 120–180 s, Puls und Atmung bekannt):
 Neue Kennzahlen in `bench`: `wiederfind_s` (Ende jeder Bewegung bis zum ersten gültigen Wert innerhalb ±5 /min der
 Wahrheit, Median über die Bewegungen), `falsch_nach_beweg_n` (gültige Reports > 10 /min daneben in den 30 s nach
 Bewegungsende).
+*Nachtrag 2026-11-03 (Ruling R15):* `falsch_in_beweg_n` (gültige Reports > 10 /min daneben in (Beginn, Ende] der Bewegung),
+Grenze 0 in allen neuen Szenarien mit Schalter, ohne Schalter nur berichtet; `erst_nach_beweg_fehler` (|erster gültiger Wert
+nach der Bewegung − wahrer Momentanpuls|) setzt die Grenze für `beweg_hr` unten um (≤ 5).
 
 Grenzwerte (`--check`): `wiederfind_s ≤ 8` in `kurz`, `zappel`, `lage`; `≤ 10` in `lang`; `falsch_nach_beweg_n = 0`
 überall; in `beweg_hr` erster gültiger Wert nach der Bewegung innerhalb ±5 /min von 85 (nicht 70); in `beweg_weg` kein
@@ -166,6 +174,8 @@ Summe), getrennt nach Ursache (Bewegung / keine Atemspitze / Rest), Anteil gült
 Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports. Vergleich Header ohne und mit `A121_DSP_REACQ` auf
 T1 und den Aufnahmen vom 2026-11-02.
 Ziel an T1: Median der Bewegungs-Ausfälle ≤ 15 s (heute 40 s), Sprünge nicht mehr als heute.
+*Nachtrag 2026-11-03 (Ruling R16):* Der Vergleich ohne/mit Schalter gilt nur nach derselben Zählregel; `--ohne-karte` zählt
+wie ohne Schalter (`win_s == 0` nicht als Bewegung). Ergebnis an T1 in `docs/EXPERIMENTE.md`, „V6 Gesamtprüfung“.
 
 ### Live und Referenz
 
