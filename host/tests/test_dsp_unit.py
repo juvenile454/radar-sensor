@@ -1169,6 +1169,122 @@ class MotionMapTest(unittest.TestCase):
         self.assertEqual(run_cpp('printf("%d", (int)(kMaxBlocks <= 32U));', self.FLAGS), "1")
 
 
+class ReacqMemoryTest(unittest.TestCase):
+    """V6: Kurzzeit-Gedächtnis des Pulses (ReacqMemory): gilt 60 s, erlischt mit dem Echo oder wenn das Ziel die Zone verlässt."""
+    FLAGS = ("-DA121_DSP_REACQ",)
+
+    def run_mem(self, body: str) -> list[str]:
+        return run_cpp("ReacqMemory m;\n" + body, self.FLAGS).split()
+
+    def test_empty_is_inactive(self):
+        out = self.run_mem('printf("%d %g %g", (int)m.active(100U, true, true), m.hr(), m.ibi_ms());')
+        self.assertEqual(out, ["0", "0", "0"])
+
+    def test_store_and_active(self):
+        out = self.run_mem("""
+        m.store(72.0f, 833.0f, 1000U);
+        printf("%d %g %g", (int)m.active(1000U + 600U, true, true), m.hr(), m.ibi_ms());""")
+        self.assertEqual(out, ["1", "72", "833"])
+
+    def test_expires_after_60_s(self):
+        out = self.run_mem("""
+        const uint32_t t0 = 1000U;
+        m.store(72.0f, 833.0f, t0);
+        const int before = m.active(t0 + 60U * 60U - 1U, true, true);
+        const int at = m.active(t0 + 60U * 60U, true, true);
+        printf("%d %d %g %g", before, at, m.hr(), m.ibi_ms());""")
+        self.assertEqual(out, ["1", "0", "0", "0"])
+
+    def test_expiry_survives_frame_counter_wrap(self):
+        out = self.run_mem("""
+        const uint32_t t0 = 0xFFFFFF00U;
+        m.store(72.0f, 833.0f, t0);
+        const int before = m.active(t0 + 3599U, true, true);
+        const int at = m.active(t0 + 3600U, true, true);
+        printf("%d %d", before, at);""")
+        self.assertEqual(out, ["1", "0"])
+
+    def test_store_again_refreshes(self):
+        out = self.run_mem("""
+        m.store(72.0f, 833.0f, 0U);
+        m.store(80.0f, 750.0f, 3000U);
+        const int a = m.active(3000U + 3599U, true, true);
+        printf("%d %g %g", a, m.hr(), m.ibi_ms());""")
+        self.assertEqual(out, ["1", "80", "750"])
+
+    def test_cleared_when_echo_lost(self):
+        out = self.run_mem("""
+        m.store(72.0f, 833.0f, 0U);
+        const int lost = m.active(10U, false, true);
+        const int back = m.active(20U, true, true);
+        printf("%d %d %g", lost, back, m.hr());""")
+        self.assertEqual(out, ["0", "0", "0"])
+
+    def test_cleared_when_target_leaves(self):
+        out = self.run_mem("""
+        m.store(72.0f, 833.0f, 0U);
+        const int left = m.active(10U, true, false);
+        const int back = m.active(20U, true, true);
+        printf("%d %d %g", left, back, m.hr());""")
+        self.assertEqual(out, ["0", "0", "0"])
+
+    def test_clear(self):
+        out = self.run_mem("""
+        m.store(72.0f, 833.0f, 0U);
+        m.clear();
+        printf("%d %g %g", (int)m.active(1U, true, true), m.hr(), m.ibi_ms());""")
+        self.assertEqual(out, ["0", "0", "0"])
+
+    def test_constants(self):
+        out = run_cpp('printf("%g %g %g", kMemS, kMemBandBpm, kMemMinConf);', self.FLAGS).split()
+        self.assertEqual(out, ["60", "15", "50"])
+
+
+class PreferMemoryTest(unittest.TestCase):
+    """V6: preferMemoryCandidate wählt den stärksten FFT-Kandidaten nahe dem gemerkten Puls (±15 /min, ≥ 50 % des besten)."""
+    FLAGS = ("-DA121_DSP_REACQ",)
+
+    def pick(self, bpm: list[float], score: list[float], mem: float) -> int:
+        b = ", ".join(f"{float(v)!r}f" for v in bpm)
+        s = ", ".join(f"{float(v)!r}f" for v in score)
+        out = run_cpp(f"""
+        const float b[] = {{{b}}};
+        const float s[] = {{{s}}};
+        printf("%d", (int)preferMemoryCandidate(b, s, {len(bpm)}, {float(mem)!r}f));""", self.FLAGS)
+        return int(out)
+
+    def test_prefers_near_candidate(self):
+        self.assertEqual(self.pick([140, 74, 50], [1.0, 0.6, 0.3], 72), 1)
+
+    def test_no_preference_outside_band(self):
+        self.assertEqual(self.pick([90, 120], [1.0, 0.8], 72), -1)
+
+    def test_weak_near_candidate_ignored(self):
+        self.assertEqual(self.pick([140, 74], [1.0, 0.4], 72), -1)
+
+    def test_strongest_of_several_near(self):
+        self.assertEqual(self.pick([140, 80, 66], [1.0, 0.6, 0.7], 72), 2)
+
+    def test_best_candidate_itself_near(self):
+        self.assertEqual(self.pick([74, 140], [1.0, 0.9], 72), 0)
+
+    def test_band_edge_inclusive(self):
+        self.assertEqual(self.pick([140, 87], [1.0, 0.8], 72), 1)
+        self.assertEqual(self.pick([140, 57], [1.0, 0.8], 72), 1)
+        self.assertEqual(self.pick([140, 87.5], [1.0, 0.8], 72), -1)
+
+    def test_score_edge_inclusive(self):
+        self.assertEqual(self.pick([140, 74], [1.0, 0.5], 72), 1)
+        self.assertEqual(self.pick([140, 74], [1.0, 0.49], 72), -1)
+
+    def test_no_candidates_or_no_memory(self):
+        out = run_cpp("""
+        const float b[] = {74.0f}; const float s[] = {1.0f};
+        printf("%d %d %d", (int)preferMemoryCandidate(b, s, 0, 72.0f), (int)preferMemoryCandidate(b, s, 1, 0.0f),
+               (int)preferMemoryCandidate(b, s, 1, -5.0f));""", self.FLAGS)
+        self.assertEqual(out.split(), ["-1", "-1", "-1"])
+
+
 class TemplateIbiTest(unittest.TestCase):
     """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),
     Vorlage = Mittel der Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (wie V1.6 gefunden), Korrelationsfilter

@@ -281,6 +281,10 @@ static constexpr uint8_t kReacqMinS    = 6U;     /* kürzestes Fenster (s) nach 
 static constexpr uint8_t kMotionVotes  = 2U;     /* so viele der stärksten Punkte müssen einen Block bewegt melden */
 static constexpr uint8_t kMotionPoints = 3U;     /* so viele der stärksten Punkte stimmen ab */
 static_assert(kMaxBlocks <= 32U, "MotionMap::mask hat 32 Bit: höchstens 32 Blöcke");
+/* V6: Gedächtnis */
+static constexpr float    kMemS        = 60.0f;  /* der zuletzt gesicherte Puls gilt so lange (s); danach vergessen */
+static constexpr float    kMemBandBpm  = 15.0f;  /* Kandidat gilt als "nah am Gedächtnis" bei |bpm − gemerkt| ≤ 15 /min */
+static constexpr float    kMemMinConf  = 50.0f;  /* Puls wird nur ab dieser Konfidenz gemerkt (Speicherbedingung, Task 6) */
 
 /** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */
 struct MotionMap {
@@ -707,6 +711,35 @@ private:
     float   ring_[kBrRingLen] = {};
     uint8_t n_ = 0, idx_ = 0, apnea_cnt_ = 0, shallow_cnt_ = 0, no_echo_ = 0, state_ = kBrStateNormal;
 };
+
+#ifdef A121_DSP_REACQ
+/** V6: Kurzzeit-Gedächtnis des Pulses. Gemerkt werden Puls (/min) und Schlagabstand (ms) samt Frame-Zähler der letzten
+ *  gesicherten Messung. Es gilt kMemS Sekunden (Unterschied der uint32-Zähler, ein Überlauf schadet nicht) und
+ *  erlischt, sobald das Echo fehlt oder das Ziel die Zoomzone verlässt (dann ist es wohl eine andere Lage/Person). */
+class ReacqMemory {
+public:
+    void clear() { hr_ = ibi_ms_ = 0.0f; stored_frames_ = 0U; valid_ = false; }
+    void store(float hr_bpm, float ibi_ms, uint32_t tot_frames) {
+        hr_ = hr_bpm;
+        ibi_ms_ = ibi_ms;
+        stored_frames_ = tot_frames;
+        valid_ = true;
+    }
+    /** true, solange ein Wert gemerkt ist und gilt; ein abgelaufenes oder entwertetes Gedächtnis wird dabei gelöscht. */
+    bool active(uint32_t tot_frames, bool echo_ok, bool target_in_zoom) {
+        if (valid_ && (!echo_ok || !target_in_zoom || (uint32_t)(tot_frames - stored_frames_) >= kMemFrames)) clear();
+        return valid_;
+    }
+    float hr() const { return hr_; }
+    float ibi_ms() const { return ibi_ms_; }
+
+private:
+    static constexpr uint32_t kMemFrames = (uint32_t)(kMemS * kFsHz);
+    float    hr_ = 0.0f, ibi_ms_ = 0.0f;
+    uint32_t stored_frames_ = 0U;
+    bool     valid_ = false;
+};
+#endif
 
 /** Ergebnis der Einzelschläge (V1.6). */
 struct IbiResult {
@@ -1350,6 +1383,21 @@ struct ReportSnapshot {
 /** Report aus einem Schnappschuss, nach dem pushFrame() schon mehr als kSnapMaxLag Frames weiter war: Das Fenster ist
  *  teils überschrieben, der Report gilt nicht (ESP32 und Nachrechnung prüfen beim Ausgeben gleich). */
 inline bool snapshotStale(uint32_t snap_frame, uint32_t frame_now) { return frame_now - snap_frame > kSnapMaxLag; }
+
+#ifdef A121_DSP_REACQ
+/** V6: Index des stärksten FFT-Kandidaten, der nahe am gemerkten Puls liegt (|bpm − mem_hr| ≤ band) und mindestens
+ *  min_rel × den besten Wert hat (cand_score absteigend sortiert, [0] = bester); sonst −1 (auch ohne Kandidaten oder Gedächtnis). */
+inline int8_t preferMemoryCandidate(const float *cand_bpm, const float *cand_score, uint8_t n, float mem_hr,
+                                    float band = kMemBandBpm, float min_rel = 0.5f) {
+    if (n == 0U || mem_hr <= 0.0f) return -1;
+    int8_t best = -1;
+    for (uint8_t i = 0; i < n; i++) {
+        if (fabsf(cand_bpm[i] - mem_hr) > band || cand_score[i] < min_rel * cand_score[0]) continue;
+        if (best < 0 || cand_score[i] > cand_score[best]) best = (int8_t)i;
+    }
+    return best;
+}
+#endif
 
 class UltimateEspDsp {
 public:
