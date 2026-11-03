@@ -109,7 +109,7 @@ PWR-LED an, alle Leitungen High, I2C antwortet):
 ### Bring-up-Ablauf (Reihenfolge einhalten)
 
 Firmware: `firmware/esp32s3` (PlatformIO, `pio run`), Konsole über nativen USB-Port, Befehle `help`.
-Flashen: `pio run -t upload --upload-port <by-id-Port>`. Danach bleibt der S3 im Download-Modus
+Flashen: `pio run -t upload --upload-port <by-id-Port>` (Standard-Umgebung ohne Schalter; V6 nur mit `-e esp32s3-n16r8-reacq`). Danach bleibt der S3 im Download-Modus
 (PIO-esptool 4.5 kann am USB-JTAG nicht sauber neu starten) → `esptool --chip esp32s3 -p <Port>
 --after watchdog-reset read-mac` (esptool ≥ 4.8, `uv tool install esptool`) oder RST drücken.
 Erstes Flashen über der Händler-Demo ging nur per BOOT+RST von Hand (Demo nutzt keinen USB-JTAG-Modus).

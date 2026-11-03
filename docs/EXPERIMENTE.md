@@ -441,14 +441,14 @@ sinkt in den Bewegungsszenarien (am stärksten in `zappel`, 114 → 81); vermutl
 **T1** (`.venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus --replay firmware/esp32s3/src [--define A121_DSP_REACQ]`,
 31,7 min, Personenfilter wie oben, Zeit = Empfangszeit):
 
-| T1 | gültig | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | Sprünge > 15 /min |
+| T1 | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | Sprünge > 15 /min |
 |---|---|---|---|---|
 | ohne Schalter | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 13 |
 | mit `A121_DSP_REACQ` | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 9 |
 
 Das Ziel des Entwurfs (Median der Bewegungs-Ausfälle ≤ 15 s) ist mit 15,7 s knapp verfehlt; die Summe der Bewegungs-Ausfallzeit steigt
-(591 → 714 s) bei mehr Bewegungs-Ausfällen (22 statt 15; Ursache nicht untersucht). Der Gültig-Anteil sinkt; das liegt zum Teil daran, dass die
-bisherigen Werte zwischen 41, 58, 73 und 97 /min sprangen. Ob das ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen),
+(591 → 714 s) bei mehr Bewegungs-Ausfällen (22 statt 15; Ursache nicht untersucht). Der Gültig-Anteil sinkt; möglicherweise zum Teil, weil die
+bisherigen Werte zwischen 41, 58, 73 und 97 /min sprangen (nicht untersucht). Ob das ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen),
 lässt sich nur mit der Referenz entscheiden (Polar H9, erwartet ca. 2026-11-05). Keine Aussage über die Genauigkeit. Auf T1 ist das Echo nach
 einer Bewegung oft nicht sauber (`echo_ok` = 0); das begrenzt das Wiederfinden, weil das Gedächtnis an `echo_ok` hängt (Entwurf, Abschnitt 4).
 
