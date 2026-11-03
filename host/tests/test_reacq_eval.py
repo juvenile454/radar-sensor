@@ -62,6 +62,15 @@ class DropoutsTest(unittest.TestCase):
         d = re_.dropouts(*_args(ok), win_s=np.array([0, 6, 6, 6, 0], float))
         self.assertEqual(d[0].cause, "rest")
 
+    def test_rezoom_start_is_not_motion(self):
+        # win_s == 0 in den ersten 6 s nach Rezoom (snap_frame < 360) ist Anlaufzeit, keine Bewegung
+        ok = [1, 0, 0, 0, 1]
+        w = np.array([15, 0, 0, 6, 7], float)
+        d = re_.dropouts(*_args(ok), win_s=w, frames=np.array([900, 60, 300, 360, 420], float))
+        self.assertEqual(d[0].cause, "rest")
+        d = re_.dropouts(*_args(ok), win_s=w, frames=np.array([900, 960, 1020, 1080, 1140], float))
+        self.assertEqual(d[0].cause, "bewegung")
+
     def test_cause_no_breath_peak(self):
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], br=[0, 1, 1, 0, 0]))
         self.assertEqual(d[0].cause, "keine_atemspitze")

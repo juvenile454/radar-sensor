@@ -4,7 +4,8 @@
 
 Ein Ausfall ist eine Folge von @DSP-Reports mit ok == 0 nach einem gültigen Report. Folgen, in denen mehr als die Hälfte
 der Reports Zustand 0 (KEINE_PERSON) hat, zählen nicht. Ursache: "bewegung" (im Ausfall ein Report mit motion_pct > 30,
-Zustand 4 oder win_s == 0, d. h. ohne Pulsfenster wegen der Bewegungskarte; win_s gibt es nur mit A121_DSP_REACQ), sonst "keine_atemspitze" (br_state == 1 in der Mehrheit der Reports), sonst "rest".
+Zustand 4 oder win_s == 0 bei mindestens 6 s Daten seit Start/Rezoom (snap_frame ≥ 360), d. h. Puls
+von der Bewegungskarte abgeschaltet; win_s gibt es nur mit A121_DSP_REACQ), sonst "keine_atemspitze" (br_state == 1 in der Mehrheit der Reports), sonst "rest".
 
   .venv/bin/python host/reacq_eval.py <ordner>… [--replay <header-ordner>] [--define NAME[=WERT]]… [--keine-person-zaehlen]
 
@@ -40,6 +41,7 @@ STATE_NO_PERSON = 0     # @STATE KEINE_PERSON
 STATE_MOTION = 4        # @STATE BEWEGUNG
 BR_NO_PEAK = 1          # br_state: keine Atemspitze
 MOTION_PCT_THR = 30.0   # motion_pct darüber = Bewegung
+MIN_WIN_FRAMES = 360    # kHrMinWin: erst ab 6 s Daten seit Start/Rezoom gibt es ein Pulsfenster
 CAUSES = ("bewegung", "keine_atemspitze", "rest")
 
 
@@ -50,13 +52,18 @@ class Dropout:
     cause: str
 
 
-def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = False, win_s=None) -> list[Dropout]:
+def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = False, win_s=None,
+             frames=None) -> list[Dropout]:
     """Läufe von ok == 0 nach einem gültigen Report (siehe Modulkopf); keine_person_zaehlen: auch Läufe mit Zustand 0
     in der Mehrheit zählen. NaN in state/motion_pct/br_state/win_s erfüllt keine der Bedingungen; win_s None = Feld fehlt
-    (Ruling R10: win_s == 0 zählt als Bewegung)."""
+    (Ruling R10: win_s == 0 zählt als Bewegung). frames: Frames seit Start/Rezoom (@DSP snap_frame); win_s == 0 zählt
+    nur ab MIN_WIN_FRAMES, sonst ist es die Anlaufzeit nach einem Rezoom (kein Fenster), keine Bewegung. None = nicht
+    prüfen."""
     t_s, ok = np.asarray(t_s, float), np.asarray(ok, float) > 0
     motion_pct, br_state, state = (np.asarray(x, float) for x in (motion_pct, br_state, state))
     win_s = np.full(ok.size, np.nan) if win_s is None else np.asarray(win_s, float)
+    frames = np.full(ok.size, np.inf) if frames is None else np.asarray(frames, float)
+    karte_aus = (win_s == 0) & (frames >= MIN_WIN_FRAMES)  # Puls von der Bewegungskarte abgeschaltet
     out: list[Dropout] = []
     seen_valid = False
     i, n = 0, ok.size
@@ -74,7 +81,7 @@ def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = 
             if keine_person_zaehlen or np.sum(state[run] == STATE_NO_PERSON) * 2 <= size:
                 end = t_s[j] if j < n else t_s[-1]
                 if (np.any(motion_pct[run] > MOTION_PCT_THR) or np.any(state[run] == STATE_MOTION)
-                        or np.any(win_s[run] == 0)):
+                        or np.any(karte_aus[run])):
                     cause = "bewegung"
                 elif np.sum(br_state[run] == BR_NO_PEAK) * 2 > size:
                     cause = "keine_atemspitze"
@@ -119,7 +126,8 @@ def evaluate_folder(folder: pathlib.Path, header_dir: pathlib.Path | None,
         good = idx >= 0
         hr[idx[good]] = rec.vital["hr_fused"][good]
     ok = (d["ok"] > 0) & np.isfinite(hr)
-    drops = dropouts(t_s, ok, d["motion_pct"], d["br_state"], d["state"], keine_person_zaehlen, d["win_s"])
+    drops = dropouts(t_s, ok, d["motion_pct"], d["br_state"], d["state"], keine_person_zaehlen, d["win_s"],
+                     d["snap_frame"])
     return summary(t_s, ok, hr, d["state"], drops), drops
 
 
