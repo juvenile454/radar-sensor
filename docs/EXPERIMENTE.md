@@ -309,8 +309,8 @@ Zustand 0. Alle Zahlen: Firmware-Stand dieses Zweigs (a121_esp_dsp.h ohne `A121_
 | `2026-11-02_vital1_iq3raw_60s` (60 s) | 32,1 % | 4 / 1 | 17,2 s / 17,2 s | 1, 3,0 s / 3,0 s | 2, 7,2 s / 14,4 s | 1 |
 
 Ohne Personenfilter (`--keine-person-zaehlen`) hat T1 33 Ausfälle, davon **18 Bewegungs-Ausfälle, Median 39,0 s, Summe 1609 s**
-(Spec-Stand der Handanalyse: 18, ≈ 40 s, ≈ 1627 s; die 18 s Unterschied sind genau 1 s je Ausfall, wenn man die Dauer ab dem
-letzten gültigen statt ab dem ersten ungültigen Report zählt). Der Personenfilter nimmt drei Bewegungs-Ausfälle heraus (Zustand KEINE_PERSON in der
+(Spec-Stand der Handanalyse: 18, ≈ 40 s, ≈ 1627 s; die 18 s Unterschied passen vermutlich zu 1 s je Ausfall, falls die Handanalyse die Dauer ab dem
+letzten gültigen statt ab dem ersten ungültigen Report gezählt hat; nicht nachgeprüft). Der Personenfilter nimmt drei Bewegungs-Ausfälle heraus (Zustand KEINE_PERSON in der
 Mehrheit: einen von 829 s und zwei kürzere, zusammen 1018 s); übrig bleiben 15. Die
 neu gerechnete DSP hält T1 nur zu 11 % der Reports für gültig (211 von 1899); die Aufnahme-Firmware vom 2026-11-01 hatte 1632 gültige
 (`ok` im Original-Log), deshalb ist die Basislinie ausdrücklich die des aktuellen Header-Stands. Eine Pulsreferenz gibt es in

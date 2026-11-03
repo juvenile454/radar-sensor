@@ -98,7 +98,7 @@ def header_with_defines(src_dir: pathlib.Path, defines: list[str], dest_dir: pat
     """Kopie von a121_esp_dsp.h aus src_dir mit vorangestellten #define-Zeilen nach dest_dir; Rückgabe dest_dir.
     "NAME" → `#define NAME`, "NAME=WERT" → `#define NAME WERT`."""
     head = "".join(f"#define {d.replace('=', ' ', 1)}\n" for d in defines)
-    (dest_dir / HEADER_NAME).write_text(head + (src_dir / HEADER_NAME).read_text())
+    (dest_dir / HEADER_NAME).write_text(head + (src_dir / HEADER_NAME).read_text(encoding="utf-8"), encoding="utf-8")
     return dest_dir
 
 
