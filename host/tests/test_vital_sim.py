@@ -451,6 +451,71 @@ class ReacqBenchTest(unittest.TestCase):
             fclose(f);""", ("-DA121_DSP_REACQ",))
         self.assertEqual(out.split(), ["1", "1", "1", "1", "1", "0", "0", "0"])
 
+    def run_scenario(self, name: str, per_report: str, T: float | None = None) -> list[list[str]]:
+        """Szenario-Frames (fester Seed wie im Prüfstand) durch UltimateEspDsp mit A121_DSP_REACQ, je 60 Frames ein
+        Report; per_report: C++ nach dem Report (r = Report, before/after = trackState, m0/m1 = Gedächtnis vorher/
+        nachher), druckt eine Zeile je Report."""
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        from test_dsp_unit import run_cpp
+        kw = dict(vital_sim.SCENARIOS[name][1])
+        if T is not None:
+            kw["T"] = T
+        with tempfile.TemporaryDirectory() as d:
+            base = pathlib.Path(d) / name
+            vital_sim.make_frames(base, seed=list(vital_sim.SCENARIOS).index(name) + 1, **kw)
+            out = run_cpp(f"""
+            FILE *f = fopen("{base}.iq", "rb");
+            if (!f) return 2;
+            static UltimateEspDsp dsp;
+            dsp.begin(244, 120, kRoomStep);
+            static Complex16 pts[kTotal3SubPts];
+            float um;
+            VitalReport r = {{}};
+            uint32_t n = 0;
+            while (fread(pts, sizeof(pts[0]), kTotal3SubPts, f) == kTotal3SubPts) {{
+                dsp.pushFrame(pts, kTotal3SubPts, 20, 0.0f, um);
+                if (++n % 60) continue;
+                const UltimateEspDsp::TrackState before = dsp.trackState();
+                const ReacqMemory m0 = dsp.reacqMemory();
+                dsp.computeVitalReport(r);
+                const UltimateEspDsp::TrackState after = dsp.trackState();
+                const ReacqMemory m1 = dsp.reacqMemory();
+                (void)before; (void)after; (void)m0; (void)m1;
+                {per_report}
+            }}
+            fclose(f);""", ("-DA121_DSP_REACQ",))
+        return [ln.split() for ln in out.splitlines()]
+
+    def test_pulse_off_freezes_tracking(self):
+        # kurz: Bewegung 60–63 s; Reports mit zu kurzem ruhigem Endstück (win_s 0) lassen die Verfolgung unverändert
+        rows = self.run_scenario("kurz", """
+            if (r.frame_count >= kHrMinWin && r.win_s == 0) {
+                const bool same = before.hr_prev == after.hr_prev && before.hr_miss == after.hr_miss &&
+                                  before.alt_count == after.alt_count && before.hr_hist_n == after.hr_hist_n &&
+                                  memcmp(before.hr_hist, after.hr_hist, sizeof(before.hr_hist)) == 0;
+                printf("%u %d %d %.1f\\n", n / 60, (int)r.valid, (int)same, after.hr_prev);
+            }""", T=80.0)
+        self.assertGreaterEqual(len(rows), 2, rows)          # die Bewegung erzeugt Reports ohne Pulsfenster
+        for t, valid, same, hr_prev in rows:
+            self.assertEqual((valid, same), ("0", "1"), rows)
+            self.assertGreater(float(hr_prev), 60.0, rows)    # der Wert vor der Bewegung bleibt stehen (Puls 72)
+
+    def test_memory_stored_only_when_safe(self):
+        # tippen: Start mit 6/7-s-Fenster und gültige Reports mit Konfidenz < 50; gemerkt wird nur ab 8 s und 50 %
+        rows = self.run_scenario("tippen", """
+            const bool stored = m1.stored() && (!m0.stored() || m1.storedAt() != m0.storedAt());
+            printf("%u %d %u %.1f %d\\n", n / 60, (int)r.valid, (unsigned)r.win_s, r.confidence_pct, (int)stored);""",
+                                 T=120.0)
+        stores = [r for r in rows if r[4] == "1"]
+        self.assertTrue(stores, rows)
+        for t, valid, win, conf, _ in stores:
+            self.assertEqual(valid, "1")
+            self.assertGreaterEqual(int(win), 8)
+            self.assertGreaterEqual(float(conf), 50.0)
+        # beide Ausschlussfälle kommen vor (sonst prüfte der Test nichts)
+        self.assertTrue(any(v == "1" and int(w) < 8 and s == "0" for _, v, w, _c, s in rows), rows)
+        self.assertTrue(any(v == "1" and int(w) >= 8 and float(c) < 50.0 and s == "0" for _, v, w, c, s in rows), rows)
+
 
 class ReacqLimitsTest(unittest.TestCase):
     """V6: LIMITS_REACQ gilt nur mit dem Schalter A121_DSP_REACQ; die neuen Szenarien haben Grenzen ohne Schalter."""

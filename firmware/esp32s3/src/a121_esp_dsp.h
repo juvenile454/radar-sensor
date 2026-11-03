@@ -743,6 +743,7 @@ public:
     float hr() const { return hr_; }
     float ibi_ms() const { return ibi_ms_; }
     bool stored() const { return valid_; }  /* gemerkt, ohne Ablauf und Bedingungen zu prüfen (Tests) */
+    uint32_t storedAt() const { return stored_frames_; }  /* Frame-Zähler beim letzten store() (Tests) */
 
 private:
     static constexpr uint32_t kMemFrames = (uint32_t)(kMemS * kFsHz);
@@ -1526,6 +1527,18 @@ public:
 #ifdef A121_DSP_REACQ
     /** V6: Ist ein Puls gemerkt (ohne Ablauf und Bedingungen zu prüfen; die prüft der nächste Report)? Für Tests. */
     bool reacqMemoryActive() const { return mem_.stored(); }
+    const ReacqMemory &reacqMemory() const { return mem_; }
+    /** V6, für Tests: Verfolgungszustand (hr_prev_, hr_miss_, alt_count_, hr_hist_), der in Fall 4 unverändert bleibt. */
+    struct TrackState {
+        float   hr_prev;
+        uint8_t hr_miss, alt_count, hr_hist_n;
+        float   hr_hist[5];
+    };
+    TrackState trackState() const {
+        TrackState t = {hr_prev_, hr_miss_, alt_count_, hr_hist_n_, {}};
+        memcpy(t.hr_hist, hr_hist_, sizeof(t.hr_hist));
+        return t;
+    }
 #endif
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
@@ -1980,6 +1993,10 @@ public:
             rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
             rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
         }
+#ifdef A121_DSP_REACQ
+        /* V6: Ohne Pulsteil (pulse_off) ist best_x_ vom Vorreport; ohne Echo also kein Atemhub */
+        if (pulse_off && !echo_ok) rep.resp_depth_um = 0.0f;
+#endif
         const bool breath_ok = echo_ok && br_q >= br_min_q && rep.resp_depth_um >= kBreathMinUm;
 #ifdef A121_DSP_REACQ
         /* V6: Gedächtnis prüft jeden Report (abgelaufen, kein sauberes Echo oder Ziel nicht im Zoom-Fenster: gelöscht) */
@@ -2218,23 +2235,28 @@ public:
         const IbiResult ibi = timeDomainIbi(best_h_, Np, kFsHz, hr_prev_);
 #endif
         const float ibi_bpm = ibi.bpm;
+        const float acf_res = (acf_peak > 0.0f) ? acf_bpm : 0.0f;  /* 0 = kein AKF-Ergebnis */
+        /* Bestätigung eines kurzen Fensters (V2.4 vorläufig, V3.1; V6 Endstück): Autokorrelation oder Einzelschläge
+         * innerhalb ±5 /min des Kandidaten (f_hz) und nicht auf einer niedrigen Atem-Oberwelle (m ≤ 3): Die sehen AKF und
+         * Einzelschläge desselben Signals genauso, die Bestätigung zählt dort nicht (Prüfstand base mit
+         * A121_DSP_COMBINE: 46 statt 71 /min). */
+        auto confirmedHz = [&](float f_hz) {
+            const float bpm   = f_hz * 60.0f;
+            const bool acf_ok = acf_res > 0.0f && fabsf(acf_res - bpm) <= 5.0f;
+            const bool ibi_ok = ibi_bpm > 0.0f && fabsf(ibi_bpm - bpm) <= 5.0f;
+            const uint8_t m   = harmOrder(f_hz);
+            return (acf_ok || ibi_ok) && !(m != 0 && m <= kHarmLowMax);
+        };
 #ifdef A121_DSP_REACQ
-        /* V6: Bestätigung im Endstück wie vorläufig (V2.4/V3.1): Autokorrelation oder Einzelschläge ±5 /min und nicht auf
-         * einer niedrigen Atem-Oberwelle (m ≤ 3). Ein Gedächtnis-Kandidat ohne Bestätigung fällt auf die normale Suche
-         * (stärkster Kandidat) zurück; AKF und Einzelschläge bleiben dafür dieselben (Abstand ≤ kMemBandBpm). */
+        /* V6: Ein Gedächtnis-Kandidat ohne Bestätigung fällt auf die normale Suche (stärkster Kandidat) zurück; AKF und
+         * Einzelschläge bleiben dafür dieselben (Abstand ≤ kMemBandBpm). */
         bool short_ok = false;
         if (short_win) {
-            auto confirmedAt = [&](float bpm) {
-                const bool acf_ok = acf_peak > 0.0f && fabsf(acf_bpm - bpm) <= 5.0f;
-                const bool ibi_ok = ibi_bpm > 0.0f && fabsf(ibi_bpm - bpm) <= 5.0f;
-                const uint8_t m = harmOrder(bpm / 60.0f);
-                return (acf_ok || ibi_ok) && !(m != 0 && m <= kHarmLowMax);
-            };
-            if (mem_j > 0 && !confirmedAt(hr_prev_)) {
+            if (mem_j > 0 && !confirmedHz(cf[mem_j])) {
                 mem_j    = -1;
                 hr_prev_ = cf[0] * 60.0f;
             }
-            short_ok = confirmedAt(hr_prev_);
+            short_ok = confirmedHz(cf[mem_j >= 0 ? mem_j : 0]);
             if (mem_j >= 0 && short_ok) rep.reacq = kReacqMemory;
         }
 #endif
@@ -2256,7 +2278,7 @@ public:
         qi.peak_db         = 10.0f * log10f(sAtBpm(hr_prev_) / comb_med);
         qi.on_harmonic     = isHarmHz(hr_prev_ / 60.0f);
         qi.hr_spec         = rep.hr_spec_bpm;
-        qi.hr_acf          = (acf_peak > 0.0f) ? acf_bpm : 0.0f;  /* ohne Ergebnis keine Zustimmung (in @VITAL steht */
+        qi.hr_acf          = acf_res;                             /* ohne Ergebnis keine Zustimmung (in @VITAL steht */
         qi.hr_ibi          = ibi_bpm;                             /* dann wie bisher der verfolgte Wert)            */
         qi.hr_fused        = hr_prev_;
         qi.hr_fused_5s_ago = (hr_hist_n_ >= 5) ? hr_hist_[(hr_hist_n_ - 5) % 5] : 0.0f;
@@ -2284,7 +2306,10 @@ public:
 #ifdef A121_DSP_REACQ
         /* V6: Statt der 30-%-Regel gilt die Fensterwahl (bewegt mit zu kurzem Endstück ist oben schon ungültig); als
          * Lebenszeichen zählt auch der über das Gedächtnis wiedergefundene Puls (Atemspitze nach Unruhe oft verschmiert).
-         * Endstück: nur bestätigt; dann wird der Wert verfolgt, sonst bleibt die Verfolgung wie vor dem Report. */
+         * Endstück: nur bestätigt; dann wird der Wert verfolgt, sonst bleibt die Verfolgung wie vor dem Report.
+         * Bewusste Abweichung von V2.4: Ein Endstück-Report im Start (short_win zusammen mit prov) schreibt den bestätigten
+         * Wert fest (hr_prev_ bleibt), statt ihn wie vorläufig zu verwerfen (Spec Punkt 3: hr_prev_ aus einem bestätigten
+         * Wert); der prov-Zweig unten gilt dann nicht. */
         rep.valid = breath_ok || held_pulse || rep.reacq == kReacqMemory;
         if (short_win) {
             rep.valid = rep.valid && short_ok;
@@ -2301,15 +2326,8 @@ public:
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
         const bool prov_check = prov;
 #endif
-        /* vorläufig nur, wenn Autokorrelation oder Einzelschläge den Spektralwert bestätigen (±5 /min) */
-        if (prov_check) {
-            const bool acf_ok = qi.hr_acf > 0.0f && fabsf(qi.hr_acf - raw_bpm) <= 5.0f;
-            const bool ibi_ok = qi.hr_ibi > 0.0f && fabsf(qi.hr_ibi - raw_bpm) <= 5.0f;
-            /* … und nicht auf einer niedrigen Atem-Oberwelle (m ≤ 3): Die sehen AKF und Einzelschläge desselben Signals
-             * genauso, die Bestätigung zählt dort nicht (Prüfstand base mit A121_DSP_COMBINE: 46 statt 71 /min) */
-            const uint8_t m_raw = harmOrder(cf[0]);
-            const bool low_harm = m_raw != 0 && m_raw <= kHarmLowMax;
-            rep.valid = rep.valid && (acf_ok || ibi_ok) && !low_harm;
+        if (prov_check) {  /* vorläufig nur mit Bestätigung des Spektralwerts (confirmedHz) */
+            rep.valid = rep.valid && confirmedHz(cf[0]);
             hr_prev_  = 0.0f;
         }
         if (rep.valid) {

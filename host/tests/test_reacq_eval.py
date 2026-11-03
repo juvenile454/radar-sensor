@@ -46,6 +46,22 @@ class DropoutsTest(unittest.TestCase):
         d = re_.dropouts(*_args([1, 0, 0, 1, 1], motion=[90, 0, 0, 90, 0]))
         self.assertEqual(d[0].cause, "rest")
 
+    def test_cause_motion_from_win_s_zero(self):
+        # Ruling R10 (V6): ein Report ohne Pulsfenster (win_s == 0, Bewegungskarte) macht den Ausfall zur Bewegung;
+        # fehlendes Feld (NaN, Aufnahme ohne A121_DSP_REACQ) und win_s > 0 nicht
+        ok = [1, 0, 0, 0, 1]
+        d = re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=np.array([15, 0, 6, 7, 15], float))
+        self.assertEqual(d[0].cause, "bewegung")
+        d = re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=np.array([15, 6, 7, 8, 9], float))
+        self.assertEqual(d[0].cause, "keine_atemspitze")
+        d = re_.dropouts(*_args(ok), win_s=np.full(5, NAN))
+        self.assertEqual(d[0].cause, "rest")
+        d = re_.dropouts(*_args(ok, motion=[0, 0, 0, 0, 0]))   # ohne win_s wie bisher
+        self.assertEqual(d[0].cause, "rest")
+        # win_s == 0 nur außerhalb des Ausfalls zählt nicht
+        d = re_.dropouts(*_args(ok), win_s=np.array([0, 6, 6, 6, 0], float))
+        self.assertEqual(d[0].cause, "rest")
+
     def test_cause_no_breath_peak(self):
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], br=[0, 1, 1, 0, 0]))
         self.assertEqual(d[0].cause, "keine_atemspitze")
