@@ -71,6 +71,19 @@ class DropoutsTest(unittest.TestCase):
         d = re_.dropouts(*_args(ok), win_s=w, frames=np.array([900, 960, 1020, 1080, 1140], float))
         self.assertEqual(d[0].cause, "bewegung")
 
+    def test_ohne_karte_ignores_win_s(self):
+        # Ruling R16 (--ohne-karte): Basisregel wie ohne Schalter, win_s == 0 macht keinen Bewegungs-Ausfall;
+        # motion_pct > 30 und Zustand 4 zählen weiter
+        ok = [1, 0, 0, 0, 1]
+        w = np.array([15, 0, 0, 6, 7], float)
+        d = re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=w, ohne_karte=True)
+        self.assertEqual(d[0].cause, "keine_atemspitze")
+        self.assertEqual(re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=w)[0].cause, "bewegung")
+        d = re_.dropouts(*_args(ok, motion=[0, 0, 45, 0, 0]), win_s=w, ohne_karte=True)
+        self.assertEqual(d[0].cause, "bewegung")
+        d = re_.dropouts(*_args(ok, state=[2, 2, 4, 2, 2]), win_s=w, ohne_karte=True)
+        self.assertEqual(d[0].cause, "bewegung")
+
     def test_cause_no_breath_peak(self):
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], br=[0, 1, 1, 0, 0]))
         self.assertEqual(d[0].cause, "keine_atemspitze")
@@ -121,6 +134,7 @@ class SummaryTest(unittest.TestCase):
         self.assertTrue(math.isnan(s["ursachen"]["keine_atemspitze"]["median_s"]))
         self.assertEqual(s["ursachen"]["keine_atemspitze"]["summe_s"], 0.0)
         self.assertEqual(s["spruenge"], 2)  # 71 → 90 und 91 → 60
+        self.assertEqual(s["summe_s"], 44.0)  # Ausfallzeit über alle Ursachen
 
 
 class DefineHeaderTest(unittest.TestCase):

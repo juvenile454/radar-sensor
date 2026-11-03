@@ -53,7 +53,8 @@
  *      Wert. Endstück kürzer: kein Puls, Verfolgung (hr_prev_, hr_miss_, alt_count_, Viterbi, hr_hist_) unverändert.
  *      Gedächtnis (ReacqMemory): sicherer Wert (Konfidenz ≥ 50 %, Fenster ≥ 8 s) gilt 60 s, solange Echo und Ziel im
  *      Zoom bleiben; im Endstück wird zuerst der stärkste Kandidat ±15 /min um ihn gewählt (preferMemoryCandidate),
- *      bestätigt zählt er als Lebenszeichen (reacq = 2). Die 30-%-Bewegungsregel entfällt. @DSP: win_s, reacq.
+ *      bestätigt ist er wiedergefunden (reacq = 2) und ersetzt die Atemspitze als Lebenszeichen, wenn er höchstens
+ *      kMemSubstBpm (5 /min) vom gemerkten Wert liegt (Ruling R15). Die 30-%-Bewegungsregel entfällt. @DSP: win_s, reacq.
  *      Variante A121_DSP_REACQ_PERIOD (nur mit A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
  *      ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s, 15 Hz, Hann, Herzband) nicht periodisch ist
  *      (Spitze < 5 × Mittel der Bins außerhalb der Hauptkeule; segmentPeriodic). Bench (Simulation): hält die Grenzen
@@ -311,6 +312,11 @@ static_assert(kMaxBlocks <= 32U, "MotionMap::mask hat 32 Bit: höchstens 32 Blö
 static constexpr float    kMemS        = 60.0f;  /* der zuletzt gesicherte Puls gilt so lange (s); danach vergessen */
 static constexpr float    kMemBandBpm  = 15.0f;  /* Kandidat gilt als "nah am Gedächtnis" bei |bpm − gemerkt| ≤ 15 /min */
 static constexpr float    kMemMinConf  = 50.0f;  /* Puls wird nur ab dieser Konfidenz gemerkt (Speicherbedingung, Task 6) */
+/* Ruling R15: Ein über das Gedächtnis wiedergefundener Wert (reacq = 2) ersetzt die Atemspitze als Lebenszeichen nur,
+ * wenn er höchstens so weit vom gemerkten Puls liegt. Gleiche Toleranz wie die Bestätigung durch AKF/Einzelschläge
+ * (±5 /min), enger als die Fehlergrenze des Prüfstands (10 /min): Im Band ±kMemBandBpm lag im Prüfstand lang ein
+ * Bewegungsartefakt (84,7 statt 72,5 /min), das AKF und Einzelschläge auf denselben bewegten Daten bestätigten. */
+static constexpr float    kMemSubstBpm = 5.0f;
 
 /** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */
 struct MotionMap {
@@ -888,7 +894,8 @@ public:
         return valid_;
     }
     float hr() const { return hr_; }
-    float ibi_ms() const { return ibi_ms_; }
+    float ibi_ms() const { return ibi_ms_; }  /* vorgehalten (Spec 4: mem_ibi_ms_), von der DSP noch nicht gelesen; für
+                                                 eine spätere Prüfung der Schlagabstand-Kontinuität (Tests lesen ihn) */
     bool stored() const { return valid_; }  /* gemerkt, ohne Ablauf und Bedingungen zu prüfen (Tests) */
     uint32_t storedAt() const { return stored_frames_; }  /* Frame-Zähler beim letzten store() (Tests) */
 
@@ -1556,6 +1563,12 @@ inline int8_t preferMemoryCandidate(const float *cand_bpm, const float *cand_sco
         if (best < 0 || cand_score[i] > cand_score[best]) best = (int8_t)i;
     }
     return best;
+}
+
+/** V6 (Ruling R15): true, wenn ein gemeldeter Puls hr_bpm die Atemspitze als Lebenszeichen ersetzen darf, d. h. ein
+ *  Gedächtnis gilt (mem_hr > 0) und |hr_bpm − mem_hr| ≤ tol (kMemSubstBpm). NaN erfüllt die Bedingung nicht. */
+inline bool memSubstitutesBreath(float hr_bpm, float mem_hr, float tol = kMemSubstBpm) {
+    return mem_hr > 0.0f && fabsf(hr_bpm - mem_hr) <= tol;
 }
 #endif
 
@@ -2294,7 +2307,11 @@ public:
 #ifdef A121_DSP_REACQ
         /* V6: Endstück nach Bewegung wie vorläufig: Die Verfolgung wird nicht fortgeschrieben (auch Viterbi nicht).
          * Gemeldet wird der stärkste Kandidat, bei aktivem Gedächtnis zuerst der stärkste nahe am gemerkten Puls
-         * (preferMemoryCandidate); hr_prev_ bleibt nur, wenn der Wert unten bestätigt wird, sonst gilt wieder hr_keep. */
+         * (preferMemoryCandidate); hr_prev_ bleibt nur, wenn der Wert unten bestätigt wird, sonst gilt wieder hr_keep.
+         * Offen (Final-Review): Mit A121_DSP_VITERBI (auch über A121_DSP_HEAVY) zusammen mit A121_DSP_REACQ bleibt vit_
+         * hier eingefroren; nach einem bestätigten Endstück kann der nächste volle Report den alten Viterbi-Pfad wählen und
+         * hr_prev_ auf den Wert vor der Bewegung zurückziehen. Keine ausgelieferte Build-Umgebung kombiniert das heute;
+         * vor einer solchen Kombination lösen (z. B. vit_ nach bestätigtem Endstück zurücksetzen) und am Prüfstand prüfen. */
         const float hr_keep = hr_prev_;
         int8_t mem_j = -1;
         if (short_win) {
@@ -2464,8 +2481,12 @@ public:
          * Endstück: nur bestätigt; dann wird der Wert verfolgt, sonst bleibt die Verfolgung wie vor dem Report.
          * Bewusste Abweichung von V2.4: Ein Endstück-Report im Start (short_win zusammen mit prov) schreibt den bestätigten
          * Wert fest (hr_prev_ bleibt), statt ihn wie vorläufig zu verwerfen (Spec Punkt 3: hr_prev_ aus einem bestätigten
-         * Wert); der prov-Zweig unten gilt dann nicht. */
-        rep.valid = breath_ok || held_pulse || rep.reacq == kReacqMemory;
+         * Wert); der prov-Zweig unten gilt dann nicht.
+         * Ruling R15: Der Gedächtnis-Wert ersetzt die Atemspitze nur, wenn er höchstens kMemSubstBpm (5 /min) vom
+         * gemerkten Puls liegt (memSubstitutesBreath); weiter weg (Band ±kMemBandBpm) braucht er breath_ok wie jeder
+         * andere Report. mem_ ist hier unverändert seit mem_on (reacq = 2 nur mit aktivem Gedächtnis). */
+        const bool mem_ok = rep.reacq == kReacqMemory && memSubstitutesBreath(rep.hr_fused_bpm, mem_.hr());
+        rep.valid = breath_ok || held_pulse || mem_ok;
         if (short_win) {
             rep.valid = rep.valid && short_ok;
             if (rep.valid) {

@@ -26,6 +26,7 @@ Die erzeugten Frames (je Szenario ≈ 3 MB) landen in einem temporären Ordner o
 from __future__ import annotations
 
 import argparse
+import inspect
 import pathlib
 import warnings
 import subprocess
@@ -344,16 +345,20 @@ for _scen in LIMITS:
 
 # V6: Ziele für „Puls nach Bewegung wiederfinden" (Plan 2026-11-02), nur angewendet, wenn der Schalter A121_DSP_REACQ
 # gesetzt ist (--define A121_DSP_REACQ). Ohne die DSP-Änderung verletzt der heutige Header sie, das ist erwartet.
+# Ruling R15: falsch_in_beweg_n (Fehlwerte > 10 /min mitten in der Bewegung) ≤ 0 überall; ohne Schalter nur berichtet.
+# beweg_hr: erster gültiger Wert nach der Bewegung höchstens 5 /min neben dem wahren Puls (85, nicht 70; Spec).
 LIMITS_REACQ = {
     "kurz":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
     "zappel":    [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
     "lang":      [("wiederfind_s", "<=", 10.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
     "lage":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
-    "beweg_hr":  [("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
+    "beweg_hr":  [("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0), ("erst_nach_beweg_fehler", "<=", 5.0)],
     "beweg_weg": [("falsch_nach_beweg_n", "<=", 0), ("weg_gueltig_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
     "tippen":    [("falsch_nach_beweg_n", "<=", 0), ("abschnitt_gueltig_pct", ">=", 80.0), ("abschnitt_mae", "<=", 2.0),
                   ("nie_gefunden_n", "<=", 0)],
 }
+for _scen in LIMITS_REACQ:
+    LIMITS_REACQ[_scen].append(("falsch_in_beweg_n", "<=", 0))
 
 
 def active_limits() -> dict:
@@ -600,21 +605,35 @@ def reacq_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, episodes:
     """Wiederfinden nach Bewegung (V6). wiederfind_s: Median über die Episoden der Zeit vom Episodenende bis zum ersten
     gültigen Report mit Fehler ≤ 5 /min; nur Episoden, die wiedergefunden wurden, zählen, NaN wenn keine. nie_gefunden_n:
     Zahl der Episoden ohne einen solchen Report bis Szenarioende (der Median allein würde sie verdecken).
-    falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s]; überlappende Zeitfenster mehrerer
-    Episoden werden nicht doppelt gezählt."""
+    falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s]; falsch_in_beweg_n: dasselbe in
+    (Beginn, Ende] (Ruling R15: Fehlwerte mitten in der Bewegung, z. B. ein Endstück, das die Bewegungskarte nicht als
+    bewegt sieht); überlappende Zeitfenster mehrerer Episoden werden nicht doppelt gezählt."""
     e = np.nan_to_num(err, nan=0.0)
     ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
     bad = valid & (e > 10.0)
-    found, never, in_win = [], 0, np.zeros(len(t_s), bool)
-    for _a, b in episodes:
+    found, never = [], 0
+    in_win, in_mot = np.zeros(len(t_s), bool), np.zeros(len(t_s), bool)
+    for a, b in episodes:
         after = ok & (t_s > b)
         if after.any():
             found.append(float(t_s[after][0] - b))
         else:
             never += 1
         in_win |= (t_s > b) & (t_s <= b + 30.0)
+        in_mot |= (t_s > a) & (t_s <= b)
     return {"wiederfind_s": float(np.median(found)) if found else np.nan, "nie_gefunden_n": never,
-            "falsch_nach_beweg_n": int(np.sum(bad & in_win))}
+            "falsch_nach_beweg_n": int(np.sum(bad & in_win)), "falsch_in_beweg_n": int(np.sum(bad & in_mot))}
+
+
+def first_after_error(t_s: np.ndarray, valid: np.ndarray, hr: np.ndarray, t_end: float, hr_fn) -> float:
+    """|erster gültiger Wert nach t_end − wahrer Puls hr_fn(t) zu seiner Zeit| (V6, beweg_hr: Spec „erster gültiger
+    Wert nach der Bewegung innerhalb ±5 /min von 85“; Bezug ist der Momentanpuls des Modells, nicht das 15-s-Mittel,
+    in dem die Rampe 70 → 85 noch steckt). NaN, wenn danach kein gültiger Report kommt."""
+    after = valid & (t_s > t_end)
+    if not after.any():
+        return np.nan
+    i = int(np.flatnonzero(after)[0])
+    return float(abs(hr[i] - hr_fn(t_s[i])))
 
 
 def section_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, a: float, b: float) -> dict:
@@ -708,6 +727,8 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     res["episoden"] = eps
     if eps:  # V6: Wiederfinden nach Bewegung; Abschnitt der Stöße (tippen)
         res.update(reacq_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), eps))
+        hr_fn = kw.get("hr_fn", inspect.signature(make_frames).parameters["hr_fn"].default)
+        res["erst_nach_beweg_fehler"] = first_after_error(d["t_s"], v, d["hr"], max(b for _a, b in eps), hr_fn)
     if kw.get("jolts"):
         res.update(section_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), kw["jolts"][0], kw["jolts"][1]))
     if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
@@ -777,7 +798,8 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
                     extra += (f"Zustand BEWEGUNG in {r['zustand_beweg_n']} Reports ({r['episoden'][0][0]:.0f}–"
                               f"{max(b for _a, b in r['episoden']) + 15:.0f} s), außerhalb {r['zustand_beweg_fehl']}"
                               f"; wiederfind {r['wiederfind_s']:.0f} s (nie {r['nie_gefunden_n']}), falsch danach "
-                              f"{r['falsch_nach_beweg_n']}")
+                              f"{r['falsch_nach_beweg_n']}, falsch in der Bewegung {r['falsch_in_beweg_n']}"
+                              f", erster Wert danach {r['erst_nach_beweg_fehler']:.1f} daneben")
                     if "abschnitt_gueltig_pct" in r:
                         extra += f", Abschnitt gültig {r['abschnitt_gueltig_pct']:.0f} % MAE {r['abschnitt_mae']:.1f}"
                 elif r["zustand_beweg_fehl"]:

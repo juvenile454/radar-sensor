@@ -1414,6 +1414,32 @@ class PreferMemoryTest(unittest.TestCase):
         self.assertEqual(out.split(), ["-1", "-1", "-1", "-1"])
 
 
+class MemSubstituteTest(unittest.TestCase):
+    """V6 (Ruling R15): Ein Gedächtnis-Wert ersetzt die Atemspitze nur bis kMemSubstBpm = 5 /min vom gemerkten Puls; das
+    Kandidatenband kMemBandBpm (15 /min) bleibt breiter (Prüfstand lang: 84,7 gegen gemerkt ≈ 73 war sonst gültig)."""
+    FLAGS = ("-DA121_DSP_REACQ",)
+
+    def test_rule(self):
+        out = run_cpp("""
+        const float hr[] = {72.0f, 77.0f, 67.0f, 77.1f, 66.9f, 84.7f, NAN, 72.0f, 72.0f};
+        const float mem[] = {72.0f, 72.0f, 72.0f, 72.0f, 72.0f, 72.8f, 72.0f, 0.0f, NAN};
+        for (int i = 0; i < 9; i++) printf("%d ", (int)memSubstitutesBreath(hr[i], mem[i]));
+        printf("%g", kMemSubstBpm);""", self.FLAGS).split()
+        self.assertEqual(out, ["1", "1", "1", "0", "0", "0", "0", "0", "0", "5"])
+
+    def test_narrower_than_candidate_band(self):
+        # 84,7 liegt im Kandidatenband um 72,8 (bevorzugt), ersetzt die Atmung aber nicht
+        out = run_cpp("""
+        const float b[] = {84.7f, 120.0f}; const float s[] = {1.0f, 0.9f};
+        printf("%d %d", (int)preferMemoryCandidate(b, s, 2, 72.8f), (int)memSubstitutesBreath(b[0], 72.8f));""",
+                      self.FLAGS).split()
+        self.assertEqual(out, ["0", "0"])
+
+    def test_without_switch_not_available(self):
+        with self.assertRaises(AssertionError):
+            run_cpp("printf(\"%d\", (int)memSubstitutesBreath(72.0f, 72.0f));")
+
+
 class TemplateIbiTest(unittest.TestCase):
     """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),
     Vorlage = Mittel der Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (wie V1.6 gefunden), Korrelationsfilter

@@ -311,6 +311,27 @@ class ReacqMetricsTest(unittest.TestCase):
         self.assertEqual(m["nie_gefunden_n"], 0)
         self.assertEqual(m["falsch_nach_beweg_n"], 4 + 7)
 
+    def test_wrong_inside_episode(self):
+        # Ruling R15: falsche gültige Reports in (Beginn, Ende] zählen extra, nicht in falsch_nach_beweg_n
+        t = np.arange(0.0, 100.0)
+        v = np.ones_like(t, bool)
+        e = np.where((t >= 10) & (t <= 12), 20.0, 1.0)   # 10 (Beginn, nicht drin), 11, 12 falsch
+        e[[62, 63]] = 20.0                               # in der zweiten Episode, 63 = Ende (drin)
+        eps = [(10.0, 15.0), (60.0, 63.0)]
+        m = vital_sim.reacq_metrics(t, v, e, eps)
+        self.assertEqual(m["falsch_in_beweg_n"], 4)      # 11, 12, 62, 63
+        self.assertEqual(m["falsch_nach_beweg_n"], 0)    # (15, 45] und (63, 93] alle richtig
+        v[62] = False
+        self.assertEqual(vital_sim.reacq_metrics(t, v, e, eps)["falsch_in_beweg_n"], 3)
+
+    def test_first_after_error(self):
+        t = np.arange(60.0, 80.0)
+        v = t >= 72
+        hr = np.where(t >= 72, 82.0, 70.0)
+        f = vital_sim.first_after_error(t, v, hr, 70.0, lambda x: 70.0 if x < 60 else 70 + 15 * min(1, (x - 60) / 10))
+        self.assertAlmostEqual(f, 3.0)                   # |82 − 85| zur Zeit 72 s
+        self.assertTrue(math.isnan(vital_sim.first_after_error(t, np.zeros_like(v), hr, 70.0, lambda x: 72.0)))
+
 
 class SectionMetricsTest(unittest.TestCase):
     def test_share_and_mae(self):
@@ -404,10 +425,17 @@ class ReacqBenchTest(unittest.TestCase):
     bestätigt). tippen: Stöße überschreiten 3 × Bezug kaum, die normale Verfolgung springt bei 114 s auf 99 /min (wie
     ohne Schalter: falsch 4, MAE 4,0); die Variante A121_DSP_REACQ_PERIOD (Task 7) hilft nicht und ist verworfen (docs/
     EXPERIMENTE.md, V6). Kleinere Schwelle (2,5 / 2)
-    oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg)."""
+    oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg).
 
-    KNOWN = ["VERLETZT lang: falsch_nach_beweg_n = 2, Grenze <= 0",
+    Final-Review (Ruling R15): falsch_in_beweg_n zählt auch die Fehlwerte mitten in der Bewegung. lang: 60 und 63 s
+    (84,7 / 84,6 statt 72,5, reacq 2) in der Bewegung, 71 und 72 s danach; alle vier haben eine Atemspitze (breath_ok,
+    Atmung auf dem vollen Fenster), die Regel kMemSubstBpm ändert daran nichts. tippen: 7 Fehlwerte im Abschnitt der
+    Stöße (60–120 s), ohne Schalter ebenso 7."""
+
+    KNOWN = ["VERLETZT lang: falsch_in_beweg_n = 2, Grenze <= 0",
+             "VERLETZT lang: falsch_nach_beweg_n = 2, Grenze <= 0",
              "VERLETZT tippen: abschnitt_mae = 4.4, Grenze <= 2.0",
+             "VERLETZT tippen: falsch_in_beweg_n = 7, Grenze <= 0",
              "VERLETZT tippen: falsch_nach_beweg_n = 4, Grenze <= 0"]
 
     def test_bench_with_reacq_within_limits(self):
@@ -529,6 +557,8 @@ class ReacqLimitsTest(unittest.TestCase):
         for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
             self.assertEqual(lim[(s, "falsch_nach_beweg_n")], ("<=", 0))
             self.assertEqual(lim[(s, "nie_gefunden_n")], ("<=", 0))
+            self.assertEqual(lim[(s, "falsch_in_beweg_n")], ("<=", 0))
+        self.assertEqual(lim[("beweg_hr", "erst_nach_beweg_fehler")], ("<=", 5.0))
         self.assertEqual(lim[("beweg_weg", "weg_gueltig_n")], ("<=", 0))
         self.assertEqual(lim[("tippen", "abschnitt_gueltig_pct")], (">=", 80.0))
         self.assertEqual(lim[("tippen", "abschnitt_mae")], ("<=", 2.0))
@@ -557,6 +587,7 @@ class ReacqLimitsTest(unittest.TestCase):
             self.assertIn("zustand_beweg_fehl", names)
             self.assertIn("atemzug_mae", names)
             self.assertNotIn("wiederfind_s", names)    # ohne Schalter keine Wiederfind-Grenze
+            self.assertNotIn("falsch_in_beweg_n", names)   # ohne Schalter nur berichtet (Ruling R15)
 
 
 if __name__ == "__main__":
