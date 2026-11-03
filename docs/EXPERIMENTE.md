@@ -289,6 +289,33 @@ Details und Werkzeuge: `docs/ANDROID_APP.md`. Aufnahmen unter `~/Data/radar-sens
 | T2 | Kabel abziehen/einstecken während `iq3` | Wiederanlauf | 2026-11-01, 2×: ESP32 startet neu (Handy-Strom), App verbindet selbst und startet `iq3` neu; 0 Lücken innerhalb der 3 Streams. Pause bis zum neuen Stream 34,9 s (mit Berechtigungsdialog) bzw. 8,2 s (ohne; inkl. Zeit ohne Kabel) |
 | T3 | ESP32-DSP am Handy nachrechnen (NDK, Rohdaten aus T1) | Gleichheit Handy / PC / ESP32 | 2026-11-01: Handy = PC bytegleich; gegen ESP32 51 715 / 128 197 Zeilen gleich, Rest meist letzte Stelle, Weg ≤ 0,21 µm, Atemtiefe ≤ 1,6 µm, IBI in 1 / 1632 `@VITAL` um 16,7 ms. Rechenzeit Handy 28,4 s für 31,7 min |
 
+## V6 Wiederfinden (Basislinie)
+
+Messwerkzeug: `host/reacq_eval.py` (Plan `2026-11-02-puls-wiederfinden`, Aufgabe 3). Ein Ausfall ist eine Folge von @DSP-Reports
+mit `ok == 0` nach einem gültigen Report; Dauer = erster ungültiger Report bis zum nächsten gültigen. Ursache `bewegung`
+(im Ausfall `motion_pct > 30` oder Zustand BEWEGUNG), sonst `keine_atemspitze` (`br_state == 1` in der Mehrheit), sonst `rest`.
+Läufe mit mehr als 50 % Zustand KEINE_PERSON zählen nicht (Standard); `--keine-person-zaehlen` schaltet das ab. Gültig-Anteil ohne
+Zustand 0. Alle Zahlen: Firmware-Stand dieses Zweigs (a121_esp_dsp.h ohne `A121_DSP_REACQ`), `stream.log` neu gerechnet
+(`--replay firmware/esp32s3/src`), Zeit = Empfangszeit, Referenz fehlt (keine Aussage über Genauigkeit, nur über Verfügbarkeit).
+
+```
+.venv/bin/python host/reacq_eval.py <T1> <2026-11-02_livetest_vital1> <2026-11-02_vital1_iq3raw_60s> --replay firmware/esp32s3/src
+```
+
+| Aufnahme | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | keine_atemspitze: n, Median / Summe | rest: n, Median / Summe | Sprünge > 15 /min |
+|---|---|---|---|---|---|---|
+| T1 `2026-11-01_164043_usb_iq3raw_bildschirmaus` (31,7 min) | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 14, 2,0 s / 60,1 s | 1, 9,2 s / 9,2 s | 13 |
+| `2026-11-02_171254_livetest_vital1` | 89,5 % | 0 / 0 | – | – | – | 0 |
+| `2026-11-02_vital1_iq3raw_60s` (60 s) | 32,1 % | 4 / 1 | 17,2 s / 17,2 s | 1, 3,0 s / 3,0 s | 2, 7,2 s / 14,4 s | 1 |
+
+Ohne Personenfilter (`--keine-person-zaehlen`) hat T1 33 Ausfälle, davon **18 Bewegungs-Ausfälle, Median 39,0 s, Summe 1609 s**
+(Spec-Stand der Handanalyse: 18, ≈ 40 s, ≈ 1627 s; die 18 s Unterschied sind genau 1 s je Ausfall, wenn man die Dauer ab dem
+letzten gültigen statt ab dem ersten ungültigen Report zählt). Der Personenfilter nimmt drei Bewegungs-Ausfälle heraus (Zustand KEINE_PERSON in der
+Mehrheit: einen von 829 s und zwei kürzere, zusammen 1018 s); übrig bleiben 15. Die
+neu gerechnete DSP hält T1 nur zu 11 % der Reports für gültig (211 von 1899); die Aufnahme-Firmware vom 2026-11-01 hatte 1632 gültige
+(`ok` im Original-Log), deshalb ist die Basislinie ausdrücklich die des aktuellen Header-Stands. Eine Pulsreferenz gibt es in
+keiner dieser Aufnahmen. Nur Rechnung auf dem PC (Replay), kein Lauf am Gerät.
+
 ## Nicht möglich mit einem Sensor
 
 - `bilateration` braucht zwei Sensoren.
