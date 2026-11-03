@@ -1120,6 +1120,55 @@ class CombinePointsTest(unittest.TestCase):
         self.assertEqual(len(out.split(",")), 14)
 
 
+class MotionMapTest(unittest.TestCase):
+    """V6: Bewegungskarte aus dem Block-RMS der stärksten Punkte (motionMapFromRms)."""
+    FLAGS = ("-DA121_DSP_REACQ",)
+
+    def run_map(self, setup: str, n_pts: int = 3, nb: int = 15) -> tuple[int, int, int]:
+        out = run_cpp(f"""
+        float rms[{n_pts} * {nb}];
+        for (int i = 0; i < {n_pts} * {nb}; i++) rms[i] = 1.0f;
+        {setup}
+        const MotionMap m = motionMapFromRms(rms, {n_pts}, {nb});
+        printf("%u %u %u", (unsigned)m.mask, (unsigned)m.n_blocks, (unsigned)m.clean_tail_blocks);""", self.FLAGS)
+        mask, n, tail = (int(v) for v in out.split())
+        return mask, n, tail
+
+    def test_quiet_has_full_tail(self):
+        self.assertEqual(self.run_map(""), (0, 15, 15))
+
+    def test_motion_needs_two_votes(self):
+        # Block 8 nur bei Punkt 0 × 10: eine Stimme, nicht bewegt
+        self.assertEqual(self.run_map("rms[0 * 15 + 8] = 10.0f;"), (0, 15, 15))
+        # bei Punkt 0 und 1: bewegt, 6 saubere Blöcke danach
+        self.assertEqual(self.run_map("rms[0 * 15 + 8] = 10.0f; rms[1 * 15 + 8] = 10.0f;"), (1 << 8, 15, 6))
+
+    def test_tail_after_last_motion(self):
+        setup = "for (int p = 0; p < 2; p++) { rms[p * 15 + 3] = 10.0f; rms[p * 15 + 11] = 10.0f; }"
+        self.assertEqual(self.run_map(setup), ((1 << 3) | (1 << 11), 15, 3))
+
+    def test_motion_in_last_block_has_empty_tail(self):
+        self.assertEqual(self.run_map("rms[14] = 10.0f; rms[15 + 14] = 10.0f;"), (1 << 14, 15, 0))
+
+    def test_empty_and_single_point(self):
+        # nb = 0 und nb = 2 (unter 3 Blöcken keine Aussage wie in gateMotion): leere Karte; ein Punkt: Stimmen werden auf
+        # die Punktzahl begrenzt, damit er allein entscheiden kann
+        out = run_cpp("""
+        float rms[15]; for (int i = 0; i < 15; i++) rms[i] = 1.0f;
+        const MotionMap a = motionMapFromRms(rms, 3, 0);
+        rms[4] = 10.0f;
+        const MotionMap b = motionMapFromRms(rms, 1, 15);
+        float two[2] = {1.0f, 10.0f};
+        const MotionMap c = motionMapFromRms(two, 1, 2);
+        printf("%u %u %u %u %u %u %u %u %u", (unsigned)a.mask, (unsigned)a.n_blocks, (unsigned)a.clean_tail_blocks,
+               (unsigned)b.mask, (unsigned)b.n_blocks, (unsigned)b.clean_tail_blocks,
+               (unsigned)c.mask, (unsigned)c.n_blocks, (unsigned)c.clean_tail_blocks);""", self.FLAGS)
+        self.assertEqual(out.split(), ["0", "0", "0", str(1 << 4), "15", "10", "0", "2", "2"])
+
+    def test_mask_fits_all_blocks(self):
+        self.assertEqual(run_cpp('printf("%d", (int)(kMaxBlocks <= 32U));', self.FLAGS), "1")
+
+
 class TemplateIbiTest(unittest.TestCase):
     """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),
     Vorlage = Mittel der Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (wie V1.6 gefunden), Korrelationsfilter

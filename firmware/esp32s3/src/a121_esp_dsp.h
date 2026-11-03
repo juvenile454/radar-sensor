@@ -275,6 +275,52 @@ inline void selectStrongest(const float *v, uint16_t n, uint16_t k, bool *sel) {
     }
 }
 
+#ifdef A121_DSP_REACQ
+/* V6: Bewegungskarte */
+static constexpr uint8_t kReacqMinS    = 6U;     /* kürzestes Fenster (s) nach Bewegung, auf dem noch ein Puls gesucht wird */
+static constexpr uint8_t kMotionVotes  = 2U;     /* so viele der stärksten Punkte müssen einen Block bewegt melden */
+static constexpr uint8_t kMotionPoints = 3U;     /* so viele der stärksten Punkte stimmen ab */
+static_assert(kMaxBlocks <= 32U, "MotionMap::mask hat 32 Bit: höchstens 32 Blöcke");
+
+/** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */
+struct MotionMap {
+    uint32_t mask;
+    uint8_t  n_blocks;
+    uint8_t  clean_tail_blocks;  /* Blöcke nach dem letzten bewegten (alle, wenn keiner) */
+};
+
+/**
+ * Bewegungskarte aus dem Block-Effektivwert (rms: n_pts Zeilen × nb Spalten, zeilenweise). Je Punkt ist der Bezug das
+ * ruhige Viertel seiner Blöcke wie in gateMotion; ein Block gilt als bewegt, wenn bei mindestens votes Punkten
+ * rms > k × Bezug ist (votes wird auf n_pts begrenzt, ein einzelner Punkt entscheidet also allein). Wie gateMotion
+ * gibt es unter 3 Blöcken keine Bewegungsaussage; mehr als kMaxBlocks Blöcke werden abgeschnitten.
+ */
+inline MotionMap motionMapFromRms(const float *rms, uint8_t n_pts, uint8_t nb, float k = kMotionK,
+                                  uint8_t votes = kMotionVotes) {
+    MotionMap m = {0U, (uint8_t)std::min<uint8_t>(nb, kMaxBlocks), 0U};
+    m.clean_tail_blocks = m.n_blocks;
+    if (m.n_blocks < 3U || n_pts == 0U) return m;
+    nb = m.n_blocks;
+    votes = std::min(votes, n_pts);
+    uint8_t cnt[kMaxBlocks] = {};
+    for (uint8_t p = 0; p < n_pts; p++) {
+        const float *r = rms + (size_t)p * nb;
+        float tmp[kMaxBlocks];
+        for (uint8_t b = 0; b < nb; b++) tmp[b] = r[b];
+        std::nth_element(tmp, tmp + nb / 4, tmp + nb);
+        const float limit = k * (tmp[nb / 4] + 1e-6f);
+        for (uint8_t b = 0; b < nb; b++)
+            if (r[b] > limit) cnt[b]++;
+    }
+    for (uint8_t b = 0; b < nb; b++) {
+        if (cnt[b] < votes) continue;
+        m.mask |= (uint32_t)1U << b;
+        m.clean_tail_blocks = (uint8_t)(nb - 1U - b);
+    }
+    return m;
+}
+#endif
+
 /**
  * Kreismittelpunkt der IQ-Werte eines Zoom-Punkts im Fenster: Kåsa-Fit in Bullock-Form (algebraisch, ein 2×2-System).
  * Die Phase eines Punkts muss um den Mittelpunkt des Kreises gemessen werden, den die Atembewegung beschreibt (festes
@@ -1676,21 +1722,7 @@ public:
 #endif
         if (kSelPoints < kZoomPoints) {
             float strength[kZoomPoints];
-            for (uint8_t b = 0; b < kZoomPoints; b++) {
-                const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
-                const float *z0 = base + (size_t)start * 2U;  /* um den ersten Wert verschoben (Auslöschung) */
-                float mi = 0.0f, mq = 0.0f, p2 = 0.0f;
-                for (uint16_t n = 0; n < N; n++) {
-                    const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
-                    const float di = z[0] - z0[0], dq = z[1] - z0[1];
-                    mi += di;
-                    mq += dq;
-                    p2 += di * di + dq * dq;
-                }
-                mi /= (float)N;
-                mq /= (float)N;
-                strength[b] = p2 / (float)N - (mi * mi + mq * mq);
-            }
+            zoomStrength(start, N, strength);
             selectStrongest(strength, kZoomPoints, kSelPoints, use);
         } else {
             for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = true;
@@ -2279,6 +2311,60 @@ private:
 
     /** Nullphasen-Bandpass 0,6–5 Hz (kBpSos) wie scipy `sosfiltfilt`. Ergebnis: work_ext_[kFiltPad .. kFiltPad + N). */
     void sosFiltFilt(const float *x, uint16_t N) { sosFiltFiltSos(x, N, work_ext_, kBpSos); }
+
+    /** Streuung der IQ-Werte jedes Zoom-Punkts im Fenster (≈ Amplitude² × Phasenhub², um den ersten Wert verschoben). */
+    void zoomStrength(uint16_t start, uint16_t N, float *strength) const {
+        for (uint8_t b = 0; b < kZoomPoints; b++) {
+            const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
+            const float *z0 = base + (size_t)start * 2U;  /* um den ersten Wert verschoben (Auslöschung) */
+            float mi = 0.0f, mq = 0.0f, p2 = 0.0f;
+            for (uint16_t n = 0; n < N; n++) {
+                const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
+                const float di = z[0] - z0[0], dq = z[1] - z0[1];
+                mi += di;
+                mq += dq;
+                p2 += di * di + dq * dq;
+            }
+            mi /= (float)N;
+            mq /= (float)N;
+            strength[b] = p2 / (float)N - (mi * mi + mq * mq);
+        }
+    }
+
+#ifdef A121_DSP_REACQ
+    /** V6: Bewegungskarte des Fensters start .. start + N aus den kMotionPoints stärksten Punkten unter use: Wegsignal wie
+     *  in der Hauptschleife (binDisplacement, Trend, Bandpass), Effektivwert je 1-s-Block (ohne Dämpfung gateMotion),
+     *  dann motionMapFromRms. Nutzt work_x_ und work_ext_ als Arbeitsfeld (überschreibt das Wegsignal der Hauptschleife);
+     *  binDisplacement pflegt dabei good_ci_/good_cq_/have_good_ wie dort. Ohne Heap: 3 × kMaxBlocks Werte auf dem Stack. */
+    MotionMap motionMap(uint16_t start, uint16_t N, const bool *use) {
+        const uint8_t nb = (uint8_t)std::min<uint16_t>(N / kGateBlk, kMaxBlocks);
+        float strength[kZoomPoints];
+        zoomStrength(start, N, strength);
+        for (uint8_t b = 0; b < kZoomPoints; b++)
+            if (!use[b]) strength[b] = -INFINITY;
+        bool sel[kZoomPoints];
+        selectStrongest(strength, kZoomPoints, kMotionPoints, sel);
+        float rms[kMotionPoints * kMaxBlocks];
+        uint8_t n_pts = 0;
+        for (uint8_t b = 0; b < kZoomPoints && nb; b++) {
+            if (!sel[b] || !use[b]) continue;  /* selectStrongest füllt bei wenigen Punkten in use mit unbenutzten auf */
+            bool short_arc = false;
+            float spread = 0.0f;
+            binDisplacement(b, start, N, work_x_, short_arc, spread);
+            removeLinearTrend(work_x_, N);
+            sosFiltFilt(work_x_, N);
+            const float *h = work_ext_ + kFiltPad;
+            for (uint8_t k = 0; k < nb; k++) {
+                const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);  /* wie gateMotion */
+                float acc = 0.0f;
+                for (uint16_t n = a; n < e; n++) acc += h[n] * h[n];
+                rms[n_pts * nb + k] = sqrtf(acc / (float)(e - a));
+            }
+            n_pts++;
+        }
+        return motionMapFromRms(rms, n_pts, nb);
+    }
+#endif
 
     /* Bewegungsdämpfung im Herzband: Effektivwert je 1-s-Block. Bezug ist das ruhige Viertel der Blöcke (nicht der
      * Median: bei 8 s Bewegung in 15 s ist der Median selbst Bewegung). Blöcke über kGateK × Bezug bekommen die
