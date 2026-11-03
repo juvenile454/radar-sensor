@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// Persönliche Einstellungen aus android/local.properties (nicht im Repo), z. B. radar.bridge=<host>:7777
+val localProps =
+    Properties().apply {
+        rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+    }
 
 android {
     namespace = "de.timo.radarsensor"
@@ -25,6 +33,9 @@ android {
                 .toInt()
         versionCode = 1
         versionName = "0.1.0"
+        // Vorbelegung der Brücke (host/esp_tcp_bridge.py); leer = in der App eintragen
+        val bridge = localProps.getProperty("radar.bridge", "").replace("\"", "")
+        buildConfigField("String", "DEFAULT_BRIDGE", "\"$bridge\"")
         ndk {
             abiFilters += "arm64-v8a" // nur das eigene Gerät
         }

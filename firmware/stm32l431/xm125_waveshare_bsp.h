@@ -3,8 +3,8 @@
  * @brief Board Support Package (BSP) & exakte Pin-/Peripherie-Definitionen für das
  *        Waveshare A121 Range Sensor Board (Acconeer XM125 = STM32L431CBT6 + A121).
  *
- * Verifiziert durch Schaltplan, Hardware-Probing und Disassembly der Original-Firmwares
- * (`i2c_distance_detector.bin` & `acc_exploration_server_a121.bin`, a121-v1.12.0).
+ * Verifiziert durch Schaltplan und Messungen am Board (mit den Original-Firmwares
+ * `i2c_distance_detector.bin` & `acc_exploration_server_a121.bin`, a121-v1.12.0).
  */
 
 #ifndef XM125_WAVESHARE_BSP_H

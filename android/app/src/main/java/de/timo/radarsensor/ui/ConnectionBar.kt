@@ -27,14 +27,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
+import de.timo.radarsensor.BuildConfig
 import de.timo.radarsensor.core.ConnState
 import de.timo.radarsensor.core.LinkStats
 import de.timo.radarsensor.core.RadarController
 import de.timo.radarsensor.transport.TcpTransport
 import java.io.File
 
-/** Standard für die Entwicklungs-Weiterleitung: der Entwicklungs-PC im Tailnet, host/esp_tcp_bridge.py */
-const val DEFAULT_BRIDGE = "100.64.0.1:7777"
+/** Vorbelegung der Entwicklungs-Weiterleitung (host/esp_tcp_bridge.py), z. B. der PC im Tailnet; aus
+ *  android/local.properties `radar.bridge=<host>:7777` (nicht im Repo), sonst leer. */
+val DEFAULT_BRIDGE: String = BuildConfig.DEFAULT_BRIDGE
 
 @Composable
 fun ConnectionBar(

@@ -44,3 +44,8 @@ gebaut); offen sind Gurt-Aufnahmen Tag A/B, die Messungen V4 und alle Gerätetes
 | `hardware/` | Verdrahtung, Lochraster-Layout, später KiCad |
 
 Messdaten/Aufnahmen gehören **nicht** ins Projekt, sondern nach `~/Data/radar-sensor/`.
+
+## Lizenz
+
+Eigener Code: MIT (siehe `LICENSE`). Acconeer-SDK, Acconeer- und Waveshare-Firmware sowie deren Demos sind nicht
+Teil des Repos und unterliegen den Lizenzen der Hersteller; die Skripte laden oder enthalten sie nicht.
