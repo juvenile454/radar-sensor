@@ -5,10 +5,11 @@
 <p align="center">
   <a href="https://github.com/juvenile454/radar-sensor/actions/workflows/tests.yml"><img src="https://github.com/juvenile454/radar-sensor/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/radar-Acconeer%20A121%20·%2060%20GHz-8250df" alt="Acconeer A121, 60 GHz">
-  <img src="https://img.shields.io/badge/MCU-ESP32--S3-e7352c" alt="ESP32-S3">
-  <img src="https://img.shields.io/badge/app-Android%20·%20Kotlin-3ddc84" alt="Android, Kotlin">
-  <img src="https://img.shields.io/badge/tools-Python%203.12-3776ab" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/radar-Acconeer%20A121%20%C2%B7%2060%20GHz-8250df?logo=rss&logoColor=white" alt="Acconeer A121, 60 GHz">
+  <img src="https://img.shields.io/badge/MCU-ESP32--S3-e7352c?logo=espressif&logoColor=white" alt="ESP32-S3">
+  <img src="https://img.shields.io/badge/DSP-C%2B%2B17-00599c?logo=cplusplus&logoColor=white" alt="C++17">
+  <img src="https://img.shields.io/badge/app-Android%20%C2%B7%20Kotlin-3ddc84?logo=android&logoColor=white" alt="Android, Kotlin">
+  <img src="https://img.shields.io/badge/tools-Python%203.12-3776ab?logo=python&logoColor=white" alt="Python 3.12">
 </p>
 
 A hobby and learning project. It reads a **60 GHz pulsed coherent radar** (Acconeer A121) with an **ESP32-S3**,
