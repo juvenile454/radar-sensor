@@ -105,14 +105,14 @@ class SensorFlagsReplayTest(unittest.TestCase):
 
 
 class BaselineHeaderTest(unittest.TestCase):
-    """Die Basislinie (V0.6) rechnet Aufnahmen mit dem DSP-Header vom 2026-11-01 (Commit 0e2d836) nach; die heutige
+    """Die Basislinie (V0.6) rechnet Aufnahmen mit dem DSP-Header vom 2026-11-01 (Commit 26c9bff) nach; die heutige
     Nachrechnung muss mit diesem alten Header übersetzen und eigene @VITAL-Zeilen schreiben."""
 
     def test_replay_with_baseline_header(self):
         import subprocess
         with tempfile.TemporaryDirectory() as d:
             d = pathlib.Path(d)
-            hdr = subprocess.run(["git", "-C", str(HOST.parent), "show", "0e2d836:firmware/esp32s3/src/a121_esp_dsp.h"],
+            hdr = subprocess.run(["git", "-C", str(HOST.parent), "show", "26c9bff:firmware/esp32s3/src/a121_esp_dsp.h"],
                                  capture_output=True, text=True, check=True).stdout
             (d / "basis").mkdir()
             (d / "basis" / "a121_esp_dsp.h").write_text(hdr)

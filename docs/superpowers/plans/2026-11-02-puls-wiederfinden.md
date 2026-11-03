@@ -17,7 +17,7 @@ unittest, Kotlin/JUnit (App-Parser), PlatformIO (`pio run`).
 ## Global Constraints
 
 - Schalter Standard aus: `A121_DSP_REACQ`, `A121_DSP_REACQ_PERIOD` (nur zusammen mit `A121_DSP_REACQ`), `A121_DSP_PHASE_SLOPE`.
-- Ohne Schalter bleibt jede Ausgabezeile bitgleich zum Stand `d486adf` (Prüfung: `host/tests/test_dsp_replay.py`, Bench-Zahlen unverändert).
+- Ohne Schalter bleibt jede Ausgabezeile bitgleich zum Stand `53c45e6` (Prüfung: `host/tests/test_dsp_replay.py`, Bench-Zahlen unverändert).
 - Protokoll nur hinten erweitern; `@VITAL` behält 15 Felder, `@STATE` unverändert.
 - Konstanten: `kReacqMinS = 6` s, `kMemS = 60` s, `kMemBandBpm = 15` /min, `kMemMinConf = 50` %, Bewegungskarte 2 von 3 Punkten, `kPeriodK = 5`.
 - Rechenzeit je Report ≤ 400 ms (Kern 0); heute 91–152 ms am Gerät.

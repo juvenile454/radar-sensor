@@ -35,7 +35,7 @@
 #include "a121_esp_dsp.h"
 
 #ifndef A121_DSP_FORMATS
-/* DSP-Header vor V0.4 (Basislinie 2026-11-01, Commit 0e2d836) hat die Formatfunktionen noch nicht: Formate wie
+/* DSP-Header vor V0.4 (Basislinie 2026-11-01, Commit 26c9bff) hat die Formatfunktionen noch nicht: Formate wie
  * damals in main.cpp. So rechnet `vital_eval.py --replay` auch die Basislinie mit dieser Nachrechnung. */
 namespace a121_dsp {
 static constexpr size_t kReportLineMax = 256U;

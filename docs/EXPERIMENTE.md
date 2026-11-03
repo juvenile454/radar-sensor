@@ -87,7 +87,7 @@ Anteil ±5, Verfügbarkeit, Kalibrierung (Konfidenz ≥ 70 % → Anteil ±5) hie
 enthalten, geht das auch mit neuerer Firmware: den alten Header nachrechnen lassen.
 
 ```bash
-mkdir -p /tmp/dsp_basis && git show 0e2d836:firmware/esp32s3/src/a121_esp_dsp.h > /tmp/dsp_basis/a121_esp_dsp.h
+mkdir -p /tmp/dsp_basis && git show 26c9bff:firmware/esp32s3/src/a121_esp_dsp.h > /tmp/dsp_basis/a121_esp_dsp.h
 ```
 
 ```bash
@@ -460,8 +460,8 @@ zählen dort gleich. Nur Zeilen derselben Regel sind vergleichbar.
 | ohne Schalter | Basis = R10 | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 14, 2,0 s / 60,1 s | 1, 9,2 s / 9,2 s | 660,2 s | 13 |
 | mit `A121_DSP_REACQ` | Basis | 13,4 % | 29 / 14 | **35,9 s** / 659,8 s | 4, 2,0 s / 35,9 s | 11, 1,0 s / 33,2 s | 728,8 s | 9 |
 | mit `A121_DSP_REACQ` | R10 | 13,4 % | 29 / 20 | 28,3 s / 716,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 728,8 s | 9 |
-| zum Vergleich: mit Schalter vor R15 (Stand `de29b2e`) | Basis | 13,7 % | 31 / 14 | 35,9 s / 659,8 s | 4, 2,0 s / 16,0 s | 13, 1,0 s / 50,0 s | 725,8 s | 9 |
-| zum Vergleich: mit Schalter vor R15 (Stand `de29b2e`) | R10 | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 725,8 s | 9 |
+| zum Vergleich: mit Schalter vor R15 (Stand `3ca400a`) | Basis | 13,7 % | 31 / 14 | 35,9 s / 659,8 s | 4, 2,0 s / 16,0 s | 13, 1,0 s / 50,0 s | 725,8 s | 9 |
+| zum Vergleich: mit Schalter vor R15 (Stand `3ca400a`) | R10 | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 725,8 s | 9 |
 
 **Auf T1 ist der Schalter schlechter:** Verfügbarkeit (gültig 20,7 → 13,4 %, Ausfallzeit über alle Ursachen 660 → 729 s) und der gleichartige
 Median der Bewegungs-Ausfälle (Basisregel 23,7 → 35,9 s) werden schlechter; nur die Sprünge > 15 /min gehen zurück (13 → 9). Die früher
