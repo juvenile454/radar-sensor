@@ -1284,6 +1284,17 @@ class PreferMemoryTest(unittest.TestCase):
                (int)preferMemoryCandidate(b, s, 1, -5.0f));""", self.FLAGS)
         self.assertEqual(out.split(), ["-1", "-1", "-1"])
 
+    def test_nan_is_rejected(self):
+        # NaN als Frequenz oder Wert eines Kandidaten darf nicht gewählt werden; ohne positiven besten Wert keine Wahl
+        out = run_cpp("""
+        const float b1[] = {140.0f, NAN}; const float s1[] = {1.0f, 0.8f};
+        const float b2[] = {140.0f, 74.0f}; const float s2[] = {1.0f, NAN};
+        const float b3[] = {74.0f, 70.0f}; const float s3[] = {NAN, 0.8f};
+        const float b4[] = {74.0f}; const float s4[] = {0.0f};
+        printf("%d %d %d %d", (int)preferMemoryCandidate(b1, s1, 2, 72.0f), (int)preferMemoryCandidate(b2, s2, 2, 72.0f),
+               (int)preferMemoryCandidate(b3, s3, 2, 72.0f), (int)preferMemoryCandidate(b4, s4, 1, 72.0f));""", self.FLAGS)
+        self.assertEqual(out.split(), ["-1", "-1", "-1", "-1"])
+
 
 class TemplateIbiTest(unittest.TestCase):
     """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),

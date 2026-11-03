@@ -394,6 +394,64 @@ class MotionModelTest(unittest.TestCase):
         self.assertEqual(vital_sim.episodes_of(S["base"][1]), [])
 
 
+class ReacqBenchTest(unittest.TestCase):
+    """V6 (Schalter A121_DSP_REACQ): Wiederfinden nach Bewegung gegen LIMITS und LIMITS_REACQ (nur Simulation);
+    Gedächtnis bleibt beim Rezoom auf dasselbe Ziel und erlischt, wenn das Ziel nicht mehr im Zoom-Fenster liegt.
+
+    Bekannte Verletzungen (Stand Task 6, festgehalten wie bei CombineBenchTest): Die Bewegungskarte (Block über
+    3 × ruhiges Viertel) sieht die zweite Hälfte der 20-s-Bewegung in lang nicht (Bezug ist dort selbst Bewegung, Blöcke
+    1,4–2,9 ×), das 6-s-Endstück bei 71–72 s liegt noch in der Bewegung (83 statt 72 /min, von AKF/Einzelschlägen
+    bestätigt). tippen: Stöße überschreiten 3 × Bezug kaum, die normale Verfolgung springt bei 114 s auf 99 /min (wie
+    ohne Schalter: falsch 4, MAE 4,0); Ziel der Variante A121_DSP_REACQ_PERIOD (Task 7). Kleinere Schwelle (2,5 / 2)
+    oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg)."""
+
+    KNOWN = ["VERLETZT lang: falsch_nach_beweg_n = 2, Grenze <= 0",
+             "VERLETZT tippen: abschnitt_mae = 4.4, Grenze <= 2.0",
+             "VERLETZT tippen: falsch_nach_beweg_n = 4, Grenze <= 0"]
+
+    def test_bench_with_reacq_within_limits(self):
+        r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--define", "A121_DSP_REACQ"],
+                           capture_output=True, text=True)
+        self.assertIn("A121_DSP_REACQ", r.stdout, r.stdout[-3000:] + r.stderr[-2000:])
+        viol = sorted(ln.strip() for ln in r.stdout.splitlines() if "VERLETZT" in ln)
+        self.assertEqual(viol, self.KNOWN, r.stdout[-3000:])
+
+    def test_rezoom_keeps_or_clears_memory(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        from test_dsp_unit import run_cpp
+        with tempfile.TemporaryDirectory() as d:
+            base = pathlib.Path(d) / "base"
+            vital_sim.make_frames(base, seed=1, T=60.0)   # Szenario base, Zoom-Start 244
+            out = run_cpp(f"""
+            FILE *f = fopen("{base}.iq", "rb");
+            if (!f) return 2;
+            static UltimateEspDsp dsp;
+            dsp.begin(244, 120, kRoomStep);
+            static Complex16 pts[kTotal3SubPts];
+            float um;
+            VitalReport r = {{}};
+            uint32_t n = 0;
+            auto run = [&](uint32_t frames) {{
+                for (uint32_t e = n + frames; n < e && fread(pts, sizeof(pts[0]), kTotal3SubPts, f) == kTotal3SubPts;) {{
+                    dsp.pushFrame(pts, kTotal3SubPts, 20, 0.0f, um);
+                    if (++n % 60 == 0) dsp.computeVitalReport(r);
+                }}
+            }};
+            run(1800);                                   /* 30 s base: gültig, Puls gemerkt */
+            printf("%d %d ", (int)r.valid, (int)dsp.reacqMemoryActive());
+            dsp.setZoomStartPoint(244);                  /* Rezoom auf dasselbe Ziel (±0 Punkte) */
+            run(420);
+            printf("%d %d ", (int)r.target_in_zoom, (int)dsp.reacqMemoryActive());
+            dsp.setZoomStartPoint(284);                  /* +40 Punkte: Ziel liegt außerhalb */
+            printf("%d ", (int)dsp.reacqMemoryActive()); /* Verfolgung bleibt (< 30 s), das Gedächtnis zunächst auch */
+            run(420);
+            printf("%d %d ", (int)r.target_in_zoom, (int)dsp.reacqMemoryActive());
+            dsp.begin(244, 120, kRoomStep);              /* Neubeginn: resetTracking löscht das Gedächtnis */
+            printf("%d", (int)dsp.reacqMemoryActive());
+            fclose(f);""", ("-DA121_DSP_REACQ",))
+        self.assertEqual(out.split(), ["1", "1", "1", "1", "1", "0", "0", "0"])
+
+
 class ReacqLimitsTest(unittest.TestCase):
     """V6: LIMITS_REACQ gilt nur mit dem Schalter A121_DSP_REACQ; die neuen Szenarien haben Grenzen ohne Schalter."""
 

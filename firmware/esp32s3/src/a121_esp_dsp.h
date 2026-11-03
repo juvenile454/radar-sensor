@@ -44,6 +44,16 @@
  *      Rezoom auf das stärkste bewegte Ziel im über ≈ 3 s geglätteten Profil (nicht in der Momentaufnahme, die bei zwei
  *      nahen Echos kippte); kein Rezoom, solange dieses Ziel im Zoom-Fenster ±60 mm liegt (vorher wechselte der Zoom
  *      zwischen Körperstellen und löschte jedes Mal die Historie).
+ *   V6 (A121_DSP_REACQ, Standard aus; Entwurf docs/superpowers/specs/2026-11-02-puls-wiederfinden-design.md):
+ *      Puls nach Bewegung wiederfinden. Bewegungskarte vor den Spektren (motionMap: 3 stärkste Punkte, 1-s-Block bewegt,
+ *      wenn bei 2 von 3 über 3 × ruhiges Viertel). Ohne bewegten Block wie oben. Bewegt und ruhiges Endstück ≥ 6 s: Puls
+ *      (Spektren, Kandidaten, AKF, Einzelschläge) nur auf dem Endstück, Atmung, Atemzustand und motion_pct auf dem
+ *      ganzen Fenster; der Wert gilt wie vorläufig nur mit Bestätigung durch AKF oder Einzelschläge (±5 /min) und nicht
+ *      auf einer Atem-Oberwelle m ≤ 3, die Verfolgung wird nicht fortgeschrieben, hr_prev_ nur aus einem bestätigten
+ *      Wert. Endstück kürzer: kein Puls, Verfolgung (hr_prev_, hr_miss_, alt_count_, Viterbi, hr_hist_) unverändert.
+ *      Gedächtnis (ReacqMemory): sicherer Wert (Konfidenz ≥ 50 %, Fenster ≥ 8 s) gilt 60 s, solange Echo und Ziel im
+ *      Zoom bleiben; im Endstück wird zuerst der stärkste Kandidat ±15 /min um ihn gewählt (preferMemoryCandidate),
+ *      bestätigt zählt er als Lebenszeichen (reacq = 2). Die 30-%-Bewegungsregel entfällt. @DSP: win_s, reacq.
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
@@ -732,6 +742,7 @@ public:
     }
     float hr() const { return hr_; }
     float ibi_ms() const { return ibi_ms_; }
+    bool stored() const { return valid_; }  /* gemerkt, ohne Ablauf und Bedingungen zu prüfen (Tests) */
 
 private:
     static constexpr uint32_t kMemFrames = (uint32_t)(kMemS * kFsHz);
@@ -1386,13 +1397,14 @@ inline bool snapshotStale(uint32_t snap_frame, uint32_t frame_now) { return fram
 
 #ifdef A121_DSP_REACQ
 /** V6: Index des stärksten FFT-Kandidaten, der nahe am gemerkten Puls liegt (|bpm − mem_hr| ≤ band) und mindestens
- *  min_rel × den besten Wert hat (cand_score absteigend sortiert, [0] = bester); sonst −1 (auch ohne Kandidaten oder Gedächtnis). */
+ *  min_rel × den besten Wert hat (cand_score absteigend sortiert, [0] = bester); sonst −1 (auch ohne Kandidaten oder
+ *  Gedächtnis, ohne positiven besten Wert und für NaN: die Bedingungen sind positiv formuliert, NaN erfüllt keine). */
 inline int8_t preferMemoryCandidate(const float *cand_bpm, const float *cand_score, uint8_t n, float mem_hr,
                                     float band = kMemBandBpm, float min_rel = 0.5f) {
-    if (n == 0U || mem_hr <= 0.0f) return -1;
+    if (n == 0U || !(mem_hr > 0.0f) || !(cand_score[0] > 0.0f)) return -1;
     int8_t best = -1;
     for (uint8_t i = 0; i < n; i++) {
-        if (fabsf(cand_bpm[i] - mem_hr) > band || cand_score[i] < min_rel * cand_score[0]) continue;
+        if (!(fabsf(cand_bpm[i] - mem_hr) <= band) || !(cand_score[i] >= min_rel * cand_score[0])) continue;
         if (best < 0 || cand_score[i] > cand_score[best]) best = (int8_t)i;
     }
     return best;
@@ -1501,12 +1513,20 @@ public:
         alt_count_  = 0;
         hr_hist_n_  = 0;
         have_valid_ = false;
+#ifdef A121_DSP_REACQ
+        mem_.clear();  /* V6: ohne Verfolgung kein Gedächtnis; resetHistory() mit beibehaltener Verfolgung behält es */
+#endif
     }
 
     void setZoomStartPoint(int32_t zoom_start_pt) {
         zoom_start_pt_ = zoom_start_pt;
         resetHistory();
     }
+
+#ifdef A121_DSP_REACQ
+    /** V6: Ist ein Puls gemerkt (ohne Ablauf und Bedingungen zu prüfen; die prüft der nächste Report)? Für Tests. */
+    bool reacqMemoryActive() const { return mem_.stored(); }
+#endif
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
     uint32_t frameCount() const { return frame_count_; }  /* Frames seit begin()/Rezoom/Neubeginn */
@@ -1775,6 +1795,30 @@ public:
         } else {
             for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = true;
         }
+        /* Pulsfenster: ohne A121_DSP_REACQ immer das ganze Fenster (Np = N) */
+        uint16_t Np = N;
+#ifdef A121_DSP_REACQ
+        /* V6: Bewegungskarte vor den Spektren (vor combineZoom: motionMap nutzt work_x_, in dem combineZoom den
+         * kombinierten Kanal ablegt). Kein bewegter Block: wie bisher. Bewegt und ruhiges Endstück ≥ kReacqMinS: Puls
+         * (Spektren, Kandidaten, AKF, Einzelschläge) nur auf dem Endstück, wie vorläufig (V2.4) mit Bestätigungspflicht;
+         * Atmung, Atemzustand, motion_pct und Raum weiter auf dem ganzen Fenster. Bewegt und Endstück kürzer: kein Puls,
+         * die Verfolgung bleibt unverändert (vorher lief sie durch die Bewegung weiter und sprang auf Artefakte). */
+        const MotionMap mm = motionMap(start, N, use);
+        const bool moved = mm.mask != 0U;
+        const bool pulse_off = moved && mm.clean_tail_blocks < kReacqMinS;
+        const bool short_win = moved && !pulse_off;
+        if (short_win) Np = (uint16_t)(mm.clean_tail_blocks * kGateBlk);
+        rep.win_s = pulse_off ? 0U : (uint8_t)(Np / 60U);
+        rep.reacq = short_win ? kReacqShort : kReacqNone;
+#endif
+        const uint16_t start_p = (uint16_t)((start + (N - Np)) % kHistoryLen);  /* Beginn des Pulsfensters */
+        const uint16_t Mp = (uint16_t)((Np + kDecim - 1U) / kDecim);
+#ifdef A121_DSP_REACQ
+        const float *hann_p = (Np == N) ? hann : hannInto(hann_p_, hann_p_m_, Mp);
+#else
+        const float *hann_p = hann;
+#endif
+        uint32_t moving_p = 0, total_p = 0;  /* Bewegungsblöcke im Pulsfenster (für die Konfidenz) */
 #ifdef A121_DSP_COMBINE
         /* V3.1: ein kombinierter Kanal statt Einzelspektren; die Schleife unten läuft einmal mit seinem Wegsignal und
          * dem dominanten Punkt als hr_bin */
@@ -1803,7 +1847,8 @@ public:
             removeLinearTrend(work_x_, N);
             float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
             sosFiltFilt(work_x_, N);
-            moving_blocks += gateMotion(h, N);
+            const uint8_t moving_b = gateMotion(h, N);
+            moving_blocks += moving_b;
             /* Atem-Spektrum dieses Punkts (entzerrtes Wegsignal, dezimiert, Hann), gewichtet mit Amplitude² summiert.
              * Schwache Punkte haben Phasenrauschen ~ 1/Amplitude, und Abwickel-Fehler wirken dort wie Stufen von 2,5 mm:
              * Ungewichtet überdeckte ihr Tieftonanteil die Atmung (am Datensatz 2026-11-01 Punkte mit |z| 120–300,
@@ -1825,6 +1870,27 @@ public:
                 memcpy(br_x_, work_x_, N * sizeof(float));
             }
             total_blocks += N / kGateBlk;
+            /* Pulsteil auf dem Pulsfenster: xp = Wegsignal, h = gefiltert und gedämpft (ohne A121_DSP_REACQ das ganze
+             * Fenster wie bisher) */
+            float *xp = work_x_;
+#ifdef A121_DSP_REACQ
+            if (pulse_off) {  /* V6: kein Puls auf diesem Fenster; Atmung und Bewegung sind oben schon erfasst */
+                weight[b]  = 0.0f;
+                peak_hz[b] = 0.0f;
+                continue;
+            }
+            if (Np != N) {  /* V6: Endstück nach Bewegung, Wegsignal neu entzerrt und gefiltert */
+                xp = work_x_ + (N - Np);
+                removeLinearTrend(xp, Np);
+                sosFiltFilt(xp, Np);
+                moving_p += gateMotion(h, Np);
+                total_p += Np / kGateBlk;
+            } else
+#endif
+            {
+                moving_p += moving_b;
+                total_p += N / kGateBlk;
+            }
             /* dezimieren + Hann */
 #ifdef A121_DSP_HARM_REMOVE
             /* V3.3: Atem-Oberwellen geführt von der Atemphase dieses Punkts entfernen, mit Atem- und Pulsfrequenz des
@@ -1832,21 +1898,21 @@ public:
              * 2 × Puls, Konfidenz ≈ 20 %), schonte die Regel den falschen und löschte den echten, der dicht an einer
              * Atem-Oberwelle lag (MAE 2,8 → 3,7 /min). */
             if (fb_prev_ > 0.0f && hr_prev_ > 0.0f && conf_prev_ >= kGuideMinConf) {
-                for (uint16_t m = 0; m < M; m++) {
+                for (uint16_t m = 0; m < Mp; m++) {
                     dec_[m]        = h[(uint32_t)m * kDecim];
-                    guide_disp_[m] = work_x_[(uint32_t)m * kDecim];
+                    guide_disp_[m] = xp[(uint32_t)m * kDecim];
                 }
-                removeBreathHarmonicsGuided(dec_, guide_disp_, M, kFsHz / kDecim, fb_prev_, hr_prev_ / 60.0f, cfft_,
+                removeBreathHarmonicsGuided(dec_, guide_disp_, Mp, kFsHz / kDecim, fb_prev_, hr_prev_ / 60.0f, cfft_,
                                             guide_work_);
-                for (uint16_t m = 0; m < M; m++) dec_[m] *= hann[m];
+                for (uint16_t m = 0; m < Mp; m++) dec_[m] *= hann_p[m];
             } else
 #endif
-            for (uint16_t m = 0; m < M; m++) dec_[m] = h[(uint32_t)m * kDecim] * hann[m];
+            for (uint16_t m = 0; m < Mp; m++) dec_[m] = h[(uint32_t)m * kDecim] * hann_p[m];
             /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f): Ein Herzschlag ist ein kurzer Impuls mit kräftiger 2. Oberwelle,
              * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). Im FFT-Raster liegt 2f genau auf Bin 2k. */
             float pmax = 0.0f;
             uint16_t kmax = 0;
-            fft_.power(dec_, M, spec_, kHr2MaxBin + 1U);
+            fft_.power(dec_, Mp, spec_, kHr2MaxBin + 1U);
             for (uint16_t k = 0; k < kHrNumF; k++) {
                 const uint16_t k1 = (uint16_t)(kHrK0 + k), k2 = (uint16_t)(2U * k1);
                 sum_[k] = spec_[k1] + kHarm2W * (k2 <= kHr2MaxBin ? spec_[k2] : 0.0f);
@@ -1864,8 +1930,8 @@ public:
             if (q > best_q) {
                 best_q = q;
                 hr_bin = b;
-                memcpy(best_x_, work_x_, N * sizeof(float));
-                memcpy(best_h_, h, N * sizeof(float));
+                memcpy(best_x_, xp, Np * sizeof(float));
+                memcpy(best_h_, h, Np * sizeof(float));
             }
         }
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] /= (wsum + 1e-12f);
@@ -1902,6 +1968,29 @@ public:
         rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= br_min_q && fb > 0.0f,
                                         rep.motion_pct);
         const bool breath_held = rep.br_state == kBrStateApnea;
+        /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
+         * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19). Ohne sauberes Echo am Punkt mit
+         * klarstem Puls über dessen Pulsfenster (Wert dann bedeutungslos, der Report gilt ohne Echo nicht). */
+        {
+            const uint16_t Mr = echo_ok ? M : Mp;
+            const float *hr_w = echo_ok ? hann : hann_p;
+            for (uint16_t m = 0; m < Mr; m++) dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * hr_w[m];
+            const float best_p = (fb > 0.0f) ? goertzelPower(dec_, Mr, kFsHz / kDecim, fb) : 0.0f;
+            const float norm   = 0.25f * (float)Mr;  /* Hann-Verstärkung → Amplitude in µm */
+            rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
+            rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
+        }
+        const bool breath_ok = echo_ok && br_q >= br_min_q && rep.resp_depth_um >= kBreathMinUm;
+#ifdef A121_DSP_REACQ
+        /* V6: Gedächtnis prüft jeden Report (abgelaufen, kein sauberes Echo oder Ziel nicht im Zoom-Fenster: gelöscht) */
+        const bool mem_on = mem_.active(s.tot_frames, echo_ok, rep.target_in_zoom);
+        if (pulse_off) {  /* V6: bewegt, ruhiges Endstück < kReacqMinS: kein Puls, Verfolgung unverändert */
+            rep.valid = false;
+            setState(s, rep, measurementState(person, echo_ok, breath_ok, false, rep.motion_pct, rep.br_state));
+            rep.compute_us = micros() - t0;
+            return false;
+        }
+#endif
 #ifdef A121_DSP_HARM_REMOVE
         fb_prev_ = (br_q >= br_min_q && fb > 0.0f && !breath_held) ? fb : 0.0f;  /* für den nächsten Report (V3.3) */
 #endif
@@ -2028,9 +2117,29 @@ public:
         const bool prov = prov_ && N < kHrStableWin;
         if (!prov) prov_ = false;
 #ifdef A121_DSP_VITERBI
+        float vit_mass = 0.0f;
+#endif
+#ifdef A121_DSP_REACQ
+        /* V6: Endstück nach Bewegung wie vorläufig: Die Verfolgung wird nicht fortgeschrieben (auch Viterbi nicht).
+         * Gemeldet wird der stärkste Kandidat, bei aktivem Gedächtnis zuerst der stärkste nahe am gemerkten Puls
+         * (preferMemoryCandidate); hr_prev_ bleibt nur, wenn der Wert unten bestätigt wird, sonst gilt wieder hr_keep. */
+        const float hr_keep = hr_prev_;
+        int8_t mem_j = -1;
+        if (short_win) {
+            if (mem_on) {
+                float cb[3];
+                for (uint8_t j = 0; j < n_cand; j++) cb[j] = cf[j] * 60.0f;
+                mem_j = preferMemoryCandidate(cb, cs, n_cand, mem_.hr());
+            }
+            hr_prev_ = cf[mem_j >= 0 ? mem_j : 0] * 60.0f;
+#ifdef A121_DSP_VITERBI
+            vit_mass = 1.0f;  /* keine Viterbi-Masse in diesem Report: Konfidenz nicht begrenzen */
+#endif
+        } else {
+#endif
+#ifdef A121_DSP_VITERBI
         /* V3.2: Viterbi über die letzten 20 Reports statt Haltezeit/Wechselregeln; Ergebnis auf den nächsten Kandidaten
          * (±3 /min, verfeinert) gezogen, nahe Werte wie bisher geglättet */
-        float vit_mass = 0.0f;
         {
             float cb[3], cw[3];
             for (uint8_t j = 0; j < n_cand; j++) {
@@ -2086,6 +2195,49 @@ public:
             }
         }
 #endif
+#ifdef A121_DSP_REACQ
+        }
+#endif
+
+        /* Herzsignal des klarsten Punkts (Pulsfenster): Amplitude, Autokorrelation, Einzelschläge */
+        float hr_rms = 0.0f;
+        for (uint16_t n = 0; n < Np; n++) hr_rms += best_h_[n] * best_h_[n];
+        rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)Np);
+        removeBreathHarmonics(best_h_, Np, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
+        float acf_bpm = 0.0f, acf_peak = 0.0f;
+        cardiacAcf(best_h_, Np, kFsHz, acf_bpm, acf_peak);
+#ifdef A121_DSP_IBI_TEMPLATE
+        /* V3.6: Einzelschläge mit Vorlage auf dem Band 0,6–8 Hz des klarsten Punkts; Bewegungsdämpfung und Abzug der
+         * Atem-Oberwellen wie für best_h_ */
+        sosFiltFiltSos(best_x_, Np, work_ext_, kBp8Sos);
+        memcpy(work_x_, work_ext_ + kFiltPad, Np * sizeof(float));
+        gateMotion(work_x_, Np);
+        removeBreathHarmonics(work_x_, Np, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
+        const IbiResult ibi = templateIbi(work_x_, Np, kFsHz, hr_prev_, work_ext_);
+#else
+        const IbiResult ibi = timeDomainIbi(best_h_, Np, kFsHz, hr_prev_);
+#endif
+        const float ibi_bpm = ibi.bpm;
+#ifdef A121_DSP_REACQ
+        /* V6: Bestätigung im Endstück wie vorläufig (V2.4/V3.1): Autokorrelation oder Einzelschläge ±5 /min und nicht auf
+         * einer niedrigen Atem-Oberwelle (m ≤ 3). Ein Gedächtnis-Kandidat ohne Bestätigung fällt auf die normale Suche
+         * (stärkster Kandidat) zurück; AKF und Einzelschläge bleiben dafür dieselben (Abstand ≤ kMemBandBpm). */
+        bool short_ok = false;
+        if (short_win) {
+            auto confirmedAt = [&](float bpm) {
+                const bool acf_ok = acf_peak > 0.0f && fabsf(acf_bpm - bpm) <= 5.0f;
+                const bool ibi_ok = ibi_bpm > 0.0f && fabsf(ibi_bpm - bpm) <= 5.0f;
+                const uint8_t m = harmOrder(bpm / 60.0f);
+                return (acf_ok || ibi_ok) && !(m != 0 && m <= kHarmLowMax);
+            };
+            if (mem_j > 0 && !confirmedAt(hr_prev_)) {
+                mem_j    = -1;
+                hr_prev_ = cf[0] * 60.0f;
+            }
+            short_ok = confirmedAt(hr_prev_);
+            if (mem_j >= 0 && short_ok) rep.reacq = kReacqMemory;
+        }
+#endif
         rep.hr_fused_bpm = hr_prev_;
 
         /* frühere Konfidenz als Diagnosewert: gewichteter Anteil der Punkte mit eigener Spitze ±5 /min am Ergebnis */
@@ -2094,37 +2246,10 @@ public:
             if (fabsf(peak_hz[b] * 60.0f - hr_prev_) <= 5.0f) agree += weight[b];
         rep.point_agree_pct = 100.0f * agree / (wsum + 1e-12f);
 
-        /* Herzsignal des klarsten Punkts: Amplitude, Autokorrelation, Einzelschläge */
-        float hr_rms = 0.0f;
-        for (uint16_t n = 0; n < N; n++) hr_rms += best_h_[n] * best_h_[n];
-        rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)N);
-        removeBreathHarmonics(best_h_, N, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
-        float acf_bpm = 0.0f, acf_peak = 0.0f;
-        cardiacAcf(best_h_, N, kFsHz, acf_bpm, acf_peak);
-        rep.hr_acf_bpm = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
-#ifdef A121_DSP_IBI_TEMPLATE
-        /* V3.6: Einzelschläge mit Vorlage auf dem Band 0,6–8 Hz des klarsten Punkts; Bewegungsdämpfung und Abzug der
-         * Atem-Oberwellen wie für best_h_ */
-        sosFiltFiltSos(best_x_, N, work_ext_, kBp8Sos);
-        memcpy(work_x_, work_ext_ + kFiltPad, N * sizeof(float));
-        gateMotion(work_x_, N);
-        removeBreathHarmonics(work_x_, N, kFsHz, (br_q >= br_min_q) ? fb : 0.0f, hr_prev_ / 60.0f);
-        const IbiResult ibi = templateIbi(work_x_, N, kFsHz, hr_prev_, work_ext_);
-#else
-        const IbiResult ibi = timeDomainIbi(best_h_, N, kFsHz, hr_prev_);
-#endif
-        const float ibi_bpm = ibi.bpm;
+        rep.hr_acf_bpm    = (acf_peak > 0.0f) ? acf_bpm : hr_prev_;
         rep.hr_ibi_bpm    = (ibi_bpm > 0.0f) ? ibi_bpm : hr_prev_;
         rep.ibi_median_ms = (ibi_bpm > 0.0f) ? ibi.ibi_ms : 60000.0f / hr_prev_;
         rep.rmssd_ms      = ibi.rmssd_ms;
-
-        /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
-         * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19) */
-        for (uint16_t m = 0; m < M; m++) dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * hann[m];
-        const float best_p = (fb > 0.0f) ? goertzelPower(dec_, M, kFsHz / kDecim, fb) : 0.0f;
-        const float norm   = 0.25f * (float)M;  /* Hann-Verstärkung → Amplitude in µm */
-        rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
-        rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
 
         /* Konfidenz (V1.3) */
         QualityInputs qi;
@@ -2135,30 +2260,49 @@ public:
         qi.hr_ibi          = ibi_bpm;                             /* dann wie bisher der verfolgte Wert)            */
         qi.hr_fused        = hr_prev_;
         qi.hr_fused_5s_ago = (hr_hist_n_ >= 5) ? hr_hist_[(hr_hist_n_ - 5) % 5] : 0.0f;
-        qi.motion_pct      = rep.motion_pct;
+        qi.motion_pct      = 100.0f * (float)moving_p / (float)(total_p ? total_p : 1U);  /* Pulsfenster (= motion_pct) */
         {
             uint16_t n_sat_win = 0;
-            for (uint16_t n = 0; n < N; n++) n_sat_win += hist_sat_[(start + n) % kHistoryLen];
-            qi.sat_pct = 100.0f * (float)n_sat_win / (float)N;
+            for (uint16_t n = 0; n < Np; n++) n_sat_win += hist_sat_[(start_p + n) % kHistoryLen];
+            qi.sat_pct = 100.0f * (float)n_sat_win / (float)Np;
         }
-        qi.win_frac = (float)N / (float)kHrWin;
+        qi.win_frac = (float)Np / (float)kHrWin;
         rep.confidence_pct = signalQuality(qi);
 #ifdef A121_DSP_VITERBI
         rep.confidence_pct = fminf(rep.confidence_pct, 100.0f * vit_mass);  /* V3.2: Masse ±5 /min */
 #endif
-        if (!prov) {
-            hr_hist_[hr_hist_n_ % 5] = hr_prev_;
-            if (hr_hist_n_ < 250) hr_hist_n_++;
-            else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
-        }
+#ifdef A121_DSP_REACQ
+        if (!prov && !short_win) pushHrHist(hr_prev_);  /* Endstück: erst nach Bestätigung (unten) */
+#else
+        if (!prov) pushHrHist(hr_prev_);
+#endif
 
         /* Lebenszeichen (B19): gültig nur mit sauberem Echo im Zoom-Fenster und Atmung (Atemspitze/Median ≥ kBrMinQ und
          * ≥ 100 µm Hub am Atem-Punkt) oder bei angehaltenem Atem mit deutlicher Pulsspitze; dazu höchstens 30 %
          * Bewegung im Fenster. Die Atemspitze allein reicht nicht: Rausch-Punkte erzeugen auch ohne Person Spitzen. */
-        const bool breath_ok  = echo_ok && br_q >= br_min_q && rep.resp_depth_um >= kBreathMinUm;
         const bool held_pulse = echo_ok && breath_held && qi.peak_db >= kPulseHeldDb;
+#ifdef A121_DSP_REACQ
+        /* V6: Statt der 30-%-Regel gilt die Fensterwahl (bewegt mit zu kurzem Endstück ist oben schon ungültig); als
+         * Lebenszeichen zählt auch der über das Gedächtnis wiedergefundene Puls (Atemspitze nach Unruhe oft verschmiert).
+         * Endstück: nur bestätigt; dann wird der Wert verfolgt, sonst bleibt die Verfolgung wie vor dem Report. */
+        rep.valid = breath_ok || held_pulse || rep.reacq == kReacqMemory;
+        if (short_win) {
+            rep.valid = rep.valid && short_ok;
+            if (rep.valid) {
+                hr_miss_   = 0;
+                alt_count_ = 0;
+                pushHrHist(hr_prev_);
+            } else {
+                hr_prev_ = hr_keep;
+            }
+        }
+        const bool prov_check = prov && !short_win;
+#else
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
-        if (prov) {  /* vorläufig nur, wenn Autokorrelation oder Einzelschläge den Spektralwert bestätigen (±5 /min) */
+        const bool prov_check = prov;
+#endif
+        /* vorläufig nur, wenn Autokorrelation oder Einzelschläge den Spektralwert bestätigen (±5 /min) */
+        if (prov_check) {
             const bool acf_ok = qi.hr_acf > 0.0f && fabsf(qi.hr_acf - raw_bpm) <= 5.0f;
             const bool ibi_ok = qi.hr_ibi > 0.0f && fabsf(qi.hr_ibi - raw_bpm) <= 5.0f;
             /* … und nicht auf einer niedrigen Atem-Oberwelle (m ≤ 3): Die sehen AKF und Einzelschläge desselben Signals
@@ -2172,6 +2316,11 @@ public:
             have_valid_     = true;
             last_valid_tot_ = s.tot_frames;
         }
+#ifdef A121_DSP_REACQ
+        /* V6: sicherer Wert (Konfidenz ≥ kMemMinConf, Pulsfenster ≥ 8 s) ins Gedächtnis */
+        if (rep.valid && rep.confidence_pct >= kMemMinConf && Np >= kHrStableWin)
+            mem_.store(rep.hr_fused_bpm, rep.ibi_median_ms, s.tot_frames);
+#endif
 #ifdef A121_DSP_HARM_REMOVE
         conf_prev_ = rep.valid ? rep.confidence_pct : 0.0f;
 #endif
@@ -2182,6 +2331,13 @@ public:
 
 private:
     static uint16_t sat16(uint32_t v) { return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v; }
+
+    /** hr_fused der letzten 5 Reports (Sprung-Abschlag der Konfidenz) */
+    void pushHrHist(float hr) {
+        hr_hist_[hr_hist_n_ % 5] = hr;
+        if (hr_hist_n_ < 250) hr_hist_n_++;
+        else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
+    }
 
     /** Zustand der Messung eintragen; seit_ms zählt ab dem letzten Wechsel, über Rezooms hinweg (V3.5). */
     void setState(const ReportSnapshot &s, VitalReport &rep, uint8_t st) {
@@ -2194,13 +2350,15 @@ private:
     }
 
     /** Hann-Fenster der Länge M (dezimierte Folge); neu gerechnet nur, wenn sich M ändert (Fensteraufbau), V2.2. */
-    const float *hannWindow(uint16_t M) {
-        if (M != hann_m_) {
+    const float *hannWindow(uint16_t M) { return hannInto(hann_, hann_m_, M); }
+
+    static const float *hannInto(float *w, uint16_t &w_m, uint16_t M) {
+        if (M != w_m) {
             for (uint16_t m = 0; m < M; m++)
-                hann_[m] = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
-            hann_m_ = M;
+                w[m] = (M > 1) ? 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)m / (float)(M - 1U))) : 1.0f;
+            w_m = M;
         }
-        return hann_;
+        return w;
     }
 
     static float *allocFloat(size_t count) {
@@ -2616,6 +2774,11 @@ private:
     a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
     float    hann_[kHrWin / kDecim + 1U] = {};
     uint16_t hann_m_ = 0;
+#ifdef A121_DSP_REACQ
+    float    hann_p_[kHrWin / kDecim + 1U] = {};  /* V6: Hann für das kürzere Pulsfenster (Endstück nach Bewegung) */
+    uint16_t hann_p_m_ = 0;
+    ReacqMemory mem_;                              /* V6: zuletzt gesicherter Puls */
+#endif
     uint32_t last_tick_ = 0;
     bool     have_last_tick_ = false;
     uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated je Frame der Historie */
