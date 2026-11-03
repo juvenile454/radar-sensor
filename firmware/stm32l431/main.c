@@ -1,21 +1,21 @@
 /**
  * @file main.c
- * @brief Custom Universal STM32L431CBT6 Firmware für das Waveshare A121 Range Sensor Board (XM125).
+ * @brief Custom universal STM32L431CBT6 firmware for the Waveshare A121 Range Sensor Board (XM125).
  *
- * Stellt dem ESP32-S3 über den 10-Pin MX1.25-Stecker vollen Zugriff auf 100 % der Hardware-
- * Fähigkeiten des Acconeer A121 60-GHz Pulsed Coherent Radar (PCR) Transceivers bereit:
+ * Gives the ESP32-S3 full access over the 10-pin MX1.25 connector to 100 % of the hardware
+ * capabilities of the Acconeer A121 60 GHz Pulsed Coherent Radar (PCR) transceiver:
  *   - High-Speed USART1 (PA9 TX / PA10 RX <-> ESP32 GPIO5 RX / GPIO4 TX, DMA1_Ch4/Ch5, 921600/2000000 Baud)
  *   - I2C2 Slave @ 0x52 (PB10 SCL / PB11 SDA <-> ESP32 GPIO16 SCL / GPIO15 SDA)
- *   - Hardware-Interrupt MCU_INT (PB9 -> ESP32 GPIO18)
- *   - Wakeup & Trigger über WAKE_UP (PA11), MISC_GPIO0 (PB1 <-> GPIO6) & MISC_GPIO1 (PA4 <-> GPIO7)
- *   - Volle Subsweep-Kontrolle (1..4 Subsweeps, Start/Step/NumPoints, Profile 1..5, PRF 19.5..5.2 MHz,
+ *   - Hardware interrupt MCU_INT (PB9 -> ESP32 GPIO18)
+ *   - Wakeup & trigger via WAKE_UP (PA11), MISC_GPIO0 (PB1 <-> GPIO6) & MISC_GPIO1 (PA4 <-> GPIO7)
+ *   - Full subsweep control (1..4 subsweeps, Start/Step/NumPoints, Profile 1..5, PRF 19.5..5.2 MHz,
  *     HWAAS 1..511, Receiver Gain 0..23, Enable TX, Phase Enhancement, IQ Imbalance Compensation,
  *     On-Chip Loopback, Continuous Sweep Mode & Double Buffering).
  *
- * Hinweis:
- * Zum Kompilieren aus dem C-Quelltext wird das Acconeer XM125 C-SDK (`libacconeer_a121.a` + Header)
- * unter `../../vendor/acconeer_sdk/` benötigt (Lizenz: nicht ins Git einchecken, siehe AGENTS.md).
- * Die geflashte Server-Firmware entsteht über build_server.py aus dem offiziellen SDK (README.md).
+ * Note:
+ * Compiling from the C source needs the Acconeer XM125 C SDK (`libacconeer_a121.a` + headers)
+ * under `../../vendor/acconeer_sdk/` (license: do not check into git, see AGENTS.md).
+ * The flashed server firmware is built by build_server.py from the official SDK (README.md).
  */
 
 #include <stdbool.h>
@@ -87,7 +87,7 @@ static acc_config_idle_state_t map_idle_state(uint8_t s)
 }
 
 /**
- * @brief Überträgt eine komplette `a121_session_config_t` (inkl. 1..4 Subsweeps) in das A121-Silizium.
+ * @brief Transfers a complete `a121_session_config_t` (incl. 1..4 subsweeps) to the A121 silicon.
  */
 bool a121_apply_universal_config(const a121_session_config_t *cfg)
 {
@@ -150,10 +150,10 @@ bool a121_apply_universal_config(const a121_session_config_t *cfg)
 }
 
 /**
- * @brief Standard-Preset: 3-Subsweep Ultimate Vital + Raum-Tracking @ 60 Hz:
- *   - Subsweep 0: On-Chip Loopback (1 Punkt, Profil 1, HWAAS 8, TX an, Loopback an)
- *   - Subsweep 1: 2.5-mm Vital-Zoom (24 Punkte = 60 mm Fenster, Step 1, Profil 1, HWAAS 32, Phase Enhancement)
- *   - Subsweep 2: Full-Room Scan (60 Punkte, 0.30..2.70 m, Step 16 = 40 mm, Profil 3, HWAAS 16)
+ * @brief Default preset: 3-subsweep Ultimate Vital + room tracking @ 60 Hz:
+ *   - Subsweep 0: on-chip loopback (1 point, profile 1, HWAAS 8, TX on, loopback on)
+ *   - Subsweep 1: 2.5 mm vital zoom (24 points = 60 mm window, step 1, profile 1, HWAAS 32, phase enhancement)
+ *   - Subsweep 2: full-room scan (60 points, 0.30..2.70 m, step 16 = 40 mm, profile 3, HWAAS 16)
  */
 void a121_load_default_3subsweep_preset(a121_session_config_t *cfg, int32_t zoom_start_point)
 {
@@ -167,7 +167,7 @@ void a121_load_default_3subsweep_preset(a121_session_config_t *cfg, int32_t zoom
     cfg->inter_sweep_idle_state   = 2U; /* READY */
     cfg->num_subsweeps            = 3U;
 
-    /* Subsweep 0: Interner On-Chip Loopback (Jittersubtraktion) */
+    /* Subsweep 0: internal on-chip loopback (jitter subtraction) */
     cfg->subsweeps[0].start_point               = 0;
     cfg->subsweeps[0].num_points                = 1U;
     cfg->subsweeps[0].step_length               = 1U;
@@ -180,7 +180,7 @@ void a121_load_default_3subsweep_preset(a121_session_config_t *cfg, int32_t zoom
     cfg->subsweeps[0].enable_loopback           = 1U;
     cfg->subsweeps[0].prf                       = 0U; /* 19.5 MHz */
 
-    /* Subsweep 1: Kohärenter 2.5-mm Vital-Zoom auf den Thorax */
+    /* Subsweep 1: coherent 2.5 mm vital zoom on the thorax */
     cfg->subsweeps[1].start_point               = zoom_start_point;
     cfg->subsweeps[1].num_points                = 24U;
     cfg->subsweeps[1].step_length               = 1U;
@@ -193,7 +193,7 @@ void a121_load_default_3subsweep_preset(a121_session_config_t *cfg, int32_t zoom
     cfg->subsweeps[1].enable_loopback           = 0U;
     cfg->subsweeps[1].prf                       = 1U; /* 15.6 MHz */
 
-    /* Subsweep 2: Gleichzeitiger Raum-Scan (0.30..2.70 m, 40-mm Raster) */
+    /* Subsweep 2: simultaneous room scan (0.30..2.70 m, 40 mm grid) */
     cfg->subsweeps[2].start_point               = 120; /* 0.30 m */
     cfg->subsweeps[2].num_points                = 60U;
     cfg->subsweeps[2].step_length               = 16U; /* 40 mm */

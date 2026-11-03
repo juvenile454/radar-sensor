@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Benachrichtigung (Vordergrunddienst) und Bluetooth für den EKG-Gurt (V0.1)
+        // Notification (foreground service) and Bluetooth for the ECG chest strap (V0.1)
         val missing =
             listOf(
                 android.Manifest.permission.POST_NOTIFICATIONS,
@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
         if (i?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) RadarController.onUsbAttachedIntent()
     }
 
-    /** Bildschirm an lassen, solange verbunden und gewünscht; Aufnahme läuft auch bei ausgeschaltetem Bildschirm. */
+    /** Keep the screen on while connected and wanted; recording also runs with the screen off. */
     fun keepScreenOn(on: Boolean) {
         if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
@@ -106,7 +106,7 @@ fun RadarScreen() {
     var snap by remember { mutableStateOf<LiveSnapshot?>(null) }
     var keepOn by rememberSaveable { mutableStateOf(true) }
 
-    // Oberfläche mit ~12 Hz aktualisieren, nur wenn neue Daten da sind
+    // Update the UI at ~12 Hz, only when new data is available
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

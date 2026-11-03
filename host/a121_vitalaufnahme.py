@@ -1,30 +1,30 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Eigene DSP-Kette am PC (Kåsa + DACM + Hilbert-Projektion + HPS). Neue Auswertungen nur mit host/vital_eval.py und
-Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier bewährt, wandert in den
-Header. Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Own DSP chain on the PC (Kåsa + DACM + Hilbert projection + HPS). New analyses only with host/vital_eval.py and
+variants of the firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what proves itself here moves into the
+header. Function of the script unchanged.
 
-Vitalaufnahme (Atmung/Puls) mit dem A121 — Rohdaten + erweiterte Offline-/Online-Auswertung.
+Vital recording (breathing/pulse) with the A121 — raw data + extended offline/online analysis.
 
-Verbesserungen gegenüber der Basisversion:
-1. Sensor-Konfiguration: Profile 1 (40 mm FWHM statt 75 mm bei Profile 2) zur schärferen Trennung
-   von Brustbein und Schulter/Bauch, HWAAS 32, IdleState.READY (weniger Aufwach-Phasenjitter),
-   override_baudrate=921600 gegen den CH342-Reconnect-Timeout.
-2. Multi-Bin-Qualitätsauswahl: wählt im Brust-Cluster die Bins mit höchster Amplitudenstabilität
-   (geringstes Mehrwege-Fading μ/|σ|) statt blindem argmax(|z|).
-3. I/Q-Kreiszentrierung (Kåsa-Fit) + regularisierte DACM-Phasendemodulation: verhindert künstliche
-   Phasensprünge bei destruktiver Interferenz (|z| -> 0).
-4. Zeitvariable Atmungs-Oberwellen-Projektion: schätzt die momentane Atemphase θ_b(t) per
-   Hilbert-Transformation und projiziert cos(m·θ_b), sin(m·θ_b) (m=1..5) aus dem Wegsignal heraus.
-5. Beschleunigungs-Spektrum d²x/dt² + Harmonic Product Spectrum (HPS, f0·2f0·3f0): nutzt die
-   steile systolische Flanke (Oberwellenkamm des Herzschlags) zur Trennung von glatten Atmungsresten.
+Improvements over the base version:
+1. Sensor configuration: profile 1 (40 mm FWHM instead of 75 mm with profile 2) for sharper separation
+   of sternum and shoulder/abdomen, HWAAS 32, IdleState.READY (less wake-up phase jitter),
+   override_baudrate=921600 against the CH342 reconnect timeout.
+2. Multi-bin quality selection: picks in the chest cluster the bins with the highest amplitude stability
+   (lowest multipath fading μ/|σ|) instead of a blind argmax(|z|).
+3. I/Q circle centering (Kåsa fit) + regularized DACM phase demodulation: prevents artificial
+   phase jumps at destructive interference (|z| -> 0).
+4. Time-varying breathing-harmonic projection: estimates the instantaneous breathing phase θ_b(t) by
+   Hilbert transform and projects cos(m·θ_b), sin(m·θ_b) (m=1..5) out of the displacement signal.
+5. Acceleration spectrum d²x/dt² + Harmonic Product Spectrum (HPS, f0·2f0·3f0): uses the
+   steep systolic edge (harmonic comb of the heartbeat) to separate it from smooth breathing residue.
 
-Ohne Referenz (Smartwatch/Oximeter/EKG) ist jeder ausgegebene Pulswert ein experimenteller
-Rhythmus-Kandidat im Radarsignal, keine Genauigkeitsaussage.
+Without a reference (smartwatch/oximeter/ECG) every pulse value output is an experimental
+rhythm candidate in the radar signal, not a statement about accuracy.
 
-Aufnahme am Sensor:
+Recording at the sensor:
   sg dialout -c ".venv/bin/python host/a121_vitalaufnahme.py <PORT> <OUT_OHNE_ENDUNG> <DAUER_S> '<Beschreibung>'"
 
-Offline-Neuauswertung einer bestehenden .npz-Aufnahme:
+Offline re-analysis of an existing .npz recording:
   .venv/bin/python host/a121_vitalaufnahme.py --offline <EINGABE.npz> <OUT_OHNE_ENDUNG>
 """
 import json
@@ -35,15 +35,15 @@ import numpy as np
 from acconeer.exptool import a121
 from scipy import signal
 
-START_POINT, NUM_POINTS, STEP = 60, 120, 1  # Fallback 0,15–0,45 m in 2,5-mm-Schritten (wird live per Auto-Scan zentriert)
+START_POINT, NUM_POINTS, STEP = 60, 120, 1  # fallback 0.15–0.45 m in 2.5 mm steps (centered live by auto-scan)
 POINT_M = 0.0025
 FRAME_RATE = 100.0
-MM_PER_RAD = 2.4776236 / (2 * np.pi)  # PERCEIVED_WAVELENGTH / (2π) ≈ 0,3943 mm/rad
+MM_PER_RAD = 2.4776236 / (2 * np.pi)  # PERCEIVED_WAVELENGTH / (2π) ≈ 0.3943 mm/rad
 
 
 def connect(port: str, cfg: a121.SensorConfig | None = None, tries: int = 3) -> a121.Client:
-    # override_baudrate=921600 vermeidet den 2-MBaud-Wechsel, der am CH342 beim nächsten Öffnen
-    # regelmäßig in einen LinkError: recv timeout läuft.
+    # override_baudrate=921600 avoids the 2 Mbaud switch, which on the CH342 regularly runs into
+    # a LinkError: recv timeout on the next open.
     client = None
     for i in range(tries):
         try:
@@ -63,7 +63,7 @@ def connect(port: str, cfg: a121.SensorConfig | None = None, tries: int = 3) -> 
 
 
 def auto_locate_chest_start_point(client: a121.Client, scan_s: float = 1.5) -> int:
-    """Scannt 0,15–2,25 m (30-mm-Raster) für 1,5 s und findet automatisch das stärkste bewegte Ziel (Brustkorb)."""
+    """Scans 0.15–2.25 m (30 mm grid) for 1.5 s and automatically finds the strongest moving target (chest)."""
     scan_cfg = a121.SensorConfig(
         start_point=60,
         num_points=70,
@@ -84,7 +84,7 @@ def auto_locate_chest_start_point(client: a121.Client, scan_s: float = 1.5) -> i
     client.stop_session()
 
     dists_m = (60 + np.arange(70) * 12) * POINT_M
-    # Dynamische IQ-Änderung (trennt atmende Person von starren Möbeln/Wänden)
+    # Dynamic IQ change (separates a breathing person from rigid furniture/walls)
     dyn_iq = frames - np.mean(frames, axis=0, keepdims=True)
     dyn_score = np.std(dyn_iq, axis=0) * np.sqrt(np.mean(np.abs(frames), axis=0))
     best_idx = int(np.argmax(dyn_score))
@@ -99,34 +99,34 @@ def auto_locate_chest_start_point(client: a121.Client, scan_s: float = 1.5) -> i
 
 
 def remove_static_complex_clutter(iq: np.ndarray, fs: float) -> np.ndarray:
-    """Dynamische komplexe Standziel-Unterdrückung (zieht langsame/statische Hintergrundzeiger < 0,05 Hz ab)."""
+    """Dynamic complex stationary-target suppression (subtracts slow/static background phasors < 0.05 Hz)."""
     if len(iq) < int(fs * 6):
         return iq
     sos_lp = signal.butter(2, 0.05, btype="low", fs=fs, output="sos")
     static_clutter = signal.sosfiltfilt(sos_lp, iq.real, axis=0) + 1j * signal.sosfiltfilt(sos_lp, iq.imag, axis=0)
-    # 75 % des quasi-statischen Hintergrundzeigers abziehen (erhält den Arbeitskreis, dämpft Möbel/Mehrwege-Clutter)
+    # Subtract 75 % of the quasi-static background phasor (keeps the working circle, damps furniture/multipath clutter)
     return iq - 0.75 * static_clutter
 
 
 def fit_iq_circle(z: np.ndarray) -> complex:
-    """Algebraischer Kreis-Fit (Kåsa) in der komplexen I/Q-Ebene zur statischen Clutter-Kompensation."""
+    """Algebraic circle fit (Kåsa) in the complex I/Q plane for static clutter compensation."""
     x, y = z.real.astype(np.float64), z.imag.astype(np.float64)
     mat = np.column_stack([x, y, np.ones_like(x)])
     sol, _, _, _ = np.linalg.lstsq(mat, -(x**2 + y**2), rcond=None)
     cx, cy = -0.5 * sol[0], -0.5 * sol[1]
     r = np.sqrt(max(cx**2 + cy**2 - sol[2], 1e-6))
-    # Nur abziehen, wenn der geschätzte Offset plausibel innerhalb der Signalstärke liegt
+    # Subtract only if the estimated offset is plausibly within the signal strength
     if np.hypot(cx, cy) < 1.5 * r:
         return complex(cx, cy)
     return complex(np.median(x) * 0.2, np.median(y) * 0.2)
 
 
 def dacm_displacement_mm(z: np.ndarray, reg_quantile: float = 5.0) -> np.ndarray:
-    """Kreiszentrierte, regularisierte DACM-Phasendemodulation (robust gegen |z| -> 0 Einbrüche)."""
+    """Circle-centered, regularized DACM phase demodulation (robust against |z| -> 0 dropouts)."""
     center = fit_iq_circle(z)
     zc = z - center
-    # Sanfte Regularisierung verhindert künstliche π-Sprünge bei echten Nulldurchgängen (|z| -> 0),
-    # ohne bei normaler Signalstärke die Phase durch Amplitudenschwankungen zu modulieren.
+    # Soft regularization prevents artificial π jumps at true zero crossings (|z| -> 0),
+    # without modulating the phase through amplitude fluctuations at normal signal strength.
     amp_sq = np.abs(zc) ** 2
     eps = float(np.percentile(amp_sq, reg_quantile)) * 0.01 + 1e-6
     prod = zc[1:] * np.conj(zc[:-1])
@@ -137,20 +137,20 @@ def dacm_displacement_mm(z: np.ndarray, reg_quantile: float = 5.0) -> np.ndarray
 
 
 def select_stable_chest_iq(iq: np.ndarray, dist: np.ndarray, fs: float = 50.0) -> tuple[int, int, np.ndarray]:
-    """Wählt sowohl das Roh-Amplitudenmaximum als auch den stabilsten Bin im Brust-Echo (kleinstes Fading)."""
+    """Selects both the raw amplitude maximum and the most stable bin in the chest echo (least fading)."""
     _ = fs
     amp_mean = np.abs(iq).mean(axis=0)
     amp_min = np.min(np.abs(iq), axis=0)
     amp_std = np.abs(iq).std(axis=0) + 1e-6
     k_raw = int(np.argmax(amp_mean))
 
-    # Kandidaten: alle Bins mit mindestens 25 % der Maximalamplitude
+    # Candidates: all bins with at least 25 % of the maximum amplitude
     mask = amp_mean >= 0.25 * amp_mean[k_raw]
-    # Qualitätsmaß: hohes Minimum |z| (keine Nullstellen/Multipath-Auslöschung) und kleines CV = std/mean
+    # Quality measure: high minimum |z| (no nulls/multipath cancellation) and small CV = std/mean
     quality = np.where(mask, (amp_min / amp_std) * (amp_min / amp_mean[k_raw]), -1.0)
     k_best = int(np.argmax(quality))
 
-    # Kohärente Mittelung über ±2 Nachbar-Bins mit Phasen-Ausrichtung zum gewählten Bin
+    # Coherent averaging over ±2 neighbor bins with phase alignment to the selected bin
     sl = slice(max(k_best - 2, 0), min(k_best + 3, iq.shape[1]))
     sub = iq[:, sl]
     ref = iq[:, k_best : k_best + 1]
@@ -165,7 +165,7 @@ def select_stable_chest_iq(iq: np.ndarray, dist: np.ndarray, fs: float = 50.0) -
 
 
 def project_out_respiration_harmonics(disp: np.ndarray, fs: float, max_harm: int = 6) -> tuple[np.ndarray, np.ndarray]:
-    """Schätzt die schmalbandige Fundamental-Atemphase θ_1(t) per Hilbert-Transformation und projiziert 1..max_harm Oberwellen gleitend heraus."""
+    """Estimates the narrow-band fundamental breathing phase θ_1(t) by Hilbert transform and projects 1..max_harm harmonics out in a sliding fashion."""
     sos_b = signal.butter(2, [0.1, 0.55], btype="band", fs=fs, output="sos")
     breath = signal.sosfiltfilt(sos_b, disp)
 
@@ -223,7 +223,7 @@ def spectrum_peaks(x: np.ndarray, fs: float, fmin: float, fmax: float, n: int = 
 
 
 def hps_cardiac_peaks(disp_clean: np.ndarray, fs: float, fmin: float = 0.85, fmax: float = 2.0, n: int = 3):
-    """Harmonic Product Spectrum (f0 * 2f0 * 3f0) auf der 2. Ableitung (Beschleunigung d²x/dt²)."""
+    """Harmonic Product Spectrum (f0 * 2f0 * 3f0) on the 2nd derivative (acceleration d²x/dt²)."""
     acc = np.gradient(np.gradient(disp_clean, 1.0 / fs), 1.0 / fs)
     f, p = signal.welch(acc, fs=fs, nperseg=min(len(acc), int(fs * 16)), nfft=int(fs * 120))
     bg = signal.medfilt(p, kernel_size=121)

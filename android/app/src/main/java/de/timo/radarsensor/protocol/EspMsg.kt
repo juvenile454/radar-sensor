@@ -1,8 +1,8 @@
 package de.timo.radarsensor.protocol
 
 /**
- * Eine Zeile vom ESP32-S3 (Zeilenprotokoll `@TAG,feld,…`, Firmware `firmware/esp32s3/src/main.cpp`).
- * Felder kommen nur hinten dazu; ältere Firmware ohne Frame-Zähler/tick liefert dort `null`.
+ * A line from the ESP32-S3 (line protocol `@TAG,feld,…`, firmware `firmware/esp32s3/src/main.cpp`).
+ * Fields are only ever appended at the end; older firmware without frame counter/tick delivers `null` there.
  */
 sealed interface EspMsg
 
@@ -25,7 +25,7 @@ data class Iq3Start(
     val raw: Boolean,
 ) : EspMsg
 
-/** `@IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated[,frame,tick[,delayed]]` je Frame (60 Hz). */
+/** `@IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated[,frame,tick[,delayed]]` per frame (60 Hz). */
 data class Iq3(
     val tMs: Long,
     val tempC: Int,
@@ -35,13 +35,13 @@ data class Iq3(
     val saturated: Boolean,
     val frame: Long?,
     val tick: Long?,
-    /** frame_delayed vom Server (seit V1.5; ältere Firmware: null) */
+    /** frame_delayed from the server (since V1.5; older firmware: null) */
     val delayed: Boolean? = null,
 ) : EspMsg
 
 /**
- * `@RAW,frame,tick,n,<Base64>`: n komplexe int16-Punkte (real, imag, Little Endian) unverändert vom Server.
- * Reihenfolge bei `iq3`: 1 Loopback, 24 Zoom-Punkte (2,5 mm; mit A121_ZOOM_POINTS=48 in der Firmware 48), 80 Raum-Punkte.
+ * `@RAW,frame,tick,n,<Base64>`: n complex int16 points (real, imag, little endian) unchanged from the server.
+ * Order for `iq3`: 1 loopback, 24 zoom points (2.5 mm; 48 with A121_ZOOM_POINTS=48 in the firmware), 80 room points.
  */
 class Raw(
     val frame: Long,
@@ -75,7 +75,7 @@ data class RoomTarget(
     val moving: Boolean,
 )
 
-/** `@ROOM,t_ms,tick,rausch_amp,rausch_bew,n,{dist_mm,amp,bew,bewegt}×n` (1 Hz, Ziele nach Stärke sortiert) */
+/** `@ROOM,t_ms,tick,rausch_amp,rausch_bew,n,{dist_mm,amp,bew,bewegt}×n` (1 Hz, targets sorted by strength) */
 data class Room(
     val tMs: Long,
     val tick: Long,
@@ -84,7 +84,7 @@ data class Room(
     val targets: List<RoomTarget>,
 ) : EspMsg
 
-/** `@VITAL,…` (1 Hz, nur bei gültigem Report). Feldreihenfolge wie `VITAL_FIELDS` in host/a121_esp_ultimate.py. */
+/** `@VITAL,…` (1 Hz, only with a valid report). Field order as `VITAL_FIELDS` in host/a121_esp_ultimate.py. */
 data class Vital(
     val tMs: Long,
     val breathingBpm: Float,
@@ -106,7 +106,7 @@ data class Vital(
 /**
  * `@DSP,t_ms,gültig,punkt,konfidenz,rechenzeit_us,bewegung_pct,hr_harm,point_agree_pct,br_state,n_delayed,n_sat,
  * n_tickgap,snap_frame[,n_eff[,win_s,reacq]]` (1 Hz).
- * Ältere Firmware schickt weniger Felder; fehlende hinten sind null.
+ * Older firmware sends fewer fields; missing ones at the end are null.
  */
 data class Dsp(
     val tMs: Long,
@@ -116,15 +116,15 @@ data class Dsp(
     val computeUs: Long,
     val motionPct: Float,
     val hrOnHarmonic: Boolean,
-    /** frühere Konfidenz: Anteil der Zoom-Punkte mit eigener Spitze ±5 /min (Diagnose, V1.3) */
+    /** earlier confidence: share of the zoom points with their own peak ±5 /min (diagnostics, V1.3) */
     val pointAgreePct: Float? = null,
-    /** Atemzustand (V1.4): 0 normal, 1 keine Atemspitze, 2 angehalten, 3 Bewegung, 4 flach */
+    /** Breathing state (V1.4): 0 normal, 1 no breathing peak, 2 held, 3 motion, 4 shallow */
     val brState: Int? = null,
-    /** effektive Punktzahl des kombinierten Kanals (V3.1, Feld 14, nur mit Schalter A121_DSP_COMBINE) */
+    /** effective point count of the combined channel (V3.1, field 14, only with compile switch A121_DSP_COMBINE) */
     val nEff: Float? = null,
-    /** Länge des Pulsfensters in s (V6, Feld 15, nur mit Schalter A121_DSP_REACQ) */
+    /** Length of the pulse window in s (V6, field 15, only with compile switch A121_DSP_REACQ) */
     val winS: Int? = null,
-    /** Wiederfinden nach Bewegung (V6, Feld 16): 0 normal, 1 kurzes Fenster, 2 über Gedächtnis wiedergefunden */
+    /** Reacquisition after motion (V6, field 16): 0 normal, 1 short window, 2 reacquired via memory */
     val reacq: Int? = null,
 ) : EspMsg {
     companion object {
@@ -143,7 +143,7 @@ data class Dsp(
     }
 }
 
-/** `@RECAL,t_ms`: Sensor meldete calibration_needed, Session mit gleichem Zoom-Fenster neu aufgesetzt (V1.5). */
+/** `@RECAL,t_ms`: Sensor reported calibration_needed, session set up again with the same zoom window (V1.5). */
 data class Recal(val tMs: Long) : EspMsg
 
 /** `@REZOOM,start_mm,end_mm` */
@@ -152,7 +152,7 @@ data class Rezoom(
     val zoomEndMm: Float,
 ) : EspMsg
 
-/** `@RECONNECT,t_ms,versuch,ok`: Server nach Frame-Timeouts neu verbunden (tick beginnt danach neu). */
+/** `@RECONNECT,t_ms,versuch,ok`: Server reconnected after frame timeouts (tick starts over afterwards). */
 data class Reconnect(
     val tMs: Long,
     val attempt: Int,
@@ -164,7 +164,7 @@ data class Warn(
     val what: String,
 ) : EspMsg
 
-/** `@END`: Stream (iq3, doppler) beendet. */
+/** `@END`: Stream (iq3, doppler) ended. */
 data object End : EspMsg
 
 /** `@DOPPLER_START,dist_mm,sweep_rate_hz,sweeps` */
@@ -204,13 +204,13 @@ data class SessSub(
     val stepMm: Float,
 ) : EspMsg
 
-/** Stärkster Punkt eines Subsweeps */
+/** Strongest point of a subsweep */
 data class SubPeak(
     val distMm: Float,
     val amp: Float,
 )
 
-/** `@PEAK,t_ms,tick,temp,flags,{mm,amp}×subs` (je Frame) — flags: 1 gesättigt, 2 verzögert, 4 Kalibrierung nötig */
+/** `@PEAK,t_ms,tick,temp,flags,{mm,amp}×subs` (per frame) — flags: 1 saturated, 2 delayed, 4 calibration needed */
 data class SessPeak(
     val tMs: Long,
     val tick: Long,
@@ -219,7 +219,7 @@ data class SessPeak(
     val peaks: List<SubPeak>,
 ) : EspMsg
 
-/** `@AMP,t_ms,sub,start_mm,step_mm,amp…` (10 Hz je Subsweep) */
+/** `@AMP,t_ms,sub,start_mm,step_mm,amp…` (10 Hz per subsweep) */
 class SessAmp(
     val tMs: Long,
     val sub: Int,
@@ -248,20 +248,20 @@ data class SessEnd(
     val counters: List<Long>,
 ) : EspMsg
 
-/** Zeile mit `FEHLER` */
+/** Line with `FEHLER` */
 data class EspError(
     val text: String,
 ) : EspMsg
 
-/** Freitext (help, info, bus, srv_info, …) */
+/** Free text (help, info, bus, srv_info, …) */
 data class Text(
     val text: String,
 ) : EspMsg
 
-/** `@…`-Zeile mit unbekanntem Tag (neuere Firmware) */
+/** `@…` line with an unknown tag (newer firmware) */
 /**
- * `@STATE,t_ms,zustand,seit_ms` (V3.5, 1 Hz): Zustand der Messung (0 keine Person, 1 Suche, 2 Erfassung, 3 gültig,
- * 4 Bewegung, 5 Apnoe) und wie lange er schon besteht.
+ * `@STATE,t_ms,zustand,seit_ms` (V3.5, 1 Hz): state of the measurement (0 no person, 1 search, 2 acquisition, 3 valid,
+ * 4 motion, 5 apnea) and how long it has lasted.
  */
 data class MeasState(
     val tMs: Long,
@@ -289,7 +289,7 @@ data class MeasState(
     }
 }
 
-/** `@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate` je Atemzug (V3.4): Abstand zur vorigen Spitze, Tiefe, Rate /min. */
+/** `@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate` per breath (V3.4): distance to the previous peak, depth, rate /min. */
 data class Breath(
     val tMs: Long,
     val tick: Long,
@@ -303,7 +303,7 @@ data class UnknownTag(
     val line: String,
 ) : EspMsg
 
-/** `@…`-Zeile mit bekanntem Tag, aber nicht lesbar (z. B. abgeschnitten) */
+/** `@…` line with a known tag but not readable (e.g. truncated) */
 data class Malformed(
     val tag: String,
     val line: String,

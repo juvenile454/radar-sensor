@@ -5,7 +5,7 @@ import de.timo.radarsensor.protocol.MeasState
 import de.timo.radarsensor.protocol.Vital
 import kotlin.math.abs
 
-/** Gütezustand des Pulses für die Anzeige (V5.1). grey: Wert nur grau zeigen; reason: warum. */
+/** Quality state of the pulse for the display (V5.1). grey: show the value in grey only; reason: why. */
 data class PulseQuality(
     val grey: Boolean,
     val stateText: String,
@@ -15,14 +15,14 @@ data class PulseQuality(
 const val MIN_CONF_PCT = 50f
 const val MAX_MOTION_PCT = 30f
 
-/** @VITAL älter als der letzte @DSP um mehr als das: Wert stammt von einem früheren Report (Reports kommen 1/s). */
+/** @VITAL older than the last @DSP by more than this: value comes from an earlier report (reports arrive 1/s). */
 const val STALE_MS = 1500L
 
 /**
- * Puls grau bei Konfidenz unter 50 %, Bewegung (Zustand BEWEGUNG oder > 30 % bewegte Blöcke), ohne gültige
- * Messung (keine Person, Suche, Erfassung), bei ungültigem letztem Report (in jedem Zustand, auch Apnoe: dann gibt es
- * kein neues @VITAL, angezeigt wäre der alte Wert) und wenn der Wert älter als der letzte Report ist. Zustandstext aus
- * `@STATE` (V3.5), bei älterer Firmware aus der Gültigkeit des Reports.
+ * Pulse grey at confidence below 50 %, motion (state BEWEGUNG or > 30 % moving blocks), without a valid
+ * measurement (no person, search, acquisition), with an invalid last report (in any state, also apnea: then there is
+ * no new @VITAL, the old value would be displayed) and when the value is older than the last report. State text from
+ * `@STATE` (V3.5), with older firmware from the validity of the report.
  */
 fun pulseQuality(
     v: Vital?,
@@ -50,7 +50,7 @@ fun pulseQuality(
     return PulseQuality(reason != null, text, reason)
 }
 
-/** Abweichung Radar − Gurt (V5.1): letzte und Median |Δ| über windowS, n Paare. */
+/** Deviation radar − chest strap (V5.1): last and median |Δ| over windowS, n pairs. */
 data class Deviation(
     val last: Float,
     val medianAbs: Float,
@@ -58,8 +58,8 @@ data class Deviation(
 )
 
 /**
- * Je Radarwert (> 0) der nächste Gurtwert innerhalb ±2 s; über die letzten windowS Sekunden (ab dem letzten
- * Radarwert). null ohne Paar.
+ * For each radar value (> 0) the nearest chest strap value within ±2 s; over the last windowS seconds (from the last
+ * radar value). null without a pair.
  */
 fun deviation(
     vT: FloatArray,

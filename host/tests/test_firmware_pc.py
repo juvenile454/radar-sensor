@@ -1,6 +1,6 @@
-"""ESP32-Firmware am PC (Stub-Header host/fw_stub/, kein Ersatz für `pio run`, kein Lauf am Gerät):
-Syntaxprüfung von main.cpp; iq3-Preset (a121_server_client.h) über Übersetzungsschalter einstellbar, Standard
-unverändert (V4); host/noise_floor.py nimmt dieselben Standardwerte auf.
+"""ESP32 firmware on the PC (stub headers host/fw_stub/, no substitute for `pio run`, no run on the device):
+syntax check of main.cpp; iq3 preset (a121_server_client.h) adjustable via compile switches, default
+unchanged (V4); host/noise_floor.py takes the same default values.
 
   .venv/bin/python -m unittest host/tests/test_firmware_pc.py
 """
@@ -41,9 +41,9 @@ class FirmwareSyntaxTest(unittest.TestCase):
 
 
 class BuildFlagsTest(unittest.TestCase):
-    """Nachrechnung am PC, im Prüfstand und am Handy übersetzen mit -ffp-contract=off; die Firmware muss es auch, sonst
-    fasst GCC auf dem ESP32-S3 Multiplikation und Addition zu madd.s zusammen und die Werte weichen in den letzten
-    Bits ab (der Vergleich ESP32 ↔ Nachrechnung wäre nicht mehr bitgleich)."""
+    """The replay on the PC, in the test bench and on the phone is compiled with -ffp-contract=off; the firmware must be too,
+    otherwise GCC on the ESP32-S3 fuses multiplication and addition into madd.s and the values differ in the last
+    bits (the comparison ESP32 ↔ replay would no longer be bit-identical)."""
 
     def flags(self) -> list[str]:
         ini = (REPO / "firmware" / "esp32s3" / "platformio.ini").read_text().splitlines()
@@ -57,7 +57,7 @@ class BuildFlagsTest(unittest.TestCase):
 
     def test_fp_contract_off_like_replay(self):
         f = self.flags()
-        self.assertIn("-DBOARD_HAS_PSRAM", f)  # Leser findet die Liste
+        self.assertIn("-DBOARD_HAS_PSRAM", f)  # reader finds the list
         self.assertIn("-ffp-contract=off", f)
         self.assertFalse([x for x in f if x in ("-ffast-math", "-Ofast") or x.startswith("-ffp-contract=fast")])
 
@@ -94,7 +94,7 @@ class Iq3PresetTest(unittest.TestCase):
         self.assertIn("Profil 2", c.stderr)
 
     def test_noise_floor_defaults_match_firmware(self):
-        """V4.1 misst mit noise_floor.py record; ohne Angaben dieselbe Zoom-/Loopback-Einstellung wie iq3."""
+        """V4.1 measures with noise_floor.py record; without arguments the same zoom/loopback setting as iq3."""
         lb, zoom = nf.build_config(start_mm=500).subsweeps
         out = self.run_preset().stdout.splitlines()
 

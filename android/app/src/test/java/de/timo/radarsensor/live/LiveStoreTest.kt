@@ -15,7 +15,7 @@ class LiveStoreTest {
             "@IQ3_START,500,560,60.0,0",
             "@IQ3,8,14,1419.0,0.00,206.6,0,0,572",
             "@IQ3,25,14,1419.0,1.00,206.6,0,1,589",
-            // Frames 2 und 3 fehlen (zwischen ESP32 und App verloren)
+            // Frames 2 and 3 are missing (lost between ESP32 and app)
             "@IQ3,80,14,1419.0,2.00,206.6,0,4,639",
             "@IQ3,95,14,1419.0,3.00,206.6,1,5,656",
         )
@@ -24,7 +24,7 @@ class LiveStoreTest {
         assertEquals(1L, snap.frameGaps)
         assertEquals(1L, snap.iqSaturatedFrames)
         assertEquals(StreamMode.IQ3, snap.mode)
-        // Zeit aus tick, Nullpunkt beim ersten Frame + t_ms
+        // Time from tick, zero point at the first frame + t_ms
         assertEquals(listOf(0.008f, 0.025f, 0.075f, 0.092f), snap.iqT.toList())
         assertEquals(4, snap.iqDisp.size)
     }
@@ -33,12 +33,12 @@ class LiveStoreTest {
         var now = 0L
         val s = LiveStore(nanoTime = { now })
         s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,8,14,1.0,0,1.0,0,0,572", "@IQ3,10008,14,1.0,0,1.0,0,1,10572")
-        now += 8_000_000_000L // 8 s abgezogen, ESP bootet neu: Zähler, tick und t_ms beginnen von vorn
+        now += 8_000_000_000L // 8 s unplugged, ESP reboots: counter, tick and t_ms start over
         s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,9,14,1.0,0,1.0,0,0,300", "@IQ3,26,14,1.0,0,1.0,0,1,317")
         val t = s.snapshot().iqT.toList()
         assertEquals(4, t.size)
         assertEquals(10.008f, t[1], 1e-4f)
-        assertEquals(18.017f, t[2], 1e-3f) // 10,008 s + 8 s Pause + 9 ms
+        assertEquals(18.017f, t[2], 1e-3f) // 10.008 s + 8 s pause + 9 ms
         assertTrue(t[3] > t[2])
         assertEquals(0L, s.snapshot().framesLost)
     }
@@ -47,7 +47,7 @@ class LiveStoreTest {
         val c = TickClock()
         assertEquals(0.008f, c.seconds(572, 8), 1e-6f)
         assertEquals(10.008f, c.seconds(10572, 10_008), 1e-6f)
-        // Server neu gestartet: tick beginnt klein; Zeit läuft ab t_ms weiter, nicht zurück
+        // Server restarted: tick starts small; time continues from t_ms, not backwards
         val t = c.seconds(300, 11_500)
         assertEquals(11.5f, t, 1e-6f)
         assertEquals(11.6f, c.seconds(400, 11_610), 1e-6f)
@@ -97,7 +97,7 @@ class LiveStoreTest {
         assertEquals(1L, snap.frameTimeouts)
         assertEquals(1, snap.rezooms)
         assertEquals(listOf(EventKind.START, EventKind.REZOOM, EventKind.WARN, EventKind.RECONNECT, EventKind.END), snap.events.map { it.kind })
-        // Ereignisse landen in der Konsole, @IQ3 nicht
+        // Events end up in the console, @IQ3 does not
         assertTrue(snap.console.contains("@REZOOM,687,747"))
     }
 
@@ -119,11 +119,11 @@ class LiveStoreTest {
         assertEquals(5f, r.last())
     }
 
-    /** V0.1/V5.1: Gurt-Puls auf der Zeitachse der Radarwerte (letzte Datenzeit + seitdem vergangene Zeit). */
+    /** V0.1/V5.1: chest strap pulse on the time axis of the radar values (last data time + time elapsed since). */
     @Test fun referenzKurveAufDerLiveZeitachse() {
         var now = 0L
         val s = LiveStore(nanoTime = { now })
-        s.reference(HrMeasurement(70, emptyList(), true)) // noch keine Radarzeit: verworfen
+        s.reference(HrMeasurement(70, emptyList(), true)) // no radar time yet: dropped
         assertEquals(0, s.snapshot().refT.size)
         s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,2000,14,1.0,0,1.0,0,0,2572")
         now += 500_000_000L
@@ -136,7 +136,7 @@ class LiveStoreTest {
         assertEquals(0, s.snapshot().refT.size)
     }
 
-    /** V5.1: Atemzüge (@BREATH) als Kurve, Zustand (@STATE) zuletzt. */
+    /** V5.1: breaths (@BREATH) as a curve, state (@STATE) last. */
     @Test fun atemzuegeUndZustand() {
         val s = LiveStore()
         s.feed("@IQ3_START,500,560,60.0,0", "@IQ3,1000,14,1.0,0,1.0,0,0,1572", "@STATE,1000,2,1000",
@@ -163,10 +163,10 @@ class LiveStoreTest {
         s.phoneCpu(1.5f)
         val snap = s.snapshot()
         assertEquals(1, snap.phoneT.size)
-        assertEquals(esp.vitalT[0], snap.phoneT[0], 1e-6f) // gleicher Zeitpunkt wie der ESP32-Wert
+        assertEquals(esp.vitalT[0], snap.phoneT[0], 1e-6f) // same point in time as the ESP32 value
         assertEquals(66.5f, snap.phoneHr[0], 1e-6f)
         assertEquals(81f, snap.phoneConf[0], 1e-6f)
-        assertEquals(64.2f, snap.vitalHr[0], 1e-6f) // ESP32-Reihe unverändert
+        assertEquals(64.2f, snap.vitalHr[0], 1e-6f) // ESP32 series unchanged
         assertEquals(81.0f, snap.lastPhoneDsp?.confidencePct)
         assertEquals(3, snap.lastPhoneState?.state)
         assertEquals(66.5f, snap.lastPhoneVital?.hrFusedBpm)
@@ -179,7 +179,7 @@ class LiveStoreTest {
     }
 
     @Test fun handyWertZeitAusTms() {
-        // Handy-Zeile mit anderem t_ms als die letzte @ROOM-Zeile: Zeit relativ dazu (gleiche Zeitachse wie vitalT)
+        // Phone line with a different t_ms than the last @ROOM line: time relative to it (same time axis as vitalT)
         val s = LiveStore()
         s.feed(
             "@IQ3_START,500,560,60.0,0",

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""ESP32-S3-Ausgabe eines Befehls aufzeichnen und prüfen, im selben Format wie die Android-App.
+"""Record and check the ESP32-S3 output of a command, in the same format as the Android app.
 
-Aufnahme-Ordner (docs/ANDROID_APP.md):
-  stream.log   Zeilen genau wie vom ESP32 (ohne Zeilenende-\\r)
-  rxtime.csv   line,rx_ms (Empfangszeit je Zeile, ms seit Aufnahmebeginn)
-  meta.json    Befehl, @HELLO, Gerät, Start, Quelle
+Recording folder (docs/ANDROID_APP.md):
+  stream.log   lines exactly as from the ESP32 (without line-ending \\r)
+  rxtime.csv   line,rx_ms (receive time per line, ms since recording start)
+  meta.json    command, @HELLO, device, start, source
 
-Beispiele:
+Examples:
   .venv/bin/python host/esp_record.py --cmd "iq3 20 500 raw" --name iq3raw_20s
   .venv/bin/python host/esp_record.py --check ~/Data/radar-sensor/app-fixtures/iq3raw_20s
-  .venv/bin/python host/esp_record.py --check <ordner> --npz <ziel.npz>   # @RAW → iq3raw-npz für --mode verify-cpp
+  .venv/bin/python host/esp_record.py --check <ordner> --npz <ziel.npz>   # @RAW → iq3raw-npz for --mode verify-cpp
 
-Die Prüfung zählt Zeilen je Tag, Frame-Lücken (@IQ3/@DOPPLER-Zähler), Tick-Rücksprünge und vergleicht bei @RAW die
-Loopback-/Zoom-Amplitude aus den Rohpunkten mit den Werten in @IQ3 desselben Frames.
+The check counts lines per tag, frame gaps (@IQ3/@DOPPLER counters), tick regressions and, for @RAW, compares the
+loopback/zoom amplitude from the raw points with the values in @IQ3 of the same frame.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ DATA_DIR = pathlib.Path("~/Data/radar-sensor").expanduser()
 FIXTURE_DIR = DATA_DIR / "app-fixtures"
 BY_ID = pathlib.Path("/dev/serial/by-id")
 ROOM_POINTS = 80
-ZOOM_WIDTHS = (24, 48)  # Zoom-Punkte je Frame (A121_ZOOM_POINTS; 48 vorbereitet, V2.3), aus @RAW abgelesen
+ZOOM_WIDTHS = (24, 48)  # zoom points per frame (A121_ZOOM_POINTS; 48 prepared, V2.3), read from @RAW
 
 
 def find_port() -> str:
@@ -56,8 +56,8 @@ def record(port: str, cmd: str, out: pathlib.Path, timeout_s: float, reset_after
     import serial  # pyserial
 
     out.mkdir(parents=True, exist_ok=False)
-    # DTR/RTS nicht anfassen: Linux setzt beim Öffnen beide, das ist ohne Reset. DTR=0 bei RTS=1 (auch kurz, etwa
-    # durch dtr=False vor open()) startet den ESP32-S3 über USB-Serial/JTAG neu (2026-11-01 per @HELLO up_ms geprüft).
+    # Do not touch DTR/RTS: Linux sets both on open, which is without reset. DTR=0 with RTS=1 (even briefly, e.g.
+    # through dtr=False before open()) restarts the ESP32-S3 via USB-Serial/JTAG (checked 2026-11-01 via @HELLO up_ms).
     ser = serial.Serial(port, 115200, timeout=0.2)
     try:
         ser.write(b"\n")
@@ -77,7 +77,7 @@ def record(port: str, cmd: str, out: pathlib.Path, timeout_s: float, reset_after
             ser.write((cmd + "\n").encode("ascii"))
             while time.monotonic() - t0 < timeout_s:
                 if reset_after_s is not None and not reset_sent and time.monotonic() - t0 >= reset_after_s:
-                    ser.write(b"\x12")  # Server absichtlich neu starten → @RECONNECT prüfen
+                    ser.write(b"\x12")  # deliberately restart the server → check @RECONNECT
                     reset_sent = True
                 raw = ser.readline()
                 if not raw:
@@ -110,8 +110,8 @@ def check(folder: pathlib.Path, npz: pathlib.Path | None) -> int:
     tags = collections.Counter(ln.split(",", 1)[0] if ln.startswith("@") else "(text)" for ln in lines)
     frames: dict[str, list[int]] = {"@IQ3": [], "@DOPPLER": []}
     ticks: dict[str, list[int]] = {"@IQ3": [], "@DOPPLER": []}
-    # Index des ersten Frames nach @RECONNECT (Server neu: tick beginnt neu) bzw. nach @IQ3_START/@DOPPLER_START
-    # (neuer Stream, z. B. ESP32 nach Abziehen neu gebootet: tick und Frame-Zähler beginnen neu)
+    # Index of the first frame after @RECONNECT (server restarted: tick starts over) or after @IQ3_START/@DOPPLER_START
+    # (new stream, e.g. ESP32 rebooted after unplugging: tick and frame counter start over)
     seg_start: dict[str, set[int]] = {"@IQ3": set(), "@DOPPLER": set()}
     stream_start: dict[str, set[int]] = {"@IQ3": set(), "@DOPPLER": set()}
     reconnects = 0
@@ -154,8 +154,8 @@ def check(folder: pathlib.Path, npz: pathlib.Path | None) -> int:
         fr, tk = np.array(frames[tag]), np.array(ticks[tag], dtype=np.int64)
         if fr.size < 2:
             continue
-        # frame = Zähler des ESP32 (Lücke = Verlust zwischen ESP32 und Empfänger),
-        # tick = Sensorzeit in ms (beginnt nach @RECONNECT neu, große Abstände = Lücke am Sensor/Server)
+        # frame = counter of the ESP32 (gap = loss between ESP32 and receiver),
+        # tick = sensor time in ms (starts over after @RECONNECT, large intervals = gap at sensor/server)
         new_stream = np.array([i + 1 in stream_start[tag] for i in range(fr.size - 1)], dtype=bool)
         dfr = np.diff(fr)[~new_stream]
         gaps = int(np.sum(dfr != 1))
@@ -174,7 +174,7 @@ def check(folder: pathlib.Path, npz: pathlib.Path | None) -> int:
     if raw_X:
         X = np.stack(raw_X)
         zoom_points = X.shape[1] - 1 - ROOM_POINTS
-        zoom_center = 1 + zoom_points // 2  # wie b0 in cmdIq3()
+        zoom_center = 1 + zoom_points // 2  # like b0 in cmdIq3()
         diffs = []
         for fno, x in zip(raw_frames, raw_X):
             if fno in iq3_amp:

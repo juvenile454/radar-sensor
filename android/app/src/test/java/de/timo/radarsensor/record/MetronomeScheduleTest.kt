@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
-/** V0.2: Takt der Metronom-Atmung ohne Drift (jeder Ton auf start + k · 60 / Takt), Takte 6/10/15/20 /min. */
+/** V0.2: tempo of the metronome breathing without drift (every tone at start + k · 60 / tempo), tempos 6/10/15/20 /min. */
 class MetronomeScheduleTest {
     @Test fun ticksWithoutDrift() {
         val s = MetronomeSchedule(startNanos = 5_000_000_000L, ratePerMin = 15)

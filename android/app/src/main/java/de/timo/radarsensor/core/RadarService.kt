@@ -21,9 +21,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * Hält den Prozess im Vordergrund (Typ connectedDevice) und die CPU wach, solange eine Verbindung oder Aufnahme
- * läuft. Sonst würde Samsung die App bei ausgeschaltetem Bildschirm einfrieren, der Lese-Thread stünde, und der
- * ESP32 bliebe an seinem USB-Sendepuffer hängen.
+ * Keeps the process in the foreground (type connectedDevice) and the CPU awake while a connection or recording
+ * is active. Otherwise Samsung would freeze the app with the screen off, the read thread would stall, and the
+ * ESP32 would get stuck on its USB transmit buffer.
  */
 class RadarService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -95,17 +95,17 @@ class RadarService : Service() {
         private const val CHANNEL = "radar"
         private const val NOTIF_ID = 1
 
-        /** Verbunden, Aufnahme läuft, oder USB abgezogen und Neuverbinden aktiv (Start aus dem Hintergrund wäre verboten). */
+        /** Connected, recording running, or USB unplugged and reconnect active (starting from the background would be forbidden). */
         private fun shouldRun() = RadarController.isConnected || RadarController.recording.value != null || RadarController.autoUsb
 
-        /** Startet oder beendet den Dienst passend zum Zustand. */
+        /** Starts or stops the service to match the state. */
         fun update(ctx: Context) {
             val i = Intent(ctx, RadarService::class.java)
             if (shouldRun()) {
                 try {
                     ctx.startForegroundService(i)
                 } catch (e: Exception) {
-                    // Start aus dem Hintergrund verboten (z. B. Wiederverbinden ohne sichtbare App): Lesen läuft trotzdem
+                    // Starting from the background is forbidden (e.g. reconnecting without a visible app): reading continues anyway
                     android.util.Log.w("RadarService", "startForegroundService", e)
                 }
             } else {

@@ -1,14 +1,14 @@
 /**
  * @file dsp_live.h
- * @brief Live-Pfad der Handy-DSP (V5.2): jede vom ESP32 empfangene Zeile eines `iq3 … raw`-Streams geht in denselben
- *        Replayer wie beim Nachrechnen (dsp_replay.h); zurück kommen nur die am Handy neu gerechneten Zeilen
+ * @brief Live path of the phone DSP (V5.2): every line of an `iq3 … raw` stream received from the ESP32 goes into the same
+ *        replayer as for the replay (dsp_replay.h); only the lines recomputed on the phone come back:
  *        `@DSP`, `@VITAL`, `@STATE`, `@BREATH`.
  *
- * Der Replayer dekodiert `@RAW`, rechnet an denselben Stellen und aus demselben Schnappschuss wie der ESP32 (an dessen
- * `@DSP`-Zeilen) und folgt `@REZOOM`/`@RECAL`/`@RECONNECT`. Damit liegen ESP32- und Handy-Wert zeitgleich
- * nebeneinander. In der App wird die Bibliothek radardsp_live mit `A121_DSP_HEAVY` übersetzt (Viterbi-Verfolgung und
- * Abzug der Atem-Oberwellen), die Nachrechnung (radardsp) ohne. Rechenzeit: CPU-Zeit des aufrufenden Threads
- * (CLOCK_THREAD_CPUTIME_ID, auch unter Android), summiert über alle line()-Aufrufe.
+ * The replayer decodes `@RAW`, computes at the same points and from the same snapshot as the ESP32 (at its
+ * `@DSP` lines) and follows `@REZOOM`/`@RECAL`/`@RECONNECT`. This puts the ESP32 and phone values side by
+ * side at the same time. In the app the library radardsp_live is compiled with `A121_DSP_HEAVY` (Viterbi tracking and
+ * subtraction of the breathing harmonics), the replay (radardsp) without it. Compute time: CPU time of the calling thread
+ * (CLOCK_THREAD_CPUTIME_ID, also on Android), summed over all line() calls.
  */
 #ifndef DSP_LIVE_H
 #define DSP_LIVE_H
@@ -23,7 +23,7 @@ namespace dsp_live {
 
 class LiveDsp {
 public:
-    /** dsp: eine Instanz für die ganze Laufzeit (der Header gibt seinen Speicher nicht frei). */
+    /** dsp: one instance for the whole runtime (the header does not free its memory). */
     explicit LiveDsp(a121_dsp::UltimateEspDsp &dsp) : dsp_(dsp), rp_(new dsp_replay::Replayer(dsp, nullptr, nullptr)) {
         rp_->setSink(&LiveDsp::collect, this);
     }
@@ -31,7 +31,7 @@ public:
     LiveDsp(const LiveDsp &)            = delete;
     LiveDsp &operator=(const LiveDsp &) = delete;
 
-    /** Neubeginn (Handy-DSP eingeschaltet, neue Verbindung): wartet auf das nächste `@IQ3_START`. */
+    /** Restart (phone DSP switched on, new connection): waits for the next `@IQ3_START`. */
     void reset() {
         delete rp_;
         rp_ = new dsp_replay::Replayer(dsp_, nullptr, nullptr);
@@ -39,9 +39,9 @@ public:
     }
 
     /**
-     * Eine empfangene Zeile (ohne oder mit Zeilenende). Rückgabe: die dadurch fertig gewordenen Handy-Zeilen, durch
-     * '\n' getrennt (leer = keine). Eine Zeile kann eine Zeile später kommen als beim ESP32 (eigenes `@VITAL`, wenn
-     * der ESP32 keines hatte, erst mit der folgenden Zeile).
+     * One received line (with or without line end). Returns: the phone lines completed by it, separated by
+     * '\n' (empty = none). A line can come one line later than on the ESP32 (own `@VITAL`, if
+     * the ESP32 had none, only with the following line).
      */
     const std::string &line(const char *s, size_t n) {
         out_.clear();
@@ -52,9 +52,9 @@ public:
         return out_;
     }
 
-    /** CPU-Zeit aller line()-Aufrufe seit Programmstart in ns. */
+    /** CPU time of all line() calls since program start in ns. */
     uint64_t cpuNs() const { return cpu_ns_; }
-    /** Gesehene `@RAW`-Frames seit Programmstart (60 je Sekunde Daten). */
+    /** `@RAW` frames seen since program start (60 per second of data). */
     unsigned long frames() const { return frames_; }
 
 private:

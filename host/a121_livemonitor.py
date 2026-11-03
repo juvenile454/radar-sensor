@@ -1,21 +1,21 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Live-Anzeige mit der DSP-Kette aus a121_vitalaufnahme.py. Neue Auswertungen nur mit host/vital_eval.py und Varianten
-des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier bewährt, wandert in den Header.
-Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Live display with the DSP chain from a121_vitalaufnahme.py. New analyses only with host/vital_eval.py and variants
+of the firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what proves itself here moves into the header.
+Function of the script unchanged.
 
-Live-Monitor A121: Abstand, Bewegung, Atmung, Puls-Kandidat — zum Beobachten, nicht zum Messen.
+Live monitor A121: distance, motion, breathing, pulse candidate — for observing, not for measuring.
 
-Fenster (pyqtgraph) mit:
-- Amplitude über Abstand (stabilster Ziel-Bin im Brustecho markiert)
-- Brustverschiebung der letzten 30 s (kreiszentrierte DACM-Phase am Ziel, mm)
-- Pulsband 0,8–2,5 Hz nach Hilbert-Atmungsoberwellen-Projektion (µm)
-- Spektrum mit Atmungs-Oberwellen + Beschleunigungs-HPS (f0·2f0·3f0)
-- Kennzahlen: Abstand, Signal, Bewegung, Atmung /min, Puls-Kandidat /min (Spektrum & HPS)
-Button „Letzte 60 s speichern“ → ~/Data/radar-sensor/.
+Window (pyqtgraph) with:
+- amplitude over distance (most stable target bin in the chest echo marked)
+- chest displacement of the last 30 s (circle-centered DACM phase at the target, mm)
+- pulse band 0.8–2.5 Hz after Hilbert breathing-harmonic projection (µm)
+- spectrum with breathing harmonics + acceleration HPS (f0·2f0·3f0)
+- key figures: distance, signal, motion, breathing /min, pulse candidate /min (spectrum & HPS)
+Button "Letzte 60 s speichern" (save last 60 s) → ~/Data/radar-sensor/.
 
   sg dialout -c ".venv/bin/python host/a121_livemonitor.py <PORT> [START_M END_M]"
 
-Puls-Anzeige ist experimentell und ohne Referenz keine Messung.
+The pulse display is experimental and, without a reference, not a measurement.
 """
 import json
 import queue
@@ -36,7 +36,7 @@ from a121_vitalaufnahme import (
     project_out_respiration_harmonics,
 )
 
-START_POINT, NUM_POINTS = 60, 320  # Standard 0,15–0,95 m (deckt 150 mm bis 950 mm ab), 2,5 mm/Punkt
+START_POINT, NUM_POINTS = 60, 320  # default 0.15–0.95 m (covers 150 mm to 950 mm), 2.5 mm/point
 POINT_M = 0.0025
 FS = 50.0
 MM_PER_RAD = 5.0 / (4 * np.pi)
@@ -54,7 +54,7 @@ class Reader(threading.Thread):
 
     def run(self) -> None:
         client = None
-        for i in range(3):  # override_baudrate=921600 vermeidet den 2M-Baud-Reconnect-Timeout
+        for i in range(3):  # override_baudrate=921600 avoids the 2M-baud reconnect timeout
             try:
                 client = a121.Client.open(serial_port=self.port, override_baudrate=921600)
                 client.setup_session(self.cfg)
@@ -117,7 +117,7 @@ class Monitor(QtWidgets.QWidget):
         self.q: queue.Queue = queue.Queue()
         self.reader = Reader(port, self.cfg, self.q)
         self.buf = np.zeros((int(BUF_S * FS), num_points), dtype=np.complex64)
-        self.n = 0  # Frames insgesamt
+        self.n = 0  # frames in total
         self.dist = (start_point + np.arange(num_points)) * POINT_M
         self.target = None
         self.sos_b = signal.butter(2, [0.1, 0.6], btype="band", fs=FS, output="sos")
@@ -191,7 +191,7 @@ class Monitor(QtWidgets.QWidget):
         mask = amp_mean >= 0.30 * amp_mean[k_raw]
         qual = np.where(mask, (amp_min / amp_std) * (amp_min / amp_mean[k_raw]), -1.0)
         k_new = int(np.argmax(qual))
-        # Ziel nur wechseln, wenn die Phasenstabilität am neuen Bin klar besser ist
+        # switch target only if the phase stability at the new bin is clearly better
         if self.target is None or qual[k_new] > 1.35 * max(qual[self.target], 1e-6):
             self.target = k_new
         k = self.target
@@ -210,7 +210,7 @@ class Monitor(QtWidgets.QWidget):
         t = (np.arange(len(disp)) - len(disp)) / FS
         self.c_disp.setData(t, disp)
 
-        # Bewegung: Spitze-Spitze der letzten 2 s nach Abzug des linearen Trends
+        # Motion: peak-to-peak of the last 2 s after removing the linear trend
         last = signal.detrend(disp[-int(2 * FS):])
         mv = float(np.ptp(last))
         state = "ruhig" if mv < 1.5 else ("leicht" if mv < 5 else "STARK")

@@ -3,7 +3,7 @@ package de.timo.radarsensor.record
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-/** Klangquelle eines Metronom-Laufs (in der App ein ToneGenerator). */
+/** Sound source of a metronome run (a ToneGenerator in the app). */
 interface Beeper {
     fun beep()
 
@@ -11,10 +11,10 @@ interface Beeper {
 }
 
 /**
- * Ein Metronom-Lauf bis zum Abbruch der Coroutine: öffnet seine Klangquelle selbst und schließt sie im finally, damit
- * nach stop() kein Ton auf eine freigegebene Quelle geht (auch nicht bei stop() + start() direkt hintereinander).
- * Ton k auf [MetronomeSchedule.tickNanos]; nach jedem Ton [onTick] mit der Zeit nach dem Ton. Verpasste Töne (Lauf
- * hing) werden übersprungen, nicht nachgeholt.
+ * One metronome run until the coroutine is cancelled: opens its sound source itself and closes it in finally, so that
+ * after stop() no tone goes to a released source (not even with stop() + start() directly in a row).
+ * Tone k at [MetronomeSchedule.tickNanos]; after each tone [onTick] with the time after the tone. Missed tones (run
+ * stalled) are skipped, not made up.
  */
 suspend fun runMetronome(
     sched: MetronomeSchedule,

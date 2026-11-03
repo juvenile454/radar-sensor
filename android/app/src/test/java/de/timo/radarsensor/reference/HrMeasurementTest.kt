@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** V0.1: Heart Rate Measurement (0x2A37) eines EKG-Gurts, z. B. Polar H10. */
+/** V0.1: Heart Rate Measurement (0x2A37) of an ECG chest strap, e.g. Polar H10. */
 class HrMeasurementTest {
     private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
 

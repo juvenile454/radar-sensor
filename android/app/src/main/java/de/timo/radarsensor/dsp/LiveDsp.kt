@@ -1,23 +1,23 @@
 package de.timo.radarsensor.dsp
 
-/** Rechenkern der Handy-DSP; [LiveDsp] ist die native Fassung, Tests setzen einen Ersatz ein. */
+/** Compute core of the phone DSP; [LiveDsp] is the native version, tests substitute a replacement. */
 interface DspEngine {
     val available: Boolean
 
     fun reset()
 
-    /** Eine empfangene Zeile; Rückgabe die dadurch fertigen Handy-Zeilen (durch '\n' getrennt) oder null. */
+    /** One received line; returns the phone lines completed by it (separated by '\n') or null. */
     fun line(line: String): String?
 
-    /** CPU-Zeit aller [line]-Aufrufe in ns. */
+    /** CPU time of all [line] calls in ns. */
     fun cpuNanos(): Long
 }
 
 /**
- * V5.2: Live-DSP am Handy aus `@RAW` (NDK-Bibliothek radardsp_live, `host/dsp_replay/dsp_live.h`): derselbe
- * Firmware-Header wie auf dem ESP32, aber mit `A121_DSP_HEAVY` (Viterbi-Verfolgung und Abzug der Atem-Oberwellen).
- * Rechnet an denselben Stellen wie der ESP32 (an dessen `@DSP`-Zeilen), Zeitstempel vom ESP32. Fehlt die Bibliothek,
- * ist [available] false und [loadError] sagt warum.
+ * V5.2: live DSP on the phone from `@RAW` (NDK library radardsp_live, `host/dsp_replay/dsp_live.h`): the same
+ * firmware header as on the ESP32, but with `A121_DSP_HEAVY` (Viterbi tracking and subtraction of breathing harmonics).
+ * Computes at the same points as the ESP32 (at its `@DSP` lines), timestamps from the ESP32. If the library is missing,
+ * [available] is false and [loadError] says why.
  */
 object LiveDsp : DspEngine {
     val loadError: String? =

@@ -1,69 +1,69 @@
-# Experimente — A121 ausreizen
+# Experiments — pushing the A121 to its limits
 
-Fähigkeiten-Matrix für Phase 1. Werkzeug: Exploration Tool / `acconeer-exptool` (geprüft:
-Version 7.18.2 auf PyPI, Python ≥ 3.9, am 2026-10-27). Algorithmus-Module dort:
+Capability matrix for phase 1. Tool: Exploration Tool / `acconeer-exptool` (checked:
+version 7.18.2 on PyPI, Python ≥ 3.9, on 2026-10-27). Algorithm modules there:
 `distance, presence, smart_presence, breathing, phase_tracking, sparse_iq, vibration, speed,
 surface_velocity, hand_motion, touchless_button, tank_level, waste_level, parking, obstacle,
 cargo, bilateration`.
 
-Ergebnis-Spalte erst nach echter Messung füllen. Aufnahmen nach `~/Data/radar-sensor/`.
+Fill the result column only after a real measurement. Recordings go to `~/Data/radar-sensor/`.
 
-## Grundlagen
+## Basics
 
-| # | Experiment | Modul | Messgröße | Ergebnis |
+| # | Experiment | Module | Measured quantity | Result |
 |---|---|---|---|---|
-| G1 | Rohsignal verstehen: Profile 1–5, Schrittweite, HWAAS, Sweep-Rate | sparse_iq | Rauschen, Reichweite, max. Rate | — |
-| G2 | Entfernungsgenauigkeit vs. Maßband (0,1–5 m, Metallplatte) | distance | Abweichung mm | Teil 1 (2026-10-30): 1,00 m Backsteinwand, ohne Kappe → Median 1,0016 m, σ 2,9 mm, Spanne 0,995–1,009 m (100/100 Frames). Teil 2: ca. 600 mm (Maß nur ungefähr) → Wand 0,5847 m, σ 1,7 mm, nur 56/100 Frames; zusätzlich Echo bei ~1,60 m (Ursache offen). Teil 3: 570 mm (Maßband) → 0,5589 m (−11 mm), σ 1,2 mm, 100/100 Frames. Echo ~1,58–1,60 m danach nur schwach und wechselnd (deutlich nur bei flacher Abdeckung); Ursache offen. 3 m räumlich nicht möglich. Teil 4 (2026-10-31, über ESP32 + `i2c_distance_detector`, CFAR, Bereich 300–1000 mm, hyperbolische Linse, 570 mm Maßband): Median 575 mm (+5 mm), σ 1,3 mm, 50/50 Messungen, Log `2026-10-31_105545_esp_i2c_wand570.log`. Weitere Abstände/Metallplatte offen. |
-| G3 | Maximale Reichweite Mensch / Metall / Wand | distance, sparse_iq | m | — |
-| G4 | Zwei Ziele trennen (Abstand verringern) | distance | min. Abstand cm | — |
-| G5 | Kleinste messbare Bewegung (Mikrometerschraube/Lautsprecher) | phase_tracking | µm | — |
-| G6 | Strahlbreite ohne Linse / Fresnel / hyperbolisch | sparse_iq | Winkel, Reichweite | Echostärke Backsteinwand ~570 mm (2026-10-30, Profil 2, HWAAS 32, je 50 Frames; Detektor je 100 Frames, 100/100 erkannt): nackt 2318 / SNR 33,9 dB / 0,5589 m σ 1,2 mm · flach +0,7 dB / 34,2 dB / 0,5627 m σ 1,6 mm · Fresnel +8,7 dB / 42,9 dB / 0,5643 m σ 0,6 mm · Pyramide +10,0 dB / 44,3 dB / 0,5637 m σ 0,7 mm · hyperbolisch +11,3 dB / 45,2 dB / 0,5585 m σ 0,4 mm. Echobreite (FWHM) überall 78–85 mm. Abstandsversatz je Kappe uneinheitlich (Ursache offen: Position/Mechanik). Kappenwechsel bei „ca. gleicher“ Position; Wiederholung ohne Umbau (hyperbolisch): 8508 → 8495, Detektor 0,5585 → 0,5581 m — Messung selbst sehr stabil. Winkel noch nicht gemessen. Skript: `host/a121_zielmessung.py`. |
+| G1 | Understand the raw signal: profiles 1–5, step size, HWAAS, sweep rate | sparse_iq | noise, range, max. rate | — |
+| G2 | Distance accuracy vs. tape measure (0.1–5 m, metal plate) | distance | deviation in mm | Part 1 (2026-10-30): 1.00 m brick wall, without cap → median 1.0016 m, σ 2.9 mm, span 0.995–1.009 m (100/100 frames). Part 2: about 600 mm (measurement only approximate) → wall 0.5847 m, σ 1.7 mm, only 56/100 frames; additionally an echo at ~1.60 m (cause open). Part 3: 570 mm (tape measure) → 0.5589 m (−11 mm), σ 1.2 mm, 100/100 frames. The echo at ~1.58–1.60 m afterwards only weak and varying (clear only with the flat cover); cause open. 3 m not possible spatially. Part 4 (2026-10-31, via ESP32 + `i2c_distance_detector`, CFAR, range 300–1000 mm, hyperbolic lens, 570 mm tape measure): median 575 mm (+5 mm), σ 1.3 mm, 50/50 measurements, log `2026-10-31_105545_esp_i2c_wand570.log`. Further distances/metal plate open. |
+| G3 | Maximum range person / metal / wall | distance, sparse_iq | m | — |
+| G4 | Separate two targets (reduce the distance) | distance | min. distance in cm | — |
+| G5 | Smallest measurable motion (micrometer screw/loudspeaker) | phase_tracking | µm | — |
+| G6 | Beam width without lens / Fresnel / hyperbolic | sparse_iq | angle, range | Echo strength, brick wall ~570 mm (2026-10-30, profile 2, HWAAS 32, 50 frames each; detector 100 frames each, 100/100 detected): bare 2318 / SNR 33.9 dB / 0.5589 m σ 1.2 mm · flat +0.7 dB / 34.2 dB / 0.5627 m σ 1.6 mm · Fresnel +8.7 dB / 42.9 dB / 0.5643 m σ 0.6 mm · pyramid +10.0 dB / 44.3 dB / 0.5637 m σ 0.7 mm · hyperbolic +11.3 dB / 45.2 dB / 0.5585 m σ 0.4 mm. Echo width (FWHM) 78–85 mm everywhere. Distance offset per cap inconsistent (cause open: position/mechanics). Cap swaps at "about the same" position; repeat without rebuilding (hyperbolic): 8508 → 8495, detector 0.5585 → 0.5581 m — the measurement itself is very stable. Angle not measured yet. Script: `host/a121_zielmessung.py`. |
 
-## Mensch und Vitalwerte
+## People and vital signs
 
-| # | Experiment | Modul | Messgröße | Ergebnis |
+| # | Experiment | Module | Measured quantity | Result |
 |---|---|---|---|---|
-| M1 | Präsenz im Raum, Zonen, ruhig sitzend vs. bewegt | presence, smart_presence | Trefferquote, Reichweite | — |
-| M2 | Atmung sitzend/liegend, 0,3–1,5 m | breathing | Atemzüge/min vs. Zählen | Sitzend ~250–350 mm (Sparse-IQ-Phase, 2026-10-30): 20,0–20,5 /min (Spitze-Spitze 0,46–1,5 mm). Sitzend ~675–760 mm über ESP32-I2C (`vital` / `auto`, 37,1–45,5 Hz, 2026-10-31): **20,5–22,5 /min** (Hub **2,42 mm**). Sitzend ~673 mm über A121-USB (`host/a121_ultimate_vital.py`, 3-Subsweep Sparse-IQ @ 60,0 Hz, `2026-10-31_a121_usb_3subsweep_ultimate.npz`): **21,5 /min** (Hub Spitze-Spitze **2,29 mm**, 0 Apnoe-Episoden). Sitzend ~0,58–0,60 m, ESP32 allein über LPUART1 (2026-11-01): Rohdaten **18,3–18,4 /min** (Hub 3,4 mm), `iq3`-Median **20,3 /min**. `iq3` lieferte bis dahin in rund einem Viertel der Reports fälschlich 6,9 /min (Bandrand, Bug 6 in `docs/HARDWARE.md`). Nach der Korrektur live (2026-11-01, Brust ≈ 0,68 m, `2026-11-01_iq3_atmung_live1.log`): **17–24 /min**, auf der Brust alle Werte innerhalb ±2 /min der Zyklenzählung im selben Radarsignal (keine unabhängige Referenz). |
-| M3 | Puls sitzend, 40/60/80 cm, mit/ohne Linse | phase_tracking, sparse_iq (eigene Auswertung) | BPM vs. Smartwatch | **Aufnahme A** (`2026-10-30_vital_A_250mm_hyperbolisch_atmen.npz`, ~250 mm, hyperbolisch, 60 s): Mit Phasenstabilitäts-Bin-Auswahl (Bin 55 statt 57), I/Q-Kreisfit + regularisierter DACM-Demodulation, Hilbert-Projektion der momentanen Atmungs-Oberwellen ($m=1\dots 6$) und Beschleunigungs-HPS ($f_0\cdot 2f_0\cdot 3f_0$) in `host/a121_vitalaufnahme.py` wird der stationäre Kandidat **82,5 /min** (HPS **83,0 /min**) zum primären Peak (vorher war die 3. Atmungs-Oberwelle bei 62 /min stärker). Gleitende 15-s-Fenster zeigen: während die Atmung zwischen 18,0 und 22,5 /min schwankt ($4 f_b = 72\dots 90\text{ /min}$), bleibt der 83-/min-Kandidat frequenzstabil. **Aufnahme B** (`2026-10-30_201219_live.npz`, ~20 s atmen / ~17,5 s anhalten / ~20 s atmen): Der scheinbare $\pm 500\text{ }\mu\text{m}$-Ausbruch bei $t=36\text{–}42\text{ s}$ im naiven Amplitudenmaximum (Bin 79, 348 mm) war ein destruktiver Mehrwege-Einbruch ($\min|z|=48$). Auf dem phasenstabilsten Bin 110 (425 mm, CV 0,38) bleibt das Pulsband über den gesamten Anhalte-Abschnitt (28,1–45,6 s) gleichmäßig bei 62–75 µm RMS; Spektrum **76,0 /min**, Beschleunigungs-HPS **76,5 /min** (Nebenpeaks < 4 %), Autokorrelation **75,0 /min** ($r=0{,}75$), 22 Einzelpulse mit $0{,}770 \pm 0{,}072\text{ s}$ (CV 9,4 % → **77,9 /min**) und Oberwellen bis $6 f_0 = 7{,}52\text{ Hz}$ (`host/a121_anhalteanalyse.py`). **Aufnahme C über ESP32-I2C** (`2026-10-31_esp_i2c_brust_hq_45s.npz`, `2026-10-31_esp_i2c_brust_pos2_40s.npz`, `2026-10-31_esp_auto_multiinfo.npz`, `2026-10-31_esp_auto_reconnected.npz`, ~675–762 mm sitzend vorm PC, `vital`/`auto` @ 37,1–45,5 Hz): Gated Scatterer Tracking trennt Vorderbrust und Sekundärziel ohne Zieltausch-Sprünge ($\sigma$ auf 0,85–1,4 mm gesenkt); mit gleitender 7-s-Hann-Hilbert-Atmungsprojektion liefern Weg ($\Delta d$: **79,0 /min**) und Echo-Stärke ($\text{dB}$: **81,5 /min**) in `2026-10-31_esp_auto_reconnected.npz` bei 729 mm einen konsistenten Fusions-Kandidaten bei **80,5 /min** (3:1 vor zweitem Peak 0,33; Autokorrelation **81,8 /min**, Konfidenz 72 %). **Aufnahme D mit 3-Subsweep Sparse-IQ über A121-USB** (`2026-10-31_a121_usb_3subsweep_ultimate.npz`, 45 s @ 60,00 Hz, `host/a121_ultimate_vital.py`, Sub 0 On-Chip-Loopback + Sub 1 2,5-mm-Vital-Zoom `PROFILE_1`, `PRF_19_5_MHz`, `phase_enhancement=True`, `iq_imbalance_compensation=True` + Sub 2 Vollraum-Scan `150–2070 mm`): Auto-Search lokalisiert Brustkorb bei 690 mm (`|IQ|=2308`), kohärentes Multi-Bin-Zentrum bei **672,5 mm** (`|IQ|=1004`, 60,0 dB), Loopback kompensiert **14,6 µm** thermische PLL-Drift. Nach gleitender 7-s-Hilbert-Atmungsprojektion sind die 3. und 5. Atmungs-Oberwelle um >90 % unterdrückt; während normaler Atmung (21,5 /min, 2,29 mm Hub) zeigt sich ein dominanter Herzschlag-Kandidat bei **84,5 /min** (Spektrum/HPS 0,97 vs. zweiter Peak 0,14), Autokorrelation **81,8 /min** ($r=0{,}77$) und im Zeitbereich **28 Einzelschläge in 20 s** mit IBI-Median **716,7 ms** (**83,7 /min**), Variationskoeffizient **CV 9,4 %**, RMSSD **102,0 ms** und Pulswellen-Hub **106,6 µm**. **Aufnahme E, ESP32 allein über LPUART1** (2026-11-01, mobiler Aufbau, sitzend vor dem Sensor; Daten `iq3_person_2026-11-01.log`, `iq3_breathhold_2026-11-01.log`, `person_scan_2026-11-01.npz`, Bild `img_herzschlag_atemhalten_2026-11-01.png`). **Referenz: Puls selbst gezählt, 38 Schläge in 30 s = 76 /min (laut Testperson unsicher).** *Abstand:* Rohdaten-Scan (0,25–2,5 m) zeigt die stärkste atmende Bewegung bei **580 mm** (3,4 mm Hub, 18,4 /min). `iq3` findet das Ziel ohne Vorgabe, Median **601 mm** (10–90 %: 580–610 mm), erster Rezoom nach 3 s. Danach springt der Zoom aber 5–7-mal pro Minute (teils auf 0,71–0,80 m), und jeder Rezoom löscht die Signalhistorie. *Puls bei normaler Atmung (70 s):* `iq3`-Median **81,3 /min** (Spektrum 81,8, Autokorrelation 74,7, Zeitbereich 81,1). Die Einzelwerte streuen aber 53,8–128,2 /min, nur 39 % liegen innerhalb ±8 /min der Referenz, 15 % am Rand des Suchbands. Ursachen: Hier lag die Herzfrequenz ≈ 4 × Atemfrequenz (4 × 18,3 = 73 /min); dazu Rezooms und die DSP-Pausen. In den Rohdaten ist die Komponente bei 75 /min 9–13 dB stärker als die 2. und 3. Atem-Oberwelle, ein Hinweis auf den Herzschlag. *Puls bei angehaltenem Atem (~10 s):* `iq3` liefert **73–81 /min**, die drei Schätzer liegen eng beieinander, Konfidenz 91–99 %. Eigene Auswertung des ESP32-Wegsignals (13 s, Zeitachse über den Frame-Zähler): Spektrum **72,1 /min** (Peak/Median 29), **15 Einzelschläge**, IBI 683–1000 ms, Median 833 ms = **72,0 /min**. Fazit: Der Herzschlag ist im Signal, und bei angehaltenem Atem isoliert der ESP32 ihn. Bei normaler Atmung trennt er ihn noch nicht zuverlässig. Eine Messung, eine Person, Referenz unsicher, also keine Genauigkeitsaussage. Auswertungs-Fallstrick: Die Zeitstempel in `@IQ3` sind ESP32-Verarbeitungszeit. Nach jeder DSP-Pause kommen Frames gebündelt, also für Analysen den Frame-Zähler × 60 Hz nehmen (sinngemäß gilt das auch für `dtS` in `pushFrame()`). **Aufnahme F, ESP32-DSP überarbeitet** (2026-11-01, `firmware/esp32s3/src/a121_esp_dsp.h`). Referenz jeweils selbst gezählt (je 30 s). Daten: `iq3raw_normal_120s_2026-11-01.npz` (Rohdaten, Zählung 76/80, Entwicklung), `iq3raw_motion_120s_2026-11-01.npz` (Rohdaten, Zählung 70/78, Atmung ≈ 20 /min, dazwischen 10 s absichtliche Bewegung), Live-Logs `iq3_live_newdsp_2026-11-01.log` (86/78), `iq3_rezoomtest_2026-11-01.log` (ohne Zählung), `iq3_live_harm_2026-11-01.log` (74/78). *Vorgehen:* Die Rohdaten laufen am PC durch denselben C++-Code wie auf dem ESP32 (Ergebnis bitgleich). Bewertet wird der verfolgte Puls gegen die Zählfenster. Zusätzlich drei Dateien aus dem Entwicklungsdatensatz mit künstlich eingefügter Bewegung (Phasendrehung der Zoom-Punkte: Zappeln mit 63-/min-Anteil, 2-mm-Lagewechsel, Armbewegung). *Änderungen:* (1) alle 24 Zoom-Punkte einzeln, Nullphasen-Bandpass 0,8–3 Hz, Spektren gewichtet gemittelt, Zeitbasis fest 60 Hz; (2) Spitzen am Bandrand zählen nicht (häufigste Fehlspitze war 54 /min = 0,90 Hz, direkt an der Suchgrenze); (3) Bewegungsdämpfung je 1-s-Block, Bezug ist das ruhige Viertel des Fensters; (4) Atemfrequenz aus allen Punkten (vorher oft am Bandrand 6 /min), und ein Sprung auf eine Atem-Oberwelle ($m = 2\dots 6$) gilt erst nach 10 statt 3 Reports. *Ergebnis (Anteil innerhalb ±8 /min, in Klammern ±5 /min):* Entwicklungsdatensatz: Original 32 % (19 %), erste Fassung 84 % (81 %), jetzt **100 % (93 %)**. Neuer Datensatz (an ihm wurde die Oberwellen-Haltezeit entwickelt, also kein unabhängiger Test): Original 42 % (24 %), erste Fassung 42 % (8 %), jetzt **89 % (50 %)**. Künstliche Bewegung: erste Fassung 74–84 %, jetzt 91–100 %. **Live am ESP32, einzige unabhängige Prüfung** (`iq3_live_harm`, 100 s, ein automatischer Rezoom auf 630–690 mm): Median **74,6 /min** bei Zählung 74 und **78,4 /min** bei Zählung 78, alle Reports im Zählfenster innerhalb ±5 /min, keine Sprünge über 15 /min, Rechenzeit 307 ms je Report. Bei 31–39 s sprang die stärkste Spitze auf 55–58 /min (3 × Atmung), der verfolgte Wert blieb bei 78. *Was die Fehler waren:* Im Rezoom-Test hing der Puls bei 60–63 /min. Grund waren Bewegung in den ersten 8 s (Herzband 700–1100 µm statt ≈ 200 µm) und eine Verfolgung, die nicht losließ. Im neuen Datensatz lag bei schneller Atmung die 3. Atem-Oberwelle bei 55–60 /min und überdeckte den Puls zeitweise ganz. *Verworfen:* Haltezeit abbrechen, wenn die Punkte den alten Wert nicht mehr stützen (mehr Sprünge, rhythmische Bewegung wird von allen Punkten gestützt). Bei Oberwelle auf den nächsten Kandidaten ausweichen (ohne Wirkung). Oberwellen herausrechnen (entfernt den Puls mit, wenn er nahe $m \cdot f_{\text{Atem}}$ liegt; live lag er bei 4 × 19,5). *Offen:* Im neuen Datensatz zeigen alle Fassungen im Fenster A stabil ≈ 77 /min bei Zählung 70; ob Zählung oder Messung abweicht, ist ungeklärt. Während deutlicher Bewegung ist der Wert falsch (bis 100 /min), die Konfidenz fällt dann aber auf 0–12 %. Bleibt der Puls dauerhaft auf einer Oberwelle, folgt die Verfolgung erst nach 10 s. Zwei Personen-Datensätze und zwei Live-Läufe einer Person: Das belegt eine Verbesserung, aber keine Genauigkeit. `@DSP` meldet jetzt zusätzlich den Bewegungsanteil (%) und `hr_harm` (Spitze liegt auf einer Atem-Oberwelle; das heißt nicht, dass der Wert falsch ist). **Wichtig:** Alle Ergebnisse sind Rhythmus-Nachweise im Radarsignal; **ohne Referenzmessung (Smartwatch/Pulsoximeter/EKG) keine Aussage über Puls-Genauigkeit.** |
-| M4 | Gesten / Wischen / berührungsloser Knopf | hand_motion, touchless_button | Erkennungsrate | — |
-| M5 | Referenzdatensatz Puls/Atmung mit EKG-Brustgurt (Plan V0.3 in `docs/VITAL_AUDIT.md`, Ablauf unten) | `iq3 0 raw` + Polar H10 | MAE, ±5-Anteil, Verfügbarkeit, Kalibrierung, Apnoe-Verzug | — (Aufnahmen offen) |
+| M1 | Presence in the room, zones, sitting still vs. moving | presence, smart_presence | hit rate, range | — |
+| M2 | Breathing sitting/lying, 0.3–1.5 m | breathing | breaths/min vs. counting | Sitting ~250–350 mm (sparse-IQ phase, 2026-10-30): 20.0–20.5 /min (peak-to-peak 0.46–1.5 mm). Sitting ~675–760 mm via ESP32 I2C (`vital` / `auto`, 37.1–45.5 Hz, 2026-10-31): **20.5–22.5 /min** (excursion **2.42 mm**). Sitting ~673 mm via A121 USB (`host/a121_ultimate_vital.py`, 3-subsweep sparse IQ @ 60.0 Hz, `2026-10-31_a121_usb_3subsweep_ultimate.npz`): **21.5 /min** (peak-to-peak excursion **2.29 mm**, 0 apnea episodes). Sitting ~0.58–0.60 m, ESP32 alone via LPUART1 (2026-11-01): raw data **18.3–18.4 /min** (excursion 3.4 mm), `iq3` median **20.3 /min**. Until then, `iq3` wrongly returned 6.9 /min in about a quarter of the reports (band edge, bug 6 in `docs/HARDWARE.md`). After the fix, live (2026-11-01, chest ≈ 0.68 m, `2026-11-01_iq3_atmung_live1.log`): **17–24 /min**, on the chest all values within ±2 /min of the cycle count in the same radar signal (no independent reference). |
+| M3 | Pulse sitting, 40/60/80 cm, with/without lens | phase_tracking, sparse_iq (own analysis) | BPM vs. smartwatch | **Recording A** (`2026-10-30_vital_A_250mm_hyperbolisch_atmen.npz`, ~250 mm, hyperbolic, 60 s): With phase-stability bin selection (bin 55 instead of 57), I/Q circle fit + regularized DACM demodulation, Hilbert projection of the instantaneous breathing harmonics ($m=1\dots 6$) and acceleration HPS ($f_0\cdot 2f_0\cdot 3f_0$) in `host/a121_vitalaufnahme.py`, the stationary candidate **82.5 /min** (HPS **83.0 /min**) becomes the primary peak (before, the 3rd breathing harmonic at 62 /min was stronger). Sliding 15 s windows show: while breathing varies between 18.0 and 22.5 /min ($4 f_b = 72\dots 90\text{ /min}$), the 83 /min candidate stays frequency-stable. **Recording B** (`2026-10-30_201219_live.npz`, ~20 s breathing / ~17.5 s breath hold / ~20 s breathing): The apparent $\pm 500\text{ }\mu\text{m}$ burst at $t=36\text{–}42\text{ s}$ in the naive amplitude maximum (bin 79, 348 mm) was a destructive multipath dip ($\min|z|=48$). On the most phase-stable bin 110 (425 mm, CV 0.38), the pulse band stays steady at 62–75 µm RMS over the whole breath-hold section (28.1–45.6 s); spectrum **76.0 /min**, acceleration HPS **76.5 /min** (side peaks < 4 %), autocorrelation **75.0 /min** ($r=0.75$), 22 individual beats with $0.770 \pm 0.072\text{ s}$ (CV 9.4 % → **77.9 /min**) and harmonics up to $6 f_0 = 7.52\text{ Hz}$ (`host/a121_anhalteanalyse.py`). **Recording C via ESP32 I2C** (`2026-10-31_esp_i2c_brust_hq_45s.npz`, `2026-10-31_esp_i2c_brust_pos2_40s.npz`, `2026-10-31_esp_auto_multiinfo.npz`, `2026-10-31_esp_auto_reconnected.npz`, ~675–762 mm sitting in front of the PC, `vital`/`auto` @ 37.1–45.5 Hz): Gated scatterer tracking separates the front of the chest and a secondary target without target-swap jumps ($\sigma$ reduced to 0.85–1.4 mm); with a sliding 7 s Hann-Hilbert breathing projection, displacement ($\Delta d$: **79.0 /min**) and echo strength ($\text{dB}$: **81.5 /min**) in `2026-10-31_esp_auto_reconnected.npz` at 729 mm give a consistent fusion candidate at **80.5 /min** (3:1 ahead of the second peak 0.33; autocorrelation **81.8 /min**, confidence 72 %). **Recording D with 3-subsweep sparse IQ via A121 USB** (`2026-10-31_a121_usb_3subsweep_ultimate.npz`, 45 s @ 60.00 Hz, `host/a121_ultimate_vital.py`, sub 0 on-chip loopback + sub 1 2.5 mm vital zoom `PROFILE_1`, `PRF_19_5_MHz`, `phase_enhancement=True`, `iq_imbalance_compensation=True` + sub 2 full-room scan `150–2070 mm`): Auto-search localizes the rib cage at 690 mm (`|IQ|=2308`), coherent multi-bin center at **672.5 mm** (`|IQ|=1004`, 60.0 dB), the loopback compensates **14.6 µm** of thermal PLL drift. After a sliding 7 s Hilbert breathing projection, the 3rd and 5th breathing harmonics are suppressed by >90 %; during normal breathing (21.5 /min, 2.29 mm excursion) a dominant heartbeat candidate shows at **84.5 /min** (spectrum/HPS 0.97 vs. second peak 0.14), autocorrelation **81.8 /min** ($r=0.77$) and in the time domain **28 individual beats in 20 s** with IBI median **716.7 ms** (**83.7 /min**), coefficient of variation **CV 9.4 %**, RMSSD **102.0 ms** and pulse-wave excursion **106.6 µm**. **Recording E, ESP32 alone via LPUART1** (2026-11-01, mobile setup, sitting in front of the sensor; data `iq3_person_2026-11-01.log`, `iq3_breathhold_2026-11-01.log`, `person_scan_2026-11-01.npz`, image `img_herzschlag_atemhalten_2026-11-01.png`). **Reference: pulse counted by hand, 38 beats in 30 s = 76 /min (uncertain according to the test subject).** *Distance:* Raw-data scan (0.25–2.5 m) shows the strongest breathing motion at **580 mm** (3.4 mm excursion, 18.4 /min). `iq3` finds the target without a preset, median **601 mm** (10–90 %: 580–610 mm), first rezoom after 3 s. After that, however, the zoom jumps 5–7 times per minute (partly to 0.71–0.80 m), and every rezoom erases the signal history. *Pulse during normal breathing (70 s):* `iq3` median **81.3 /min** (spectrum 81.8, autocorrelation 74.7, time domain 81.1). The individual values scatter 53.8–128.2 /min, though; only 39 % are within ±8 /min of the reference, 15 % at the edge of the search band. Causes: here the heart rate was ≈ 4 × the breathing rate (4 × 18.3 = 73 /min); in addition rezooms and the DSP pauses. In the raw data, the component at 75 /min is 9–13 dB stronger than the 2nd and 3rd breathing harmonics, a hint of the heartbeat. *Pulse with held breath (~10 s):* `iq3` returns **73–81 /min**, the three estimators are close together, confidence 91–99 %. Own analysis of the ESP32 displacement signal (13 s, time axis from the frame counter): spectrum **72.1 /min** (peak/median 29), **15 individual beats**, IBI 683–1000 ms, median 833 ms = **72.0 /min**. Conclusion: The heartbeat is in the signal, and with held breath the ESP32 isolates it. With normal breathing it does not yet separate it reliably. One measurement, one person, reference uncertain, so no accuracy statement. Analysis pitfall: The timestamps in `@IQ3` are ESP32 processing time. After every DSP pause, frames arrive in bursts, so for analyses use the frame counter × 60 Hz (the same applies analogously to `dtS` in `pushFrame()`). **Recording F, ESP32 DSP reworked** (2026-11-01, `firmware/esp32s3/src/a121_esp_dsp.h`). Reference each time counted by hand (30 s each). Data: `iq3raw_normal_120s_2026-11-01.npz` (raw data, count 76/80, development), `iq3raw_motion_120s_2026-11-01.npz` (raw data, count 70/78, breathing ≈ 20 /min, with 10 s of deliberate motion in between), live logs `iq3_live_newdsp_2026-11-01.log` (86/78), `iq3_rezoomtest_2026-11-01.log` (no count), `iq3_live_harm_2026-11-01.log` (74/78). *Method:* The raw data runs on the PC through the same C++ code as on the ESP32 (result bit-identical). The tracked pulse is scored against the counting windows. In addition, three files from the development dataset with artificially inserted motion (phase rotation of the zoom points: fidgeting with a 63 /min component, 2 mm position change, arm movement). *Changes:* (1) all 24 zoom points individually, zero-phase bandpass 0.8–3 Hz, spectra averaged with weights, time base fixed at 60 Hz; (2) peaks at the band edge do not count (the most common false peak was 54 /min = 0.90 Hz, right at the search limit); (3) motion damping per 1 s block, the reference is the quiet quarter of the window; (4) breathing rate from all points (before, often at the band edge, 6 /min), and a jump to a breathing harmonic ($m = 2\dots 6$) is only accepted after 10 instead of 3 reports. *Result (fraction within ±8 /min, ±5 /min in parentheses):* Development dataset: original 32 % (19 %), first version 84 % (81 %), now **100 % (93 %)**. New dataset (the harmonic hold time was developed on it, so not an independent test): original 42 % (24 %), first version 42 % (8 %), now **89 % (50 %)**. Artificial motion: first version 74–84 %, now 91–100 %. **Live on the ESP32, the only independent check** (`iq3_live_harm`, 100 s, one automatic rezoom to 630–690 mm): median **74.6 /min** at count 74 and **78.4 /min** at count 78, all reports in the counting window within ±5 /min, no jumps above 15 /min, computation time 307 ms per report. At 31–39 s the strongest peak jumped to 55–58 /min (3 × breathing), the tracked value stayed at 78. *What the errors were:* In the rezoom test, the pulse got stuck at 60–63 /min. The reasons were motion in the first 8 s (heart band 700–1100 µm instead of ≈ 200 µm) and a tracking that did not let go. In the new dataset, with fast breathing the 3rd breathing harmonic sat at 55–60 /min and at times covered the pulse completely. *Rejected:* Aborting the hold time when the points no longer support the old value (more jumps, rhythmic motion is supported by all points). Switching to the next candidate on a harmonic (no effect). Computing the harmonics out (also removes the pulse when it is close to $m \cdot f_{\text{breath}}$; live it was at 4 × 19.5). *Open:* In the new dataset, all versions show a stable ≈ 77 /min in window A at count 70; whether the count or the measurement deviates is unresolved. During clear motion the value is wrong (up to 100 /min), but the confidence then drops to 0–12 %. If the pulse stays on a harmonic permanently, the tracking only follows after 10 s. Two person datasets and two live runs of one person: This shows an improvement, but not accuracy. `@DSP` now additionally reports the motion fraction (%) and `hr_harm` (peak lies on a breathing harmonic; this does not mean the value is wrong). **Important:** All results are evidence of a rhythm in the radar signal; **without a reference measurement (smartwatch/pulse oximeter/ECG), no statement about pulse accuracy.** |
+| M4 | Gestures / swiping / touchless button | hand_motion, touchless_button | detection rate | — |
+| M5 | Reference dataset pulse/breathing with ECG chest strap (plan V0.3 in `docs/VITAL_AUDIT.md`, procedure below) | `iq3 0 raw` + Polar H10 | MAE, ±5 fraction, availability, calibration, apnea delay | — (recordings open) |
 
-### M5 Referenzdatensatz
+### M5 reference dataset
 
-Ziel: Genauigkeit des Pulses (gegen EKG-Brustgurt) und der Atmung (gegen Metronom) messen und jede DSP-Änderung
-daran prüfen. Ohne diesen Datensatz gibt es keine Aussage über Puls-Genauigkeit (`AGENTS.md`).
+Goal: Measure the accuracy of the pulse (against the ECG chest strap) and of breathing (against a metronome) and check every DSP
+change against it. Without this dataset there is no statement about pulse accuracy (`AGENTS.md`).
 
-**Aufbau:** ESP32-S3 + A121 wie in T1, Handy-App nimmt `iq3 0 raw` auf (Rohdaten, damit jede Header-Fassung
-nachgerechnet werden kann). Brustgurt Polar H10 (BLE Heart Rate Service) über die App koppeln (Referenz-Karte im
-Vital-Tab oder `adb shell am broadcast … ref_scan` / `ref_connect --es addr <mac>`, `docs/ANDROID_APP.md`); die App
-schreibt `ref_hr.csv` (rx_ms, Puls, RR-Intervalle) und `events.csv` (Marker) in denselben Aufnahme-Ordner.
-Gurt vor Beginn anfeuchten, 2 min tragen, bis die Polar-App einen stabilen Wert zeigt.
+**Setup:** ESP32-S3 + A121 as in T1, the phone app records `iq3 0 raw` (raw data, so that every header version can be
+recomputed). Pair the Polar H10 chest strap (BLE Heart Rate Service) via the app (reference card in the
+vital tab or `adb shell am broadcast … ref_scan` / `ref_connect --es addr <mac>`, `docs/ANDROID_APP.md`); the app
+writes `ref_hr.csv` (rx_ms, pulse, RR intervals) and `events.csv` (markers) into the same recording folder.
+Moisten the strap before starting, wear it for 2 min until the Polar app shows a stable value.
 
-**Referenz ohne RR (ab 2026-11-02):** Sendet ein Gurt oder eine Uhr nur Pulswerte (`ref_hr.csv` mit leerem `rr_ms`),
-nimmt `vital_eval.py` den Mittelwert der Pulswerte im 15-s-Fenster (Bericht: „nur Pulswerte ohne RR“). Dann sind
-Puls-MAE, Anteil ±5 und Verfügbarkeit messbar, nicht IBI/RMSSD (V1.6/V3.6). Apple Watch ohne iPhone ist nicht nutzbar
-(kein BLE-Pulsdienst, kein Export); als Gurt ist ein Polar H9 bestellt (RR-Intervalle über BLE).
+**Reference without RR (from 2026-11-02):** If a strap or watch sends only pulse values (`ref_hr.csv` with empty `rr_ms`),
+`vital_eval.py` takes the mean of the pulse values in the 15 s window (report: "nur Pulswerte ohne RR", i.e. pulse values only, without RR). Then
+pulse MAE, ±5 fraction and availability are measurable, not IBI/RMSSD (V1.6/V3.6). An Apple Watch without an iPhone is not usable
+(no BLE pulse service, no export); a Polar H9 has been ordered as a strap (RR intervals over BLE).
 
-**Ablage:** `~/Data/radar-sensor/ref/<datum>_<tag>_<sitzung>_<person>/` (z. B. `2026-11-08_A_R1_p1`).
-Personen nur pseudonym (`p1`, `p2`), weitere Personen nur mit Einwilligung.
+**Storage:** `~/Data/radar-sensor/ref/<date>_<tag>_<session>_<person>/` (e.g. `2026-11-08_A_R1_p1`).
+Persons only by pseudonym (`p1`, `p2`), further persons only with consent.
 
-**Trennung:** Tag A = Entwicklung (darf beliebig oft ausgewertet werden), Tag B = Test (nur zur Abnahme einer Phase
-auswerten). Beide Tage mit denselben Sitzungen, an verschiedenen Tagen aufgenommen.
+**Separation:** Day A = development (may be evaluated as often as you like), day B = test (evaluate only for the acceptance of a phase).
+Both days with the same sessions, recorded on different days.
 
-| Sitzung | Inhalt | Dauer | Marker | prüft |
+| Session | Content | Duration | Marker | checks |
 |---|---|---|---|---|
-| R1 | ruhig sitzend, normal atmen, Brust 0,6 m vor dem Sensor | 5 min | — | Grundgenauigkeit |
-| R2 | 3 × 20 s Atem anhalten, dazwischen je 40 s normal | 3 min | „Atem anhalten" Start/Ende | Apnoe-Erkennung, Puls ohne Atmung |
-| R3 | Metronom 6 / 10 / 15 / 20 /min, mit jedem Ton einatmen | je 2 min | Metronom (setzt „ein" je Ton) | Atmung, Oberwellen-Kollision |
-| R4 | 1 min Kniebeugen (ohne Sensor), dann sofort sitzend erholen | 6 min | „Zählfenster" Start mit dem Hinsetzen | Pulsbereich 110 → 70, Verzug |
-| R5 | je 20 s: Arm heben, zurücklehnen, husten, sprechen, dazwischen ruhig | 3 min | „Bewegung" Start/Ende | Bewegung, Zustand, Konfidenz |
-| R6 | Abstand 0,4 / 0,6 / 0,8 / 1,0 m (Maßband) | je 3 min | — | Reichweite |
-| R7 | ohne Linse / hyperbolische Linse, 0,6 m | je 3 min | — | Linse |
-| R8 | liegend, Sensor ≈ 0,5 m über der Brust | 5 min | — | Haltung |
+| R1 | sitting still, breathing normally, chest 0.6 m in front of the sensor | 5 min | — | basic accuracy |
+| R2 | 3 × 20 s breath hold, 40 s normal in between | 3 min | "Atem anhalten" (breath hold) start/end | apnea detection, pulse without breathing |
+| R3 | metronome 6 / 10 / 15 / 20 /min, inhale with every tone | 2 min each | metronome (sets "ein" (in) per tone) | breathing, harmonic collision |
+| R4 | 1 min squats (without sensor), then recover sitting right away | 6 min | "Zählfenster" (counting window) start when sitting down | pulse range 110 → 70, delay |
+| R5 | 20 s each: raise arm, lean back, cough, talk, quiet in between | 3 min | "Bewegung" (motion) start/end | motion, state, confidence |
+| R6 | distance 0.4 / 0.6 / 0.8 / 1.0 m (tape measure) | 3 min each | — | range |
+| R7 | without lens / hyperbolic lens, 0.6 m | 3 min each | — | lens |
+| R8 | lying, sensor ≈ 0.5 m above the chest | 5 min | — | posture |
 
-Ablauf je Sitzung: Gurt verbunden (Puls in der App sichtbar) → Aufnahme starten → `iq3 0 raw` → Sitzung → Stop.
-Danach prüfen und auswerten:
+Procedure per session: strap connected (pulse visible in the app) → start recording → `iq3 0 raw` → session → stop.
+Then check and evaluate:
 
 ```bash
 .venv/bin/python host/esp_record.py --check ~/Data/radar-sensor/ref/<ordner>
@@ -73,18 +73,18 @@ Danach prüfen und auswerten:
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_* --md ~/Data/radar-sensor/ref/bericht_A.md
 ```
 
-Eine Header-Variante gegen dieselben Daten (vor dem Flashen):
+One header variant against the same data (before flashing):
 
 ```bash
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_* --replay <ordner mit a121_esp_dsp.h>
 ```
 
-**Fertig, wenn:** beide Tage aufgenommen, `esp_record.py --check` ohne Lücken, `vital_eval.py` liefert für jede
-Sitzung einen Bericht.
+**Done when:** both days recorded, `esp_record.py --check` without gaps, `vital_eval.py` produces a report for every
+session.
 
-**Basislinie (V0.6):** DSP-Stand der Firmware `2026-11-01-app1` auf Tag A und Tag B; Tabelle je Sitzung mit Puls-MAE,
-Anteil ±5, Verfügbarkeit, Kalibrierung (Konfidenz ≥ 70 % → Anteil ±5) hier eintragen. Weil die Aufnahmen `@RAW`
-enthalten, geht das auch mit neuerer Firmware: den alten Header nachrechnen lassen.
+**Baseline (V0.6):** DSP state of the firmware `2026-11-01-app1` on day A and day B; enter a table per session with pulse MAE,
+±5 fraction, availability, calibration (confidence ≥ 70 % → ±5 fraction) here. Because the recordings contain `@RAW`,
+this also works with newer firmware: let the old header recompute.
 
 ```bash
 mkdir -p /tmp/dsp_basis && git show 26c9bff:firmware/esp32s3/src/a121_esp_dsp.h > /tmp/dsp_basis/a121_esp_dsp.h
@@ -94,18 +94,18 @@ mkdir -p /tmp/dsp_basis && git show 26c9bff:firmware/esp32s3/src/a121_esp_dsp.h 
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag>_* --replay /tmp/dsp_basis
 ```
 
-**Rezoom-Stetigkeit (V2.3 Schritt 1, offen):** Bleibt die Phase an gleichen Entfernungen über den Session-Neustart
-beim Rezoom stetig (roh und mit Loopback-Derotation)? An T1 (31,7 min, 38 Rezooms, `@RAW`) prüfen; Ergebnis hier
-eintragen. Nur wenn die Sprünge klein sind (oder eine gemeinsame Drehung, Streuung klein), lohnt Schritt 4
-(überlappende Zoom-Punkte übernehmen, Lücke füllen).
+**Rezoom continuity (V2.3 step 1, open):** Does the phase at the same distances stay continuous across the session restart
+at a rezoom (raw and with loopback derotation)? Check on T1 (31.7 min, 38 rezooms, `@RAW`); enter the result here.
+Only if the jumps are small (or a common rotation, small scatter) is step 4 worthwhile
+(adopt overlapping zoom points, fill the gap).
 
 ```bash
 .venv/bin/python host/rezoom_check.py ~/Data/radar-sensor/<T1-ordner>
 ```
 
-**Fensterlänge (V2.5, offen):** 10 / 12 / 15 s an Tag A (R4: Verzug, bis der Wert 50 % eines Pulsabfalls
-nachvollzogen hat; Ziel ≤ 7 s) vergleichen; kürzestes Fenster ohne MAE-Verlust > 0,5 /min wählen. Variante = Header
-mit vorangestelltem `#define A121_HR_WIN 600` (bzw. 720) in einem eigenen Ordner:
+**Window length (V2.5, open):** Compare 10 / 12 / 15 s on day A (R4: delay until the value has followed 50 % of a pulse drop;
+target ≤ 7 s); choose the shortest window without an MAE loss > 0.5 /min. Variant = header
+with `#define A121_HR_WIN 600` (or 720) prepended, in its own folder:
 
 ```bash
 mkdir -p /tmp/dsp_win10 && { echo '#define A121_HR_WIN 600'; cat firmware/esp32s3/src/a121_esp_dsp.h; } > /tmp/dsp_win10/a121_esp_dsp.h
@@ -115,19 +115,19 @@ mkdir -p /tmp/dsp_win10 && { echo '#define A121_HR_WIN 600'; cat firmware/esp32s
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_R4_* --replay /tmp/dsp_win10
 ```
 
-Prüfstand vorab (nur Simulation, `vital_sim.py bench --hr-win 600|720|900`): Reaktion im Szenario `step` 7 / 8 / 9 s;
-mit 10 s verletzt `beweg` (MAE 1,5), `anhalt` (Apnoe nicht erkannt, ±5-Anteil 96 %) und `leer` (1 gültiger Report)
-die Grenzwerte, mit 12 s nur `beweg` knapp (MAE 1,4 statt ≤ 1,3), 15 s hält alle. Standard bleibt 15 s bis Tag A.
-Mit der Viterbi-Verfolgung (V3.2, `--define A121_DSP_VITERBI`) hält auch 12 s alle Grenzwerte (Reaktion 8 s), 10 s
-weiter nicht (`beweg`, `anhalt`, `leer`). Für Tag A: 12 s + Viterbi als eigene Variante mitrechnen.
+Test bench in advance (simulation only, `vital_sim.py bench --hr-win 600|720|900`): response in scenario `step` 7 / 8 / 9 s;
+with 10 s, `beweg` (MAE 1.5), `anhalt` (apnea not detected, ±5 fraction 96 %) and `leer` (1 valid report)
+violate the limits, with 12 s only `beweg` narrowly (MAE 1.4 instead of ≤ 1.3), 15 s keeps all of them. The default stays 15 s until day A.
+With Viterbi tracking (V3.2, `--define A121_DSP_VITERBI`), even 12 s keeps all limits (response 8 s), 10 s
+still does not (`beweg`, `anhalt`, `leer`). For day A: also compute 12 s + Viterbi as a separate variant.
 
-**Viterbi-Verfolgung (V3.2, offen):** Variante hinter `#define A121_DSP_VITERBI` (Standard aus): Viterbi über die
-letzten 20 Reports, Zustände 40–180 /min, Übergang Gauß σ = 3 /min je s plus 2 % „Sprung irgendwohin", Emission aus
-den Kandidaten des Reports (Gauß je Kandidat, Gewicht (Wert / bester)³, Grundpegel 10 %), Konfidenz höchstens die
-Wahrscheinlichkeitsmasse ±5 /min. Abnahme an Tag A (alle Sitzungen): weniger Sprünge > 15 /min zwischen
-aufeinanderfolgenden gültigen Reports (`vital_eval.py` schreibt sie in die Kopfzeile je Sitzung), Anteil ±5 /min nicht
-schlechter. Prüfstand vorab (nur Simulation): Sprünge gleich (3 / 3), `brady` MAE 2,8 → 1,5 /min (±5: 95 → 97 %),
-`beweg` 0,8 → 0,6, sonst gleich; falsche Reports (> 10 /min) 9 → 5; Rechenzeit am PC +0,2 ms.
+**Viterbi tracking (V3.2, open):** Variant behind `#define A121_DSP_VITERBI` (default off): Viterbi over the
+last 20 reports, states 40–180 /min, transition Gaussian σ = 3 /min per s plus 2 % "jump anywhere", emission from
+the candidates of the report (Gaussian per candidate, weight (value / best)³, floor 10 %), confidence at most the
+probability mass ±5 /min. Acceptance on day A (all sessions): fewer jumps > 15 /min between
+consecutive valid reports (`vital_eval.py` writes them into the header line of each session), ±5 /min fraction not
+worse. Test bench in advance (simulation only): jumps equal (3 / 3), `brady` MAE 2.8 → 1.5 /min (±5: 95 → 97 %),
+`beweg` 0.8 → 0.6, otherwise equal; wrong reports (> 10 /min) 9 → 5; computation time on the PC +0.2 ms.
 
 ```bash
 mkdir -p /tmp/dsp_vit && { echo '#define A121_DSP_VITERBI 1'; cat firmware/esp32s3/src/a121_esp_dsp.h; } > /tmp/dsp_vit/a121_esp_dsp.h
@@ -137,94 +137,94 @@ mkdir -p /tmp/dsp_vit && { echo '#define A121_DSP_VITERBI 1'; cat firmware/esp32
 .venv/bin/python host/vital_eval.py ~/Data/radar-sensor/ref/<tag A>_* --replay /tmp/dsp_vit
 ```
 
-**Atem-Oberwellen geführt entfernen (V3.3, offen):** Variante hinter `#define A121_DSP_HARM_REMOVE` (Standard aus): je
-Zoom-Punkt vor der Puls-FFT (15 Hz) die Oberwellen m = 1..8 der Atmung abziehen, Phase = Winkel des analytischen
-Signals der Atem-Grundwelle im Weg des Punkts (FFT, Band 0,2–1,8 × Atemfrequenz des vorigen Reports). m bleibt, wenn
-Puls oder 2 × Puls in m × [kleinste, größte Atemfrequenz im Fenster] ± 0,1 Hz liegt; nur nach einem gültigen Report mit
-Konfidenz ≥ 50 % (sonst schonte die Regel einen falschen Puls und löschte den echten). Abnahme an Tag A: R3 (Metronom)
-besser, R1 nicht schlechter. Rechnung vorab (nur Simulation): bei ±23 % Ratenschwankung bleiben 12 % der Oberwellen
-(feste Frequenz: 100 %), bei gleichmäßiger Atmung ≈ 10 % (feste Frequenz 24 %); dem Puls nimmt sie < 13 %. Prüfstand:
-Puls-Kennzahlen wie ohne Variante (Oberwellen sind dort schwach), Konfidenz-Median richtiger Reports 82 → 100 %,
-falscher unverändert 31 %; Rechenzeit am PC +0,7 ms. Als Variante: `#define A121_DSP_HARM_REMOVE 1` voranstellen wie
-oben.
+**Guided removal of breathing harmonics (V3.3, open):** Variant behind `#define A121_DSP_HARM_REMOVE` (default off): for each
+zoom point before the pulse FFT (15 Hz), subtract the harmonics m = 1..8 of breathing, phase = angle of the analytic
+signal of the breathing fundamental in the point's displacement (FFT, band 0.2–1.8 × breathing rate of the previous report). m is kept if
+the pulse or 2 × pulse lies within m × [smallest, largest breathing rate in the window] ± 0.1 Hz; only after a valid report with
+confidence ≥ 50 % (otherwise the rule would spare a wrong pulse and delete the real one). Acceptance on day A: R3 (metronome)
+better, R1 not worse. Calculation in advance (simulation only): with ±23 % rate fluctuation, 12 % of the harmonics remain
+(fixed frequency: 100 %), with even breathing ≈ 10 % (fixed frequency 24 %); it takes < 13 % from the pulse. Test bench:
+pulse metrics as without the variant (harmonics are weak there), confidence median of correct reports 82 → 100 %,
+of wrong ones unchanged at 31 %; computation time on the PC +0.7 ms. As a variant: prepend `#define A121_DSP_HARM_REMOVE 1` as
+above.
 
-**Zoom-Punkte kombinieren (V3.1, offen):** Variante hinter `#define A121_DSP_COMBINE` (Standard aus): die 12 Punkte mit
-der stärksten Bewegung um ihre Kreismittelpunkte verschieben (Punkte ohne sauberes Echo bleiben draußen), 1.
-Hauptkomponente ihrer IQ-Werte (richtet die Punkte phasengleich aus und gewichtet sie mit der Amplitude, bei gleichem
-Rauschen je Punkt = Maximum Ratio Combining), dann **ein** Kanal demodulieren statt 24 Einzelspektren. `@DSP` trägt
-dann als 15. Feld die effektive Punktzahl N_eff = (Σλ)² / Σλ² der Kovarianz (≈ 1: alle Punkte sehen dasselbe Echo, mit
-Person oder ruhendem Echo; ≈ 12: nur Rauschen); `vital_eval.py` meldet ihren Median je Sitzung. Abnahme an Tag A:
-Puls-MAE ≤ ohne Variante bei ≤ 50 % Rechenzeit (ESP32 live, `compute_us` in `@DSP`). Prüfstand vorab (nur Simulation):
-Rechenzeit am PC 1,15 → 0,48 ms (42 %); Puls-MAE `base` 0,36 → 0,29, `brady` 2,81 → 1,51, `tief` 0,60 → 0,34, `step`
-0,74 → 0,77, `anhalt` 0,41 → 0,51 (beim Anhalten 4 gültige Reports mehr, Fehler 2–4 /min), sonst gleich; Konfidenz-Median
-richtiger Reports 82 → 94 %, falscher 31 → 25 %. Erster Wert bei `step` und `tief` nach 7 statt 6 s: Der kombinierte
-Kanal ist atemlastig (die Hauptkomponente maximiert die Leistung, und die trägt die Atmung), im 6-s-Fenster liegt die
-stärkste Spitze dort auf einer niedrigen Atem-Oberwelle. Seit V3.1 gilt ein vorläufiger Wert (V2.4) nie auf einer
-Atem-Oberwelle m ≤ 3, auch ohne Schalter (dort im Prüfstand ohne Wirkung): AKF und Einzelschläge desselben Signals
-bestätigten sie mit (`base` mit Variante: 46 statt 71 /min gültig). Raum-Punkte als zweiter Kanal sind nicht umgesetzt
-(der DSP hält für sie keine Historie). Als Variante: `#define A121_DSP_COMBINE 1` voranstellen wie oben.
+**Combine zoom points (V3.1, open):** Variant behind `#define A121_DSP_COMBINE` (default off): shift the 12 points with
+the strongest motion around their circle centers (points without a clean echo stay out), 1st
+principal component of their IQ values (aligns the points in phase and weights them by amplitude, with equal
+noise per point = maximum ratio combining), then demodulate **one** channel instead of 24 individual spectra. `@DSP` then carries
+the effective number of points N_eff = (Σλ)² / Σλ² of the covariance as the 15th field (≈ 1: all points see the same echo, with
+a person or a static echo; ≈ 12: noise only); `vital_eval.py` reports its median per session. Acceptance on day A:
+pulse MAE ≤ without the variant at ≤ 50 % computation time (ESP32 live, `compute_us` in `@DSP`). Test bench in advance (simulation only):
+computation time on the PC 1.15 → 0.48 ms (42 %); pulse MAE `base` 0.36 → 0.29, `brady` 2.81 → 1.51, `tief` 0.60 → 0.34, `step`
+0.74 → 0.77, `anhalt` 0.41 → 0.51 (4 more valid reports during the breath hold, error 2–4 /min), otherwise equal; confidence median of
+correct reports 82 → 94 %, of wrong ones 31 → 25 %. First value in `step` and `tief` after 7 instead of 6 s: The combined
+channel is breathing-heavy (the principal component maximizes power, and that is carried by breathing); in the 6 s window the
+strongest peak there lies on a low breathing harmonic. Since V3.1, a provisional value (V2.4) is never accepted on a
+breathing harmonic m ≤ 3, even without the switch (no effect on the test bench there): ACF and individual beats of the same signal
+confirmed them too (`base` with the variant: 46 instead of 71 /min valid). Room points as a second channel are not implemented
+(the DSP keeps no history for them). As a variant: prepend `#define A121_DSP_COMBINE 1` as above.
 
-**Einzelschläge mit Vorlage (V3.6, offen):** Variante hinter `#define A121_DSP_IBI_TEMPLATE` (Standard aus): Herzsignal
-des klarsten Punkts im Band 0,6–8 Hz (statt 0,6–5 Hz), Atem-Oberwellen wie bisher abgezogen; Vorlage = Mittel der
-Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (ohne Gleichanteil), Korrelationsfilter mit der Vorlage, dessen
-Spitzen parabolisch verfeinert, dann dieselben Artefakt-Regeln wie V1.6. Abnahme an Tag A (alle Sitzungen mit Gurt):
-IBI-Fehler gegen Gurt-RR halbiert gegenüber V1.6. Werkzeug: `vital_eval.py` schreibt je Sitzung „Einzelschläge gegen
-Gurt-RR" (je gültigem Report IBI-Median und RMSSD gegen die Gurt-RR im selben 15-s-Fenster; Reports, deren IBI nur der
-Rückfallwert 60 000 / Puls ist, zählen nicht); mit `--replay` und dem Schalter wie oben gegen den Standard vergleichen.
-Rechnung vorab (nur Simulation, Fehler je Schlag gegen die wahren Schläge, 6 Fenster): in weißem Rauschen Median-Faktor
-0,81 (V1.6 liegt dort schon nahe der Cramér-Rao-Grenze, ≈ 7 ms je Schlag bei σ = 0,15 × Spitze-Spitze; besser geht es
-mit keinem Verfahren), bei Atem-Resten im Herzband 0,58 (0,44–0,82) — halbiert also nicht überall. Prüfstand: Anteil der
-Reports mit RMSSD (≥ 90 % gültige Schläge) z. B. `base` 17 → 64 %, `tachy` 3 → 75 %, `tief` 20 → 85 %; RMSSD
-gemessen / wahr näher an 1 (`tachy` 1,30 → 0,98); Puls-MAE `brady` 2,8 → 3,2, `tief` 0,6 → 0,3. `tief` verwirft dabei
-den vorläufigen 6-s-Wert 40,3 /min (wahr 71), den der Standard gelten lässt: Dessen IBI-Bestätigung rechnet mit der
-Sperrzeit des Kandidaten (0,6 × 60 / 40 s), überspringt Schläge und bestätigt so den falschen Wert. Die Bestätigung
-bleibt so (eine Sperrzeit unabhängig vom Kandidaten oder nur die AKF senkte im Prüfstand den Anteil richtiger
-vorläufiger Werte 83 → 70 % oder verschob den ersten Wert in vier Szenarien); der Prüfstand zählt dafür ehrlich
-`erst_ok_s` (erster Wert ≤ 5 /min daneben) und `frueh_falsch_n` (Werte > 10 /min daneben in den ersten 15 s), mit dem
-Stand als Grenze: `tief` 7 s / 1 falscher Wert (Konfidenz 28 %, also grau), `brady` 14 s / 6 (doppelter Puls 8–13 s,
-Konfidenz 18–43 %), sonst 0.
+**Individual beats with a template (V3.6, open):** Variant behind `#define A121_DSP_IBI_TEMPLATE` (default off): heart
+signal of the clearest point in the band 0.6–8 Hz (instead of 0.6–5 Hz), breathing harmonics subtracted as before; template = mean of the
+sections ±0.3 × beat interval around the first peaks (without DC component), correlation filter with the template, its
+peaks refined parabolically, then the same artifact rules as V1.6. Acceptance on day A (all sessions with a strap):
+IBI error against strap RR halved compared to V1.6. Tool: `vital_eval.py` writes "Einzelschläge gegen
+Gurt-RR" (individual beats against strap RR) for each session (for each valid report, IBI median and RMSSD against the strap RR in the same 15 s window; reports whose IBI is only the
+fallback value 60,000 / pulse do not count); with `--replay` and the switch as above, compare against the default.
+Calculation in advance (simulation only, error per beat against the true beats, 6 windows): in white noise a median factor of
+0.81 (V1.6 is already close to the Cramér-Rao bound there, ≈ 7 ms per beat at σ = 0.15 × peak-to-peak; no method can do
+better), with breathing residues in the heart band 0.58 (0.44–0.82) — so it does not halve everywhere. Test bench: fraction of
+reports with RMSSD (≥ 90 % valid beats), e.g. `base` 17 → 64 %, `tachy` 3 → 75 %, `tief` 20 → 85 %; RMSSD
+measured / true closer to 1 (`tachy` 1.30 → 0.98); pulse MAE `brady` 2.8 → 3.2, `tief` 0.6 → 0.3. `tief` rejects
+the provisional 6 s value 40.3 /min (true 71), which the default accepts: Its IBI confirmation uses
+the candidate's lockout time (0.6 × 60 / 40 s), skips beats and so confirms the wrong value. The confirmation
+stays as it is (a lockout time independent of the candidate, or only the ACF, lowered the fraction of correct
+provisional values in the test bench 83 → 70 % or shifted the first value in four scenarios); the test bench honestly counts
+`erst_ok_s` (first value ≤ 5 /min off) and `frueh_falsch_n` (values > 10 /min off in the first 15 s) for this, with the
+current state as the limit: `tief` 7 s / 1 wrong value (confidence 28 %, so gray), `brady` 14 s / 6 (double pulse 8–13 s,
+confidence 18–43 %), otherwise 0.
 
-**Atmung Atemzug für Atemzug (V3.4, offen):** Abnahme an R3 (Tag A): in allen Takten 6 / 10 / 15 / 20 /min die Rate
-jeder `@BREATH`-Zeile (60 / Median der letzten 4 Abstände) innerhalb ±1 /min vom Metronom, erster Wert nach dem Start
-nach 2 Atemzügen. `vital_eval.py` schreibt dazu je Sitzung „Atmung Atemzug für Atemzug" (gegen die Marker „ein",
-Atemzüge in Anhalte-Abschnitten mitgezählt; R2 prüft, dass beim Anhalten keine kommen). Prüfstand vorab (nur
-Simulation): MAE 0,0–0,15 /min, alle innerhalb ±1 /min, erster Wert nach 2,0 Atemzügen (auch `takt6`, 6 /min, wo die
-spektrale Atmung mit Band ab 7 /min 8 /min daneben liegt); Ausnahmen: `flach` (0,6 mm) erst nach 4 Atemzügen (der
-Telemetrie-Strahl zentriert mit einem gleitenden Mittelwert und schwingt bei kleinem Bogen erst nach ≈ 9 s ein),
-`anhalt` 2 Atemzüge direkt nach dem Anhalten 17–19 statt 16 /min; ohne Person keine Zeile (Tor: nur in ERFASSUNG,
+**Breathing breath by breath (V3.4, open):** Acceptance on R3 (day A): in all tempos 6 / 10 / 15 / 20 /min, the rate
+of every `@BREATH` line (60 / median of the last 4 intervals) within ±1 /min of the metronome, first value after the start
+after 2 breaths. For this, `vital_eval.py` writes "Atmung Atemzug für Atemzug" (breathing breath by breath) for each session (against the markers "ein" (in),
+breaths in breath-hold sections counted too; R2 checks that none occur during the hold). Test bench in advance (simulation
+only): MAE 0.0–0.15 /min, all within ±1 /min, first value after 2.0 breaths (also `takt6`, 6 /min, where
+spectral breathing with a band from 7 /min is off by 8 /min); exceptions: `flach` (0.6 mm) only after 4 breaths (the
+telemetry beam centers with a sliding mean and only settles after ≈ 9 s with a small arc),
+`anhalt` 2 breaths directly after the hold 17–19 instead of 16 /min; no line without a person (gate: only in ERFASSUNG,
 GÜLTIG, APNOE).
 
-— offen (braucht Gurt und Aufnahmen)
+— open (needs strap and recordings)
 
-| Sitzung | Tag | Puls-MAE | ±5 /min | Verfügbarkeit | Konfidenz ≥ 70 %: ±5 | Atmung-MAE | Apnoe erkannt / Verzug |
+| Session | Day | Pulse MAE | ±5 /min | Availability | Confidence ≥ 70 %: ±5 | Breathing MAE | Apnea detected / delay |
 |---|---|---|---|---|---|---|---|
 | — | — | — | — | — | — | — | — |
 
-### V4 Sensor-Konfiguration (Messplan, offen)
+### V4 Sensor configuration (measurement plan, open)
 
-Plan V4.1–V4.4 in `docs/VITAL_AUDIT.md` (Experimente G1, G5, M3). Daten nach `~/Data/radar-sensor/v4/`,
-nicht ins Repo. Vor jeder Aufnahme den ESP32 eindeutig bestimmen (`ls -l /dev/serial/by-id`, genau ein
-`usb-Espressif…-if00`); die Werkzeuge brechen ab, wenn es nicht genau einer ist. Sensor nur in seinen zulässigen
-Einstellungen betreiben (Profile, HWAAS, PRF, Gain); exptool prüft jede Konfiguration vor dem Setup.
+Plan V4.1–V4.4 in `docs/VITAL_AUDIT.md` (experiments G1, G5, M3). Data goes to `~/Data/radar-sensor/v4/`,
+not into the repo. Before every recording, identify the ESP32 unambiguously (`ls -l /dev/serial/by-id`, exactly one
+`usb-Espressif…-if00`); the tools abort if it is not exactly one. Operate the sensor only in its permitted
+settings (profile, HWAAS, PRF, gain); exptool checks every configuration before setup.
 
-**V4.1 Weg-Rauschen statisch.** Metallplatte 0,6 m vor dem Sensor (Maßband), Raum leer, nichts bewegt sich; ESP32
-und Sensor 5 min eingeschaltet (Temperatur). `sess run` liefert nur Amplituden, keine Phase; deshalb nimmt
-`host/noise_floor.py record` über die ESP32-Brücke `bridge` mit exptool auf (Loopback + 24 Zoom-Punkte ab
-`--start-mm`, je 60 s; ohne Angaben wie das `iq3`-Preset: Zoom Profil 1, HWAAS 32, Gain 16, 15,6 MHz; Loopback
-Profil 1, HWAAS 8, Gain 16, 19,5 MHz). Zuerst die Lage des Echos mit `iq3 10` oder `sess run 5 peak` bestimmen und
-`--start-mm` so wählen, dass es in der Mitte der 60 mm liegt (Platte bei 600 mm → `--start-mm 570`).
+**V4.1 Displacement noise, static.** Metal plate 0.6 m in front of the sensor (tape measure), room empty, nothing moves; ESP32
+and sensor switched on for 5 min (temperature). `sess run` delivers only amplitudes, no phase; therefore
+`host/noise_floor.py record` records with exptool via the ESP32 bridge `bridge` (loopback + 24 zoom points from
+`--start-mm`, 60 s each; without arguments like the `iq3` preset: zoom profile 1, HWAAS 32, gain 16, 15.6 MHz; loopback
+profile 1, HWAAS 8, gain 16, 19.5 MHz). First determine the position of the echo with `iq3 10` or `sess run 5 peak` and
+choose `--start-mm` so that it lies in the middle of the 60 mm (plate at 600 mm → `--start-mm 570`).
 
-| Block | Aufnahmen | Werte |
+| Block | Recordings | Values |
 |---|---|---|
 | Zoom | 24 | `--profile` 1 / 2 / 3 × `--hwaas` 16 / 32 / 64 / 128 × `--rate` 30 / 60 |
-| Loopback | 5 | bei Zoom Profil 1, HWAAS 32, 60 Hz: `--loop-profile 4 --loop-prf 15.6`, `--loop-profile 5 --loop-prf 15.6`, `--loop-prf 15.6`, `--loop-gain 10`, und die Grundeinstellung noch einmal am Ende (Drift) |
-| Firmware-Pfad | 1 | `iq3 60 570 raw` mit `host/esp_record.py` (dieselbe Einstellung wie Zoom 1/32/60, aber über die Firmware) |
-| Neustart | — | Phase vor/nach Session-Neustart: `host/rezoom_check.py` (V2.3 Schritt 1) |
+| Loopback | 5 | at zoom profile 1, HWAAS 32, 60 Hz: `--loop-profile 4 --loop-prf 15.6`, `--loop-profile 5 --loop-prf 15.6`, `--loop-prf 15.6`, `--loop-gain 10`, and the base setting once more at the end (drift) |
+| Firmware path | 1 | `iq3 60 570 raw` with `host/esp_record.py` (same setting as zoom 1/32/60, but through the firmware) |
+| Restart | — | phase before/after session restart: `host/rezoom_check.py` (V2.3 step 1) |
 
-Exptool-Regeln (offline geprüft, `host/tests/test_noise_floor.py`): 19,5 MHz nur mit Profil 1; Loopback nicht mit
-Profil 2; die PRF eines Subsweeps darf nicht kleiner sein als die des folgenden — Loopback mit 15,6 MHz geht also nur,
-weil der Zoom 15,6 MHz hat. Ob der Sensor 60 Hz bei HWAAS 128 schafft, zeigt erst die Messung: `record` zählt Frames
-mit Flags (gesättigt, verspätet, Kalibrierung); eine Einstellung mit Flags gilt als nicht erreichbar.
+Exptool rules (checked offline, `host/tests/test_noise_floor.py`): 19.5 MHz only with profile 1; loopback not with
+profile 2; the PRF of a subsweep must not be smaller than that of the following one — so loopback with 15.6 MHz works only
+because the zoom has 15.6 MHz. Whether the sensor manages 60 Hz at HWAAS 128 only the measurement shows: `record` counts frames
+with flags (saturated, late, calibration); a setting with flags counts as not reachable.
 
 ```bash
 sg dialout -c ".venv/bin/python host/noise_floor.py record --out ~/Data/radar-sensor/v4/v41/p1_h32_60.npz --start-mm 570 --profile 1 --hwaas 32 --rate 60"
@@ -234,137 +234,136 @@ sg dialout -c ".venv/bin/python host/noise_floor.py record --out ~/Data/radar-se
 .venv/bin/python host/noise_floor.py eval ~/Data/radar-sensor/v4/v41/*.npz ~/Data/radar-sensor/v4/v41/iq3_* > ~/Data/radar-sensor/v4/v41/bericht.txt
 ```
 
-Auswertung je Aufnahme: Weg-RMS im Band 0,6–5 Hz (wie das Pulsband der DSP), Median der starken Zoom-Punkte und bester
-Punkt, je für Derotation `aus`, `roh` (wie die Firmware) und `tiefpass` (Loopback-Phase mit 0,8 Hz geglättet, wie
-früher am PC). Entscheidung: Rauschboden je Einstellung (kleinster Median ohne Flags); Derotation `roh` bleibt, wenn
-sie den Median gegen `aus` senkt; `tiefpass` kommt in die Firmware, wenn er mindestens 10 % unter `roh` liegt;
-Loopback-Einstellung wie die beste der fünf.
+Evaluation per recording: displacement RMS in the band 0.6–5 Hz (like the DSP's pulse band), median of the strong zoom points and best
+point, each for derotation `aus` (off), `roh` (raw, like the firmware) and `tiefpass` (low-pass; loopback phase smoothed at 0.8 Hz, as
+formerly on the PC). Decision: noise floor per setting (smallest median without flags); derotation `roh` stays if
+it lowers the median against `aus`; `tiefpass` goes into the firmware if it is at least 10 % below `roh`;
+loopback setting like the best of the five.
 
-**V4.2 Person mit Gurt.** Die 3 besten Einstellungen aus V4.1 mit 60 Hz (die DSP rechnet nur mit 60 Hz) je als
-Firmware-Variante übersetzen und je R1 (5 min, M5) aufnehmen. Zoom-Profil/HWAAS und Loopback-Profil/Gain/PRF sind
-Übersetzungsschalter in `firmware/esp32s3/src/a121_server_client.h` (`A121_IQ3_ZOOM_PROFILE`, `A121_IQ3_ZOOM_HWAAS`,
-`A121_IQ3_LOOP_PROFILE`, `A121_IQ3_LOOP_GAIN`, `A121_IQ3_LOOP_PRF`; Standard 1 / 32 / 1 / 16 / 19,5 MHz), z. B. in
-`platformio.ini` als `build_flags = -DA121_IQ3_ZOOM_HWAAS=64`. `@HELLO` meldet die Einstellung als `iq3=p1h64/lp1g16/19_5_MHz`
-(steht in `meta.json` der Aufnahme). Flashen nur nach eindeutiger Port-Bestimmung. Auswertung mit `vital_eval.py`
-wie M5; Entscheidung: Puls-MAE und Verfügbarkeit in R1, bei Gleichstand der kleinere Rauschboden. Ergebnis wird das
-neue Standard-Preset. 30 Hz nur, wenn V4.1 dort deutlich weniger Rauschen zeigt — dafür müsste die DSP (Filter,
-Fenster) für 30 Hz neu ausgelegt werden (eigener Plan).
+**V4.2 Person with strap.** Compile the 3 best settings from V4.1 at 60 Hz (the DSP only computes at 60 Hz) each as a
+firmware variant and record R1 (5 min, M5) with each. Zoom profile/HWAAS and loopback profile/gain/PRF are
+compile switches in `firmware/esp32s3/src/a121_server_client.h` (`A121_IQ3_ZOOM_PROFILE`, `A121_IQ3_ZOOM_HWAAS`,
+`A121_IQ3_LOOP_PROFILE`, `A121_IQ3_LOOP_GAIN`, `A121_IQ3_LOOP_PRF`; default 1 / 32 / 1 / 16 / 19.5 MHz), e.g. in
+`platformio.ini` as `build_flags = -DA121_IQ3_ZOOM_HWAAS=64`. `@HELLO` reports the setting as `iq3=p1h64/lp1g16/19_5_MHz`
+(it is in `meta.json` of the recording). Flash only after unambiguous port identification. Evaluation with `vital_eval.py`
+as in M5; decision: pulse MAE and availability in R1, in a tie the smaller noise floor. The result becomes the
+new default preset. 30 Hz only if V4.1 shows clearly less noise there — for that, the DSP (filter,
+window) would have to be redesigned for 30 Hz (separate plan).
 
-**V4.3 Linse und Abstand.** Wie R6/R7 in M5 (ohne / hyperbolische Linse × 0,4 / 0,6 / 0,8 / 1,0 m, je 3 min mit Gurt),
-mit dem Preset aus V4.2. Entscheidung: empfohlener Aufbau = kleinster Puls-MAE bei Verfügbarkeit ≥ 80 %; Reichweite =
-größter Abstand mit Puls-MAE ≤ 5 /min.
+**V4.3 Lens and distance.** Like R6/R7 in M5 (without / hyperbolic lens × 0.4 / 0.6 / 0.8 / 1.0 m, 3 min each with strap),
+with the preset from V4.2. Decision: recommended setup = smallest pulse MAE at availability ≥ 80 %; range =
+largest distance with pulse MAE ≤ 5 /min.
 
-**V4.4 Zoom-Breite.** Firmware mit `A121_ZOOM_POINTS=48` gegen 24 (Standard), je R1 und R5 an Tag A; auswerten mit
-`vital_eval.py` (für die Nachrechnung mit 48 Punkten eine Header-Kopie mit `#define A121_ZOOM_POINTS 48`). Entscheidung
-für V2.3 Schritt 3: 48 nur, wenn R5 (Bewegung) mehr gültige Werte bei gleichem Puls-MAE in R1 hat.
+**V4.4 Zoom width.** Firmware with `A121_ZOOM_POINTS=48` against 24 (default), R1 and R5 each on day A; evaluate with
+`vital_eval.py` (for recomputation with 48 points, a header copy with `#define A121_ZOOM_POINTS 48`). Decision
+for V2.3 step 3: 48 only if R5 (motion) has more valid values at the same pulse MAE in R1.
 
-— offen (braucht Metallplatte, Gurt, Aufnahmen; Werkzeuge nur mit Simulation geprüft)
+— open (needs metal plate, strap, recordings; tools checked with simulation only)
 
-| Messung | Ergebnis |
+| Measurement | Result |
 |---|---|
-| V4.1 Rauschboden | — |
+| V4.1 Noise floor | — |
 | V4.2 Preset | — |
-| V4.3 Aufbau / Reichweite | — |
-| V4.4 Zoom-Breite | — |
+| V4.3 Setup / range | — |
+| V4.4 Zoom width | — |
 
-## Materialien und Umgebung
+## Materials and environment
 
-| # | Experiment | Modul | Messgröße | Ergebnis |
+| # | Experiment | Module | Measured quantity | Result |
 |---|---|---|---|---|
-| U1 | Dämpfung: Pappe, Sperrholz, Gipskarton, Kunststoff, Glas, Stoff | sparse_iq | Amplitude vor/hinter Material (dB) | — |
-| U2 | Metallgegenstand / Person hinter Gipskarton bzw. Holztür | distance, presence | erkennbar ja/nein, Abstand | — |
-| U3 | Vibrationsfrequenz: Lautsprecher, Ventilator, Waschmaschine | vibration | Hz vs. Sollwert | — |
-| U4 | Geschwindigkeit: Ventilatorblatt, rollender Ball, Pendel | speed | m/s | — |
-| U5 | Wasser-Fließgeschwindigkeit (Wasserhahn, Gartenschlauch) | surface_velocity | m/s plausibel? | — |
-| U6 | Füllstand: Eimer/Glas Wasser, Mülleimer | tank_level, waste_level | mm vs. Lineal | — |
+| U1 | Attenuation: cardboard, plywood, plasterboard, plastic, glass, fabric | sparse_iq | amplitude before/behind material (dB) | — |
+| U2 | Metal object / person behind plasterboard or wooden door | distance, presence | detectable yes/no, distance | — |
+| U3 | Vibration frequency: loudspeaker, fan, washing machine | vibration | Hz vs. target value | — |
+| U4 | Speed: fan blade, rolling ball, pendulum | speed | m/s | — |
+| U5 | Water flow speed (tap, garden hose) | surface_velocity | m/s plausible? | — |
+| U6 | Fill level: bucket/glass of water, trash can | tank_level, waste_level | mm vs. ruler | — |
 
-## Übertragung zum Handy (Android-App)
+## Transfer to the phone (Android app)
 
-Aufbau: ESP32-S3 (`2026-11-01-app1`) per C-auf-C am Galaxy S26 Ultra, A121 über die rote 5V-Ader, App per USB-CDC.
-Details und Werkzeuge: `docs/ANDROID_APP.md`. Aufnahmen unter `~/Data/radar-sensor/phone/`.
+Setup: ESP32-S3 (`2026-11-01-app1`) connected C-to-C to the Galaxy S26 Ultra, A121 via the red 5V wire, app via USB CDC.
+Details and tools: `docs/ANDROID_APP.md`. Recordings under `~/Data/radar-sensor/phone/`.
 
-| # | Experiment | Messgröße | Ergebnis |
+| # | Experiment | Measured quantity | Result |
 |---|---|---|---|
-| T1 | Dauerlauf `iq3 0 raw` über USB, Aufnahme im Hintergrund, Bildschirm aus | Frameverlust, Rate, Pausen | 2026-11-01, 31,7 min: 113 289 Frames, 59,64 Hz nach tick, **0 Lücken**, 0 Neuverbindungen, ≈ 41 kB/s. Größter tick-Abstand 440 ms (alle 38 Abstände > 100 ms bei `@REZOOM`), größte Empfangspause 337 ms (DSP-Report ESP32 Ø 270 ms, max. 323 ms). Akku 83 → 80 % in 39 min (abgelesen) |
-| T2 | Kabel abziehen/einstecken während `iq3` | Wiederanlauf | 2026-11-01, 2×: ESP32 startet neu (Handy-Strom), App verbindet selbst und startet `iq3` neu; 0 Lücken innerhalb der 3 Streams. Pause bis zum neuen Stream 34,9 s (mit Berechtigungsdialog) bzw. 8,2 s (ohne; inkl. Zeit ohne Kabel) |
-| T3 | ESP32-DSP am Handy nachrechnen (NDK, Rohdaten aus T1) | Gleichheit Handy / PC / ESP32 | 2026-11-01: Handy = PC bytegleich; gegen ESP32 51 715 / 128 197 Zeilen gleich, Rest meist letzte Stelle, Weg ≤ 0,21 µm, Atemtiefe ≤ 1,6 µm, IBI in 1 / 1632 `@VITAL` um 16,7 ms. Rechenzeit Handy 28,4 s für 31,7 min |
+| T1 | Endurance run `iq3 0 raw` over USB, recording in the background, screen off | frame loss, rate, pauses | 2026-11-01, 31.7 min: 113,289 frames, 59.64 Hz by tick, **0 gaps**, 0 reconnects, ≈ 41 kB/s. Largest tick interval 440 ms (all 38 intervals > 100 ms at `@REZOOM`), largest receive pause 337 ms (DSP report ESP32 Ø 270 ms, max. 323 ms). Battery 83 → 80 % in 39 min (read off) |
+| T2 | Unplug/plug in the cable during `iq3` | restart | 2026-11-01, 2×: ESP32 restarts (phone power), app reconnects by itself and restarts `iq3`; 0 gaps within the 3 streams. Pause until the new stream 34.9 s (with permission dialog) or 8.2 s (without; incl. time without cable) |
+| T3 | Recompute the ESP32 DSP on the phone (NDK, raw data from T1) | equality phone / PC / ESP32 | 2026-11-01: phone = PC byte-identical; against ESP32 51,715 / 128,197 lines equal, the rest mostly last digit, displacement ≤ 0.21 µm, breath depth ≤ 1.6 µm, IBI in 1 / 1632 `@VITAL` by 16.7 ms. Computation time on the phone 28.4 s for 31.7 min |
 
-## V6 Wiederfinden (Basislinie)
+## V6 Reacquisition (baseline)
 
-Messwerkzeug: `host/reacq_eval.py` (Plan `2026-11-02-pulse-reacquisition`, Aufgabe 3). Ein Ausfall ist eine Folge von @DSP-Reports
-mit `ok == 0` nach einem gültigen Report; Dauer = erster ungültiger Report bis zum nächsten gültigen. Ursache `bewegung`
-(im Ausfall `motion_pct > 30` oder Zustand BEWEGUNG; mit `A121_DSP_REACQ` zusätzlich `win_s == 0` ab 6 s nach Start/Rezoom, Ruling
-R10; `--ohne-karte` zählt nach der Basisregel ohne `win_s`, Ruling R16), sonst `keine_atemspitze` (`br_state == 1` in der Mehrheit), sonst `rest`.
-Läufe mit mehr als 50 % Zustand KEINE_PERSON zählen nicht (Standard); `--keine-person-zaehlen` schaltet das ab. Gültig-Anteil ohne
-Zustand 0. Alle Zahlen: Firmware-Stand dieses Zweigs (a121_esp_dsp.h ohne `A121_DSP_REACQ`), `stream.log` neu gerechnet
-(`--replay firmware/esp32s3/src`), Zeit = Empfangszeit, Referenz fehlt (keine Aussage über Genauigkeit, nur über Verfügbarkeit).
+Measurement tool: `host/reacq_eval.py` (plan `2026-11-02-pulse-reacquisition`, task 3). An outage is a sequence of @DSP reports
+with `ok == 0` after a valid report; duration = first invalid report until the next valid one. Cause `bewegung` (motion)
+(in the outage `motion_pct > 30` or state BEWEGUNG; with `A121_DSP_REACQ` additionally `win_s == 0` from 6 s after start/rezoom, ruling
+R10; `--ohne-karte` (without map) counts by the base rule without `win_s`, ruling R16), otherwise `keine_atemspitze` (no breathing peak) (`br_state == 1` in the majority), otherwise `rest`.
+Runs with more than 50 % state KEINE_PERSON do not count (default); `--keine-person-zaehlen` (count no-person) turns that off. Valid fraction without
+state 0. All numbers: firmware state of this branch (a121_esp_dsp.h without `A121_DSP_REACQ`), `stream.log` recomputed
+(`--replay firmware/esp32s3/src`), time = receive time, reference missing (no statement about accuracy, only about availability).
 
 ```
 .venv/bin/python host/reacq_eval.py <T1> <2026-11-02_livetest_vital1> <2026-11-02_vital1_iq3raw_60s> --replay firmware/esp32s3/src
 ```
 
-| Aufnahme | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | keine_atemspitze: n, Median / Summe | rest: n, Median / Summe | Sprünge > 15 /min |
+| Recording | valid (without state 0) | outages (all / motion) | motion: median / sum | keine_atemspitze: n, median / sum | rest: n, median / sum | jumps > 15 /min |
 |---|---|---|---|---|---|---|
-| T1 `2026-11-01_164043_usb_iq3raw_bildschirmaus` (31,7 min) | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 14, 2,0 s / 60,1 s | 1, 9,2 s / 9,2 s | 13 |
-| `2026-11-02_171254_livetest_vital1` | 89,5 % | 0 / 0 | – | – | – | 0 |
-| `2026-11-02_vital1_iq3raw_60s` (60 s) | 32,1 % | 4 / 1 | 17,2 s / 17,2 s | 1, 3,0 s / 3,0 s | 2, 7,2 s / 14,4 s | 1 |
+| T1 `2026-11-01_164043_usb_iq3raw_bildschirmaus` (31.7 min) | 20.7 % | 30 / 15 | 23.7 s / 590.9 s | 14, 2.0 s / 60.1 s | 1, 9.2 s / 9.2 s | 13 |
+| `2026-11-02_171254_livetest_vital1` | 89.5 % | 0 / 0 | – | – | – | 0 |
+| `2026-11-02_vital1_iq3raw_60s` (60 s) | 32.1 % | 4 / 1 | 17.2 s / 17.2 s | 1, 3.0 s / 3.0 s | 2, 7.2 s / 14.4 s | 1 |
 
-Ohne Personenfilter (`--keine-person-zaehlen`) hat T1 33 Ausfälle, davon **18 Bewegungs-Ausfälle, Median 39,0 s, Summe 1609 s**
-(Spec-Stand der Handanalyse: 18, ≈ 40 s, ≈ 1627 s; die 18 s Unterschied passen vermutlich zu 1 s je Ausfall, falls die Handanalyse die Dauer ab dem
-letzten gültigen statt ab dem ersten ungültigen Report gezählt hat; nicht nachgeprüft). Der Personenfilter nimmt drei Bewegungs-Ausfälle heraus (Zustand KEINE_PERSON in der
-Mehrheit: einen von 829 s und zwei kürzere, zusammen 1018 s); übrig bleiben 15. Die
-neu gerechnete DSP hält T1 nur zu 11 % der Reports für gültig (211 von 1899); die Aufnahme-Firmware vom 2026-11-01 hatte 1632 gültige
-(`ok` im Original-Log), deshalb ist die Basislinie ausdrücklich die des aktuellen Header-Stands. Eine Pulsreferenz gibt es in
-keiner dieser Aufnahmen. Nur Rechnung auf dem PC (Replay), kein Lauf am Gerät.
+Without the person filter (`--keine-person-zaehlen`), T1 has 33 outages, of them **18 motion outages, median 39.0 s, sum 1609 s**
+(spec figure of the manual analysis: 18, ≈ 40 s, ≈ 1627 s; the 18 s difference probably fits 1 s per outage, if the manual analysis counted the duration from the
+last valid instead of from the first invalid report; not verified). The person filter removes three motion outages (state KEINE_PERSON in the
+majority: one of 829 s and two shorter ones, 1018 s together); 15 remain. The
+recomputed DSP considers only 11 % of the T1 reports valid (211 of 1899); the recording firmware of 2026-11-01 had 1632 valid
+(`ok` in the original log), which is why the baseline is explicitly that of the current header state. There is no pulse reference in
+any of these recordings. Computation on the PC only (replay), no run on the device.
 
-### V6 Variante Periodizität (`A121_DSP_REACQ_PERIOD`): verworfen
+### V6 variant periodicity (`A121_DSP_REACQ_PERIOD`): rejected
 
-Idee (Vital-Radio, Adib et al. 2015): Ein zu starker Block der Bewegungskarte zählt nur als bewegt, wenn das Signal um ihn
-(3-s-Ausschnitt am stärksten Punkt, 15 Hz, Hann, Herzband 0,674–3,003 Hz) nicht periodisch ist; Ziel war `tippen`
-(kleine unregelmäßige Stöße). Messung: `.venv/bin/python host/vital_sim.py bench --check --define A121_DSP_REACQ [--define A121_DSP_REACQ_PERIOD]`,
-nur Simulation (PC-Rechnung, kein Lauf am Gerät). Mit dem Schalter, aber ohne Periodenprüfung (`kPeriodK` = 100), ist die Ausgabe zeilengleich zu
-`A121_DSP_REACQ` allein.
+Idea (Vital-Radio, Adib et al. 2015): A motion-map block that is too strong only counts as moving if the signal around it
+(3 s excerpt at the strongest point, 15 Hz, Hann, heart band 0.674–3.003 Hz) is not periodic; the target was `tippen`
+(small irregular bumps). Measurement: `.venv/bin/python host/vital_sim.py bench --check --define A121_DSP_REACQ [--define A121_DSP_REACQ_PERIOD]`,
+simulation only (PC computation, no run on the device). With the switch but without the period check (`kPeriodK` = 100), the output is line-identical to
+`A121_DSP_REACQ` alone.
 
-Schwelle: Mit allen übrigen Bins im Band als Bezug ist ein reiner Sinus im 3-s-Ausschnitt nur Spitze/Mittel ≈ 4,7 (Hann-Hauptkeule
-1,3 Hz von 2,3 Hz Band), Rauschen bis 7: `kPeriodK` = 5 trennt dann nichts. Umgesetzt ist deshalb "übrige Bins = außerhalb der
-Hauptkeule der Spitze (± 2 Auflösungszellen)". Dann liegt der Sinus bei 420–1080, weißes Rauschen im Mittel bei 5 (500 Seeds: bis 39,
-rund ein Drittel über 5, denn 3 s haben nur ≈ 9 unabhängige Bins im Band), unregelmäßige Stöße im Mittel bei 6 (bis 167).
+Threshold: With all remaining bins in the band as the reference, a pure sine in the 3 s excerpt is only peak/mean ≈ 4.7 (Hann main lobe
+1.3 Hz of a 2.3 Hz band), noise up to 7: `kPeriodK` = 5 then separates nothing. What is implemented is therefore "remaining bins = outside the
+main lobe of the peak (± 2 resolution cells)". Then the sine lies at 420–1080, white noise on average at 5 (500 seeds: up to 39,
+about a third above 5, because 3 s has only ≈ 9 independent bins in the band), irregular bumps on average at 6 (up to 167).
 
-| Szenario | gültig REACQ → +PERIOD | wiederfind_s | falsch_nach_beweg_n | nie_gefunden_n | Grenzen |
+| Scenario | valid REACQ → +PERIOD | wiederfind_s | falsch_nach_beweg_n | nie_gefunden_n | Limits |
 |---|---|---|---|---|---|
-| beweg | 100 → 105 /120 | 6 → 11 | 0 → 9 | 0 → 0 | neu verletzt: hr_p5 91,4 (≥ 95), hr_mae 2,2 (≤ 1,3) |
-| kurz | 102 → 115 /120 | 8 → 1 | 0 → 7 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 7 (≤ 0 und ≤ 2) |
-| zappel | 81 → 104 /120 | 7 → 1 | 0 → 7 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 7 (≤ 0) |
-| lang | 125 → 142 /150 | 6 → 6 | 2 → 1 | 0 → 0 | weiter verletzt (≤ 0) |
-| lage | 104 → 111 /120 | 2 → 1 | 0 → 0 | 0 → 0 | hält |
-| beweg_hr | 124 → 142 /150 | 7 → 1 | 0 → 0 | 0 → 0 | hält (Puls-MAE 0,4 → 0,9) |
-| beweg_weg | 46 → 55 /120 | 6 → 1 | 0 → 2 | 0 → 0 | neu verletzt: falsch_nach_beweg_n 2 (≤ 0) |
-| tippen | 137 → 144 /150 | 5 → 5 | 4 → 4 | 0 → 0 | Abschnitt gültig 88 → 100 %, Abschnitt-MAE 4,4 → 4,0 (Grenze ≤ 2,0 weiter verletzt) |
+| beweg | 100 → 105 /120 | 6 → 11 | 0 → 9 | 0 → 0 | newly violated: hr_p5 91.4 (≥ 95), hr_mae 2.2 (≤ 1.3) |
+| kurz | 102 → 115 /120 | 8 → 1 | 0 → 7 | 0 → 0 | newly violated: falsch_nach_beweg_n 7 (≤ 0 and ≤ 2) |
+| zappel | 81 → 104 /120 | 7 → 1 | 0 → 7 | 0 → 0 | newly violated: falsch_nach_beweg_n 7 (≤ 0) |
+| lang | 125 → 142 /150 | 6 → 6 | 2 → 1 | 0 → 0 | still violated (≤ 0) |
+| lage | 104 → 111 /120 | 2 → 1 | 0 → 0 | 0 → 0 | holds |
+| beweg_hr | 124 → 142 /150 | 7 → 1 | 0 → 0 | 0 → 0 | holds (pulse MAE 0.4 → 0.9) |
+| beweg_weg | 46 → 55 /120 | 6 → 1 | 0 → 2 | 0 → 0 | newly violated: falsch_nach_beweg_n 2 (≤ 0) |
+| tippen | 137 → 144 /150 | 5 → 5 | 4 → 4 | 0 → 0 | section valid 88 → 100 %, section MAE 4.4 → 4.0 (limit ≤ 2.0 still violated) |
 
-Die übrigen Szenarien (base, anhalt, …) ohne neue Verletzung. Ergebnis: Mit `kPeriodK` = 5 brechen `beweg`, `kurz`, `zappel` und
-`beweg_weg` ihre Grenzen, weil die simulierte Bewegung ein Sinus ist, also periodisch, und deshalb nicht mehr als Bewegung
-zählt; `tippen` behält seine 4 falschen Werte (nur Gültig-Anteil und MAE im Abschnitt etwas besser). Zur Orientierung
-(nicht übernommen, Schwelle laut Entwurf fest 5): `kPeriodK` = 20 lässt `kurz` bei 2 falschen Werten (Grenze ≤ 0), `lang` bei 1 und `tippen`
-unverändert; `kPeriodK` = 100 ist zeilengleich zu REACQ allein. **Verworfen**: Grenzen von `zappel` (und `beweg`, `kurz`,
-`beweg_weg`) nicht gehalten, `tippen` nicht behoben (in `tippen` kommt der Zustand BEWEGUNG nie vor; die falschen Werte
-kommen laut Task 6 aus der normalen Verfolgung). Der Code bleibt hinter dem Schalter als Experiment; ein Bench-Test dafür gibt es
-nicht. Rechenzeit: je als bewegt gezählter Block eine FFT (1024) des vorhandenen `fft_`, höchstens 15 je Report.
+The remaining scenarios (base, anhalt, …) show no new violation. Result: With `kPeriodK` = 5, `beweg`, `kurz`, `zappel` and
+`beweg_weg` break their limits, because the simulated motion is a sine, hence periodic, and therefore no longer
+counts as motion; `tippen` keeps its 4 wrong values (only the valid fraction and the MAE in the section are slightly better). For orientation
+(not adopted, threshold fixed at 5 according to the design): `kPeriodK` = 20 leaves `kurz` at 2 wrong values (limit ≤ 0), `lang` at 1 and `tippen`
+unchanged; `kPeriodK` = 100 is line-identical to REACQ alone. **Rejected**: Limits of `zappel` (and `beweg`, `kurz`,
+`beweg_weg`) not kept, `tippen` not fixed (in `tippen` the state BEWEGUNG never occurs; the wrong values
+come from the normal tracking, according to task 6). The code stays behind the switch as an experiment; there is no bench test for it. Computation time: one FFT (1024) of the existing `fft_` per block counted as moving, at most 15 per report.
 
-### V6 Variante Phasensteigung (`A121_DSP_PHASE_SLOPE`): verworfen
+### V6 variant phase slope (`A121_DSP_PHASE_SLOPE`): rejected
 
-Idee (Vital-Radio, Adib et al. 2015): Die Frequenz des gewählten Kandidaten (`cf[0]`) kommt nicht aus der Parabel um die
-Spektrumsspitze, sondern aus der Steigung der abgewickelten Phase des Schmalbands: Herzsignal des klarsten Punkts
-(`best_h_`, bzw. kombinierter Kanal) auf dem Pulsfenster, 15 Hz, Hann, auf 1024 aufgefüllt, komplexe FFT, nur die Spitze und ihre
-beiden Nachbar-Bins behalten, inverse FFT, Phase der ersten `m` Werte abwickeln, Gerade (kleinste Quadrate) → Hz
-(`phaseSlopeHz`, eigene `ComplexFft<1024>`). Kandidatenwahl, Oktav-Prüfung und die übrigen Kandidaten bleiben. Die Spitze wird vom
-Startbin aus bergauf gesucht (höchstens 4 Bins), weil die Spitze des Einzelpunkt-Signals neben der des kombinierten Spektrums liegen
-kann (der Einheitentest startet mit 1,2 Hz bei wahren 1,23 Hz). Messung: `.venv/bin/python host/vital_sim.py bench --check
-[--hr-win 600] [--define A121_DSP_REACQ] --define A121_DSP_PHASE_SLOPE`, nur Simulation (PC-Rechnung, kein Lauf am Gerät). Ohne den Schalter
-ist die Ausgabe zeilengleich zum Stand davor, mit nur `A121_DSP_REACQ` ebenfalls.
+Idea (Vital-Radio, Adib et al. 2015): The frequency of the selected candidate (`cf[0]`) does not come from the parabola around the
+spectrum peak, but from the slope of the unwrapped phase of the narrow band: heart signal of the clearest point
+(`best_h_`, or the combined channel) over the pulse window, 15 Hz, Hann, zero-padded to 1024, complex FFT, keep only the peak and its
+two neighboring bins, inverse FFT, unwrap the phase of the first `m` values, straight line (least squares) → Hz
+(`phaseSlopeHz`, own `ComplexFft<1024>`). Candidate selection, octave check and the other candidates remain. The peak is searched uphill from the
+start bin (at most 4 bins), because the peak of the single-point signal can lie next to that of the combined spectrum
+(the unit test starts at 1.2 Hz with a true 1.23 Hz). Measurement: `.venv/bin/python host/vital_sim.py bench --check
+[--hr-win 600] [--define A121_DSP_REACQ] --define A121_DSP_PHASE_SLOPE`, simulation only (PC computation, no run on the device). Without the switch,
+the output is line-identical to the state before, with `A121_DSP_REACQ` only likewise.
 
-Ergebnis je Szenario (Puls-MAE in /min / Anteil ≤ 5 /min in %; PS = Phasensteigung; 10 s = `--hr-win 600`):
+Result per scenario (pulse MAE in /min / fraction ≤ 5 /min in %; PS = phase slope; 10 s = `--hr-win 600`):
 
-| Szenario | ohne | PS | REACQ | REACQ+PS | 10 s ohne | 10 s PS |
+| Scenario | without | PS | REACQ | REACQ+PS | 10 s without | 10 s PS |
 |---|---|---|---|---|---|---|
 | base | 0.4 / 99 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 | 0.4 / 99 | 0.6 / 100 |
 | harm4 | 0.3 / 100 | 0.4 / 100 | 0.3 / 100 | 0.4 / 100 | 0.4 / 100 | 0.5 / 100 |
@@ -386,120 +385,118 @@ Ergebnis je Szenario (Puls-MAE in /min / Anteil ≤ 5 /min in %; PS = Phasenstei
 | beweg_weg | 0.8 / 96 | 1.2 / 94 | 0.3 / 100 | 0.6 / 100 | 0.7 / 98 | 1.1 / 98 |
 | tippen | 2.6 / 92 | 3.1 / 90 | 2.7 / 91 | 3.3 / 88 | 2.0 / 92 | 1.9 / 90 |
 
-(`leer`, `niemand` ohne Pulswert; Summe der MAE über die 19 Szenarien: 19,5 → 21,6 allein, 16,9 → 19,4 mit REACQ.)
+(`leer`, `niemand` without a pulse value; sum of the MAE over the 19 scenarios: 19.5 → 21.6 alone, 16.9 → 19.4 with REACQ.)
 
-| Vergleich | Verletzungen vorher → nachher | neu |
+| Comparison | Violations before → after | new |
 |---|---|---|
-| PS allein gegen ohne Schalter (15 s) | 0 → 7 | `erst_ok_s` 7 s (Grenze ≤ 6) bei `anhalt`, `weg`, `kurz`; `weg` `erst_s` 7 s; `zappel` `erst_ok_s` 11 s (≤ 7); `lang` `falsch_nach_beweg_n` 5 (≤ 3); `tippen` `falsch_nach_beweg_n` 6 (≤ 4) |
-| REACQ+PS gegen REACQ allein (15 s) | 3 → 9 | wie oben (`erst_ok_s` bei `anhalt`, `weg`, `kurz`, `zappel`, `weg` `erst_s`); `tippen` falsch 4 → 6, `abschnitt_mae` 4,4 → 4,9 |
-| PS gegen ohne bei 10 s | 9 → 15 (Grenzen gelten für 15 s) | `beweg` `hr_p5` 93,6 (≥ 95), `anhalt` `hr_p5` 94,9, `erst_ok_s` bei `anhalt`/`weg`/`kurz`/`zappel` 7–16 s, `kurz` falsch 5 (≤ 2), `zappel` `frueh_falsch_n` 8 (≤ 3), `alle` `konf_richtig` 66 (≥ 70) |
+| PS alone against without switch (15 s) | 0 → 7 | `erst_ok_s` 7 s (limit ≤ 6) in `anhalt`, `weg`, `kurz`; `weg` `erst_s` 7 s; `zappel` `erst_ok_s` 11 s (≤ 7); `lang` `falsch_nach_beweg_n` 5 (≤ 3); `tippen` `falsch_nach_beweg_n` 6 (≤ 4) |
+| REACQ+PS against REACQ alone (15 s) | 3 → 9 | as above (`erst_ok_s` in `anhalt`, `weg`, `kurz`, `zappel`, `weg` `erst_s`); `tippen` wrong 4 → 6, `abschnitt_mae` 4.4 → 4.9 |
+| PS against without at 10 s | 9 → 15 (limits apply to 15 s) | `beweg` `hr_p5` 93.6 (≥ 95), `anhalt` `hr_p5` 94.9, `erst_ok_s` in `anhalt`/`weg`/`kurz`/`zappel` 7–16 s, `kurz` wrong 5 (≤ 2), `zappel` `frueh_falsch_n` 8 (≤ 3), `alle` `konf_richtig` 66 (≥ 70) |
 
-Ursache: Auf dem 1024er Raster (0,0146 Hz) liegen die drei behaltenen Bins auf dem flachen Gipfel der Hann-Hauptkeule (±0,33 Hz bei 6 s).
-Das Schmalband ist `e^{j·2π·k0·n/1024}` mal einer fast reellen, langsam veränderlichen Hüllkurve; die Steigung ist deshalb im Wesentlichen
-die Frequenz des Mittenbins, nur eine kleine Korrektur kommt aus dem Unterschied der Nachbar-Bins (Überlegung, nicht einzeln gemessen). Der Schätzwert rastet auf das Raster ein: Auf
-einem sauberen Sinus (Einheitentest, 6 / 10 / 15 s) liegt der Fehler bei bis zu 0,007 Hz (0,4 /min, halber Bin), unabhängig von der
-Fensterlänge; die Parabel über die Leistung erreicht auf demselben Signal 0,0001 Hz. Die erhoffte feinere Frequenz im kurzen Fenster
-tritt nicht ein; ein weiterer Grund kann sein, dass das Signal vom klarsten Punkt stammt, die Kandidaten aber aus dem kombinierten Spektrum aller Punkte (nicht getrennt untersucht).
-Zur Orientierung (nicht übernommen, an `kPhaseSlopeWalk` = 0, also ohne Spitzensuche vom Startbin aus, gemessen): PS allein
-0 → 3 Verletzungen (`brady` `erst_ok_s` 15 s / `frueh_falsch_n` 7, `tippen` falsch 5), Summe MAE 19,5 → 20,2; im 10-s-Fenster 9 → 9, Summe MAE
-49,0 → 50,0; auch dort ist es nicht besser als die Parabel.
+Cause: On the 1024 grid (0.0146 Hz), the three kept bins lie on the flat top of the Hann main lobe (±0.33 Hz at 6 s).
+The narrow band is `e^{j·2π·k0·n/1024}` times an almost real, slowly varying envelope; the slope is therefore essentially
+the frequency of the center bin, and only a small correction comes from the difference of the neighboring bins (reasoning, not measured separately). The estimate snaps to the grid: On
+a clean sine (unit test, 6 / 10 / 15 s) the error is up to 0.007 Hz (0.4 /min, half a bin), independent of the
+window length; the parabola over the power reaches 0.0001 Hz on the same signal. The hoped-for finer frequency in the short window
+does not materialize; another reason may be that the signal comes from the clearest point while the candidates come from the combined spectrum of all points (not examined separately).
+For orientation (not adopted, measured at `kPhaseSlopeWalk` = 0, i.e. without peak search from the start bin): PS alone
+0 → 3 violations (`brady` `erst_ok_s` 15 s / `frueh_falsch_n` 7, `tippen` wrong 5), sum MAE 19.5 → 20.2; in the 10 s window 9 → 9, sum MAE
+49.0 → 50.0; there too it is no better than the parabola.
 
-**Verworfen**: Der Prüfstand wird in beiden Fensterlängen schlechter (Puls-MAE höher im 15-s-Fenster in 12 von 19 Szenarien, in einem
-niedriger; im 10-s-Fenster in 13 von 19, in einem niedriger; neue Verletzungen), die Übernahmeregel (MAE und alle Grenzen nicht schlechter)
-ist nicht erfüllt. Das Urteil gilt nur für die 3-Bin-Variante des Entwurfs: k0 ± 1 einer 1024er FFT rastet auf dem flachen Gipfel der
-Hann-Hauptkeule auf den Mittenbin ein; ein Band von etwa ± 2 · 1024 / m Bins (m = Fensterlänge in Abtastwerten) wurde nicht gegen die Parabel
-probiert. Der Code bleibt hinter dem Schalter als Experiment; einen Bench-Test dafür gibt es nicht (`PhaseSlopeTest` in `host/tests/test_dsp_unit.py` prüft nur die Funktion). Kosten mit
-Schalter: 14 KB RAM (`ComplexFft<1024>` 6 KB, zwei Arbeitsfelder je 4 KB), zwei komplexe FFT (1024) und höchstens 225 Phasen je Report
-(geschätzt unter 2 ms auf dem ESP32-S3, nicht gemessen); ohne Schalter nichts davon. Alle Zahlen sind Simulation; Aussagen über die Genauigkeit
-am Menschen sind erst mit einer Pulsreferenz möglich.
+**Rejected**: The test bench gets worse in both window lengths (pulse MAE higher in the 15 s window in 12 of 19 scenarios, lower in one; in the 10 s window in 13 of 19, lower in one; new violations), the adoption rule (MAE and all limits not worse)
+is not met. The verdict applies only to the 3-bin variant of the design: k0 ± 1 of a 1024 FFT snaps to the center bin on the flat top of the
+Hann main lobe; a band of about ± 2 · 1024 / m bins (m = window length in samples) was not tried against the parabola. The code stays behind the switch as an experiment; there is no bench test for it (`PhaseSlopeTest` in `host/tests/test_dsp_unit.py` only checks the function). Cost with
+the switch: 14 KB RAM (`ComplexFft<1024>` 6 KB, two work arrays of 4 KB each), two complex FFTs (1024) and at most 225 phases per report
+(estimated under 2 ms on the ESP32-S3, not measured); without the switch none of that. All numbers are simulation; statements about accuracy
+on humans are only possible with a pulse reference.
 
-### V6 Gesamtprüfung: Schalter `A121_DSP_REACQ` (2026-11-03)
+### V6 overall check: switch `A121_DSP_REACQ` (2026-11-03)
 
-Stand des Zweigs `feature/v6-wiederfinden`; nur Simulation und Nachrechnung am PC, **keine Referenz, kein Lauf am Gerät**. Aussagen über
-die Genauigkeit des Pulses sind damit nicht möglich, nur über Verfügbarkeit und Verhalten im Prüfstand. Übernommen ist nur
-`A121_DSP_REACQ` (Bewegungskarte, Puls auf dem ruhigen Endstück, Gedächtnis); `A121_DSP_REACQ_PERIOD` und `A121_DSP_PHASE_SLOPE` sind
-verworfen (Abschnitte oben) und bleiben aus.
+State of the branch `feature/v6-wiederfinden`; simulation and recomputation on the PC only, **no reference, no run on the device**. Statements about
+the accuracy of the pulse are therefore not possible, only about availability and behavior on the test bench. Only
+`A121_DSP_REACQ` is adopted (motion map, pulse on the quiet end segment, memory); `A121_DSP_REACQ_PERIOD` and `A121_DSP_PHASE_SLOPE` are
+rejected (sections above) and stay off.
 
-**Prüfstand** (`.venv/bin/python host/vital_sim.py bench --check [--define A121_DSP_REACQ]`, 15-s-Fenster, Szenarien mit Bewegung;
-`wiederfind_s` = Ende der Bewegung bis zum ersten gültigen Wert innerhalb ± 5 /min der Wahrheit, Median; `falsch danach` = gültige Reports > 10 /min
-daneben in den 30 s danach; `falsch in` = dasselbe in (Beginn, Ende] der Bewegung (`falsch_in_beweg_n`, Ruling R15, mit Schalter Grenze 0, ohne
-nur berichtet); `nie_gefunden_n` ist überall 0; Stand nach dem Final-Review-Fix, Simulation):
+**Test bench** (`.venv/bin/python host/vital_sim.py bench --check [--define A121_DSP_REACQ]`, 15 s window, scenarios with motion;
+`wiederfind_s` = end of motion until the first valid value within ± 5 /min of the truth, median; `falsch danach` (wrong afterwards) = valid reports > 10 /min
+off in the 30 s after; `falsch in` (wrong during) = the same in (start, end] of the motion (`falsch_in_beweg_n`, ruling R15, with the switch limit 0, without
+only reported); `nie_gefunden_n` is 0 everywhere; state after the final review fix, simulation):
 
-| Szenario | gültig ohne → mit | Puls-MAE ohne → mit | wiederfind_s ohne → mit | falsch danach ohne → mit | falsch in ohne → mit | Grenzen mit Schalter |
+| Scenario | valid without → with | pulse MAE without → with | wiederfind_s without → with | wrong afterwards without → with | wrong during without → with | Limits with switch |
 |---|---|---|---|---|---|---|
-| beweg | 101 → 100 /120 | 0,8 → 0,4 | 11 → 6 | 2 → 0 | 0 → 0 | hält |
-| kurz | 104 → 102 /120 | 0,9 → 0,4 | 14 → 8 | 2 → 0 | 0 → 0 | hält (Grenze ≤ 8) |
-| zappel | 114 → 81 /120 | 3,9 → 3,1 | 1 → 7 | 10 → 0 | 0 → 0 | hält (Grenze ≤ 8) |
-| lang | 143 → 125 /150 | 1,5 → 0,8 | 11 → 6 | 3 → 2 | 0 → 2 | **verletzt**: falsch danach 2, falsch in 2 (Grenzen 0) |
-| lage | 111 → 104 /120 | 0,3 → 0,3 | 1 → 2 | 0 → 0 | 0 → 0 | hält |
-| beweg_hr | 126 → 124 /150 | 0,4 → 0,4 | 12 → 7 | 0 → 0 | 0 → 0 | hält; Puls springt dabei von 70 auf 85, erster gültiger Wert danach (77 s) 81,4 /min, 3,6 neben dem wahren Puls 85 (Grenze `erst_nach_beweg_fehler` ≤ 5) |
-| beweg_weg | 51 → 46 /120 | 0,8 → 0,3 | 3 → 6 | 2 → 0 | 0 → 0 | hält |
-| tippen | 144 → 137 /150 | 2,6 → 2,7 | 5 → 5 | 4 → 4 | 7 → 7 | **verletzt**: falsch danach 4, falsch in 7 (Grenzen 0), Abschnitt-MAE 4,4 (Grenze ≤ 2,0) |
+| beweg | 101 → 100 /120 | 0.8 → 0.4 | 11 → 6 | 2 → 0 | 0 → 0 | holds |
+| kurz | 104 → 102 /120 | 0.9 → 0.4 | 14 → 8 | 2 → 0 | 0 → 0 | holds (limit ≤ 8) |
+| zappel | 114 → 81 /120 | 3.9 → 3.1 | 1 → 7 | 10 → 0 | 0 → 0 | holds (limit ≤ 8) |
+| lang | 143 → 125 /150 | 1.5 → 0.8 | 11 → 6 | 3 → 2 | 0 → 2 | **violated**: wrong afterwards 2, wrong during 2 (limits 0) |
+| lage | 111 → 104 /120 | 0.3 → 0.3 | 1 → 2 | 0 → 0 | 0 → 0 | holds |
+| beweg_hr | 126 → 124 /150 | 0.4 → 0.4 | 12 → 7 | 0 → 0 | 0 → 0 | holds; the pulse jumps from 70 to 85 in the process, first valid value afterwards (77 s) 81.4 /min, 3.6 off the true pulse 85 (limit `erst_nach_beweg_fehler` ≤ 5) |
+| beweg_weg | 51 → 46 /120 | 0.8 → 0.3 | 3 → 6 | 2 → 0 | 0 → 0 | holds |
+| tippen | 144 → 137 /150 | 2.6 → 2.7 | 5 → 5 | 4 → 4 | 7 → 7 | **violated**: wrong afterwards 4, wrong during 7 (limits 0), section MAE 4.4 (limit ≤ 2.0) |
 
-Ohne Schalter meldet `bench --check` „OK (alle Grenzwerte eingehalten)“. Mit dem Schalter endet es mit Exit 1 („VERSCHLECHTERT“) und genau fünf
-Verletzungen (`lang` falsch danach 2 und falsch in der Bewegung 2; `tippen` falsch danach 4, falsch in der Bewegung 7, Abschnitt-MAE 4,4); vor dem
-Final-Review waren es drei, die zwei neuen kommen allein von der neuen Kennzahl `falsch_in_beweg_n` (das Verhalten ist unverändert, nur anders gezählt). In `lang` liegen
-die vier Fehlwerte bei 60, 63 s (in der Bewegung) und 71, 72 s (danach), 83–85 statt ≈ 72,5 /min, alle mit `reacq` = 2: Die Bewegungskarte sieht die
-zweite Hälfte der 20-s-Bewegung nicht, das Endstück liegt noch in der Bewegung, der stärkste Kandidat liegt im Band ± 15 um das Gedächtnis (≈ 73)
-und AKF/Einzelschläge auf denselben bewegten Daten bestätigen ihn. Alle vier haben eine Atemspitze (`breath_ok`, Atmung auf dem vollen
-Fenster, Ruling R8; mit einer Kopie des Headers mit Ausgabe nachgeprüft); die Regel `kMemSubstBpm` (unten) ändert an ihnen deshalb nichts, der Prüfstand ist
-mit und ohne sie zeilengleich. Der Gültig-Anteil sinkt in den Bewegungsszenarien (am stärksten in `zappel`, 114 → 81); vermutlich, weil ein Wert im
-kurzen Fenster bestätigt sein muss (nicht einzeln untersucht).
+Without the switch, `bench --check` reports "OK (alle Grenzwerte eingehalten)" (OK, all limits kept). With the switch, it ends with exit 1 ("VERSCHLECHTERT", i.e. worsened) and exactly five
+violations (`lang` wrong afterwards 2 and wrong during the motion 2; `tippen` wrong afterwards 4, wrong during the motion 7, section MAE 4.4); before the
+final review there were three, the two new ones come solely from the new metric `falsch_in_beweg_n` (the behavior is unchanged, only counted differently). In `lang`, the
+four wrong values are at 60, 63 s (during the motion) and 71, 72 s (afterwards), 83–85 instead of ≈ 72.5 /min, all with `reacq` = 2: The motion map does not see the
+second half of the 20 s motion, the end segment still lies in the motion, the strongest candidate lies in the band ± 15 around the memory (≈ 73)
+and ACF/individual beats on the same moving data confirm it. All four have a breathing peak (`breath_ok`, breathing on the full
+window, ruling R8; checked with a copy of the header with output); the rule `kMemSubstBpm` (below) therefore changes nothing for them, the test bench is
+line-identical with and without it. The valid fraction drops in the motion scenarios (most in `zappel`, 114 → 81); presumably because a value in the
+short window has to be confirmed (not examined separately).
 
-**Final-Review-Fix (Ruling R15)**: Ein über das Gedächtnis wiedergefundener Wert (`reacq` = 2) ersetzt die Atemspitze als Lebenszeichen nur
-noch, wenn er höchstens `kMemSubstBpm` = 5 /min vom gemerkten Puls liegt; sonst braucht er `breath_ok` wie jeder andere Report. Das Band
-± 15 für die Kandidaten-Bevorzugung bleibt.
+**Final review fix (ruling R15)**: A value found again via the memory (`reacq` = 2) replaces the breathing peak as a sign of life only
+if it is at most `kMemSubstBpm` = 5 /min from the remembered pulse; otherwise it needs `breath_ok` like every other report. The band
+± 15 for the candidate preference stays.
 
 **T1** (`.venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus --replay firmware/esp32s3/src [--define A121_DSP_REACQ] [--ohne-karte]`,
-31,7 min, Personenfilter wie oben, Zeit = Empfangszeit; Nachrechnung am PC, keine Referenz). Zählregel „Basis“ = Bewegung nur über
-`motion_pct > 30` oder Zustand BEWEGUNG (`--ohne-karte`), „R10“ = zusätzlich `win_s == 0`. Ohne Schalter gibt es `win_s` nicht, beide Regeln
-zählen dort gleich. Nur Zeilen derselben Regel sind vergleichbar.
+31.7 min, person filter as above, time = receive time; recomputation on the PC, no reference). Counting rule "Basis" (base) = motion only via
+`motion_pct > 30` or state BEWEGUNG (`--ohne-karte`), "R10" = additionally `win_s == 0`. Without the switch there is no `win_s`, both rules
+count the same there. Only rows of the same rule are comparable.
 
-| T1 | Regel | gültig (ohne Zustand 0) | Ausfälle (alle / Bewegung) | Bewegung: Median / Summe | keine_atemspitze: n, Median / Summe | rest: n, Median / Summe | Ausfallzeit gesamt | Sprünge > 15 /min |
+| T1 | Rule | valid (without state 0) | outages (all / motion) | motion: median / sum | keine_atemspitze: n, median / sum | rest: n, median / sum | total outage time | jumps > 15 /min |
 |---|---|---|---|---|---|---|---|---|
-| ohne Schalter | Basis = R10 | 20,7 % | 30 / 15 | 23,7 s / 590,9 s | 14, 2,0 s / 60,1 s | 1, 9,2 s / 9,2 s | 660,2 s | 13 |
-| mit `A121_DSP_REACQ` | Basis | 13,4 % | 29 / 14 | **35,9 s** / 659,8 s | 4, 2,0 s / 35,9 s | 11, 1,0 s / 33,2 s | 728,8 s | 9 |
-| mit `A121_DSP_REACQ` | R10 | 13,4 % | 29 / 20 | 28,3 s / 716,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 728,8 s | 9 |
-| zum Vergleich: mit Schalter vor R15 (Stand `3ca400a`) | Basis | 13,7 % | 31 / 14 | 35,9 s / 659,8 s | 4, 2,0 s / 16,0 s | 13, 1,0 s / 50,0 s | 725,8 s | 9 |
-| zum Vergleich: mit Schalter vor R15 (Stand `3ca400a`) | R10 | 13,7 % | 31 / 22 | 15,7 s / 713,8 s | 2, 1,5 s / 3,0 s | 7, 1,0 s / 9,1 s | 725,8 s | 9 |
+| without switch | Basis = R10 | 20.7 % | 30 / 15 | 23.7 s / 590.9 s | 14, 2.0 s / 60.1 s | 1, 9.2 s / 9.2 s | 660.2 s | 13 |
+| with `A121_DSP_REACQ` | Basis | 13.4 % | 29 / 14 | **35.9 s** / 659.8 s | 4, 2.0 s / 35.9 s | 11, 1.0 s / 33.2 s | 728.8 s | 9 |
+| with `A121_DSP_REACQ` | R10 | 13.4 % | 29 / 20 | 28.3 s / 716.8 s | 2, 1.5 s / 3.0 s | 7, 1.0 s / 9.1 s | 728.8 s | 9 |
+| for comparison: with switch before R15 (state `3ca400a`) | Basis | 13.7 % | 31 / 14 | 35.9 s / 659.8 s | 4, 2.0 s / 16.0 s | 13, 1.0 s / 50.0 s | 725.8 s | 9 |
+| for comparison: with switch before R15 (state `3ca400a`) | R10 | 13.7 % | 31 / 22 | 15.7 s / 713.8 s | 2, 1.5 s / 3.0 s | 7, 1.0 s / 9.1 s | 725.8 s | 9 |
 
-**Auf T1 ist der Schalter schlechter:** Verfügbarkeit (gültig 20,7 → 13,4 %, Ausfallzeit über alle Ursachen 660 → 729 s) und der gleichartige
-Median der Bewegungs-Ausfälle (Basisregel 23,7 → 35,9 s) werden schlechter; nur die Sprünge > 15 /min gehen zurück (13 → 9). Die früher
-genannten 15,7 s waren mit der Regel R10 gezählt, die ohne Schalter gar nicht greifen kann, und sind kein gleichartiger Vergleich. Das Ziel des
-Entwurfs (Median ≤ 15 s) ist nicht erreicht. R15 nimmt auf T1 drei Reports aus dem Gedächtnispfad heraus (`t_ms` 157 354, 158 354, 170 354;
-72,2 / 72,0 / 65,0 /min, `reacq` = 2, mehr als 5 /min vom gemerkten Wert und ohne Atemspitze); dadurch wachsen nach R10 gezählt der
-Median von 15,7 auf 28,3 s und die Ausfallzeit um 3 s. Ob diese drei Werte richtig waren, ist ohne Referenz nicht zu sagen. Ob der Schalter
-insgesamt ein Gewinn ist (weniger Fehlwerte) oder ein Verlust (echte Werte fehlen), lässt sich nur mit der Referenz entscheiden (Polar H9,
-erwartet ca. 2026-11-05). Keine Aussage über die Genauigkeit. Auf T1 ist das Echo nach einer Bewegung oft nicht sauber (`echo_ok` = 0); das
-begrenzt das Wiederfinden, weil das Gedächtnis an `echo_ok` hängt (Entwurf, Abschnitt 4).
+**On T1 the switch is worse:** Availability (valid 20.7 → 13.4 %, outage time over all causes 660 → 729 s) and the like-for-like
+median of the motion outages (base rule 23.7 → 35.9 s) get worse; only the jumps > 15 /min go down (13 → 9). The 15.7 s mentioned
+earlier were counted with the rule R10, which cannot apply at all without the switch, and are not a like-for-like comparison. The goal of the
+design (median ≤ 15 s) is not reached. R15 removes three reports from the memory path on T1 (`t_ms` 157,354, 158,354, 170,354;
+72.2 / 72.0 / 65.0 /min, `reacq` = 2, more than 5 /min from the remembered value and without a breathing peak); counted by R10, this makes the
+median grow from 15.7 to 28.3 s and the outage time by 3 s. Whether these three values were correct cannot be said without a reference. Whether the switch
+is a gain overall (fewer wrong values) or a loss (real values missing) can only be decided with the reference (Polar H9,
+expected about 2026-11-05). No statement about accuracy. On T1 the echo after a motion is often not clean (`echo_ok` = 0); this
+limits reacquisition, because the memory depends on `echo_ok` (design, section 4).
 
-**Rechenzeit am PC** (Spalte `us` des Prüfstands, Median je Szenario, zwei Läufe, x86-PC, kein ESP32): 884 → 974 µs und 887 → 972 µs, also
-**rund + 10 %**; je Szenario + 8 bis + 27 % (am meisten `weg`, `beweg_weg`), `leer` 9 % weniger. Erwartet waren + 15–25 %. Die Zahl sagt nur
-etwas über das Verhältnis; die Rechenzeit am ESP32 (Entwurf: ≤ 400 ms je Report, heute 91–152 ms) ist nicht gemessen.
+**Computation time on the PC** (column `us` of the test bench, median per scenario, two runs, x86 PC, no ESP32): 884 → 974 µs and 887 → 972 µs, i.e.
+**about + 10 %**; per scenario + 8 to + 27 % (most in `weg`, `beweg_weg`), `leer` 9 % less. + 15–25 % was expected. The number only says
+something about the ratio; the computation time on the ESP32 (design: ≤ 400 ms per report, today 91–152 ms) has not been measured.
 
-**Firmware-Build** (nur Übersetzung und Linken mit `pio run`, **keine Laufzeitprüfung am Gerät**, nichts geflasht):
+**Firmware build** (compile and link with `pio run` only, **no runtime check on the device**, nothing flashed):
 
-| Umgebung | RAM (statisch) | Flash |
+| Environment | RAM (static) | Flash |
 |---|---|---|
-| `esp32s3-n16r8` | 74 644 B (22,8 %) | 407 717 B (6,2 %) |
-| `esp32s3-n16r8-reacq` (`-DA121_DSP_REACQ`) | 75 572 B (23,1 %) | 410 309 B (6,3 %) |
+| `esp32s3-n16r8` | 74,644 B (22.8 %) | 407,717 B (6.2 %) |
+| `esp32s3-n16r8-reacq` (`-DA121_DSP_REACQ`) | 75,572 B (23.1 %) | 410,309 B (6.3 %) |
 
-Unterschied + 928 B RAM und + 2592 B Flash (nach dem Final-Review-Fix; vorher 410 237 B); zur Laufzeit angelegte Puffer (Heap/PSRAM) zählt `pio` nicht. `@HELLO` meldet die Firmware mit
-Schalter als `2026-11-02-vital1-reacq`, ohne unverändert als `2026-11-02-vital1`. Neue Felder in `@DSP` nur mit Schalter: `win_s`, `reacq` (`docs/HARDWARE.md`).
+Difference + 928 B RAM and + 2592 B flash (after the final review fix; before, 410,237 B); buffers allocated at runtime (heap/PSRAM) are not counted by `pio`. `@HELLO` reports the firmware with
+the switch as `2026-11-02-vital1-reacq`, without it unchanged as `2026-11-02-vital1`. New fields in `@DSP` only with the switch: `win_s`, `reacq` (`docs/HARDWARE.md`).
 
-**Offen**: `lang` liefert weiter 4 falsche Werte (2 in, 2 nach der Bewegung; R15 ändert daran nichts, siehe oben); `tippen` ist ungelöst
-(7 falsche Werte in, 4 nach dem Abschnitt der Stöße; die Variante Periodizität half nicht); auf T1 ist der Schalter nach gleicher Zählregel
-schlechter (oben); auf T1 begrenzt ein unsauberes Echo nach der Bewegung das Wiederfinden. Rezoom: Das Gedächtnis überlebt einen Rezoom
-auf ein anderes Ziel nur, wenn alle Reports vor diesem Rezoom in den ersten 6 s nach einem vorigen Rezoom lagen; diese Reports enden vor der
-Prüfung `mem_.active` (zu wenig Daten). Sonst hat schon ein Report mit dem Ziel außerhalb des Zoom-Fensters (`target_in_zoom` = 0) das
-Gedächtnis gelöscht (`ReacqBenchTest.test_rezoom_keeps_or_clears_memory`). Mit `A121_DSP_VITERBI` (auch über `A121_DSP_HEAVY`) zusammen mit
-`A121_DSP_REACQ` kann der eingefrorene Viterbi-Pfad nach einem bestätigten Endstück `hr_prev_` auf den Wert vor der Bewegung zurückziehen; keine
-ausgelieferte Umgebung kombiniert das (Kommentar im Header), vor einer solchen Kombination zu lösen.
-Nächster Schritt ist ein Lauf der Firmware `esp32s3-n16r8-reacq` am Gerät (nach Freigabe) mit Handzählung und danach Polar H9 Tag A. Beim
-ersten Lauf mit `-reacq` einmal `uxTaskGetStackHighWaterMark` der DSP-Task ausgeben: Die Stack-Reserve ist ungemessen (Stack der DSP-Task
-10 240 B; Rahmen von `computeVitalReport` ≈ 1,3 KB und `motionMap` ≈ 0,7 KB, am x86-PC bestimmt, nicht am ESP32).
+**Open**: `lang` still delivers 4 wrong values (2 during, 2 after the motion; R15 changes nothing about that, see above); `tippen` is unsolved
+(7 wrong values during, 4 after the section of bumps; the periodicity variant did not help); on T1 the switch is worse by the same counting rule
+(above); on T1 an unclean echo after the motion limits reacquisition. Rezoom: The memory survives a rezoom
+to a different target only if all reports before this rezoom fell within the first 6 s after a previous rezoom; these reports end before the
+`mem_.active` check (too little data). Otherwise a single report with the target outside the zoom window (`target_in_zoom` = 0) has already cleared the
+memory (`ReacqBenchTest.test_rezoom_keeps_or_clears_memory`). With `A121_DSP_VITERBI` (also via `A121_DSP_HEAVY`) together with
+`A121_DSP_REACQ`, the frozen Viterbi path can pull `hr_prev_` back to the value before the motion after a confirmed end segment; no
+shipped environment combines this (comment in the header); resolve before such a combination.
+The next step is a run of the firmware `esp32s3-n16r8-reacq` on the device (after approval) with a hand count, and then Polar H9 day A. On the
+first run with `-reacq`, print `uxTaskGetStackHighWaterMark` of the DSP task once: The stack reserve is unmeasured (stack of the DSP task
+10,240 B; frame of `computeVitalReport` ≈ 1.3 KB and `motionMap` ≈ 0.7 KB, determined on the x86 PC, not on the ESP32).
 
-## Nicht möglich mit einem Sensor
+## Not possible with one sensor
 
-- `bilateration` braucht zwei Sensoren.
-- Winkel/Richtung und Umrisse: siehe `CONCEPT.md`.
+- `bilateration` needs two sensors.
+- Angle/direction and outlines: see `CONCEPT.md`.

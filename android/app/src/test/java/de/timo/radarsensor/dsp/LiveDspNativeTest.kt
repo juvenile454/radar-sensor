@@ -9,8 +9,8 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Echte Bibliothek radardsp_live (am PC übersetzt mit A121_DSP_HEAVY) mit einem synthetischen iq3-raw-Log aus
- * host/vital_sim.py. Ohne Bibliothek oder Log (normaler App-Build) übersprungen; am Handy ist das keine Prüfung.
+ * Real library radardsp_live (compiled on the PC with A121_DSP_HEAVY) with a synthetic iq3-raw log from
+ * host/vital_sim.py. Skipped without the library or log (normal app build); on the phone this is not a check.
  */
 class LiveDspNativeTest {
     private fun log(): File? = System.getProperty("radar.liveLog")?.let(::File)?.takeIf { it.exists() }
@@ -35,7 +35,7 @@ class LiveDspNativeTest {
         assertTrue("nur ${vit.size} @VITAL", vit.size > 5)
         assertTrue(vit.all { it.hrFusedBpm in 40f..180f })
         assertTrue(LiveDsp.cpuNanos() > cpu0)
-        // Neubeginn: gleiche Eingabe, gleiche Ausgabe (keine Reste vom ersten Lauf)
+        // Restart: same input, same output (no leftovers from the first run)
         assertEquals(out, run(lines))
     }
 }

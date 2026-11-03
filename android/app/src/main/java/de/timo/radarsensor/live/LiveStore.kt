@@ -49,7 +49,7 @@ data class StreamEvent(
     val text: String,
 )
 
-/** Kopie aller Anzeigedaten für die Oberfläche (unveränderlich). */
+/** Copy of all display data for the UI (immutable). */
 class LiveSnapshot(
     val version: Long,
     val mode: StreamMode,
@@ -61,12 +61,12 @@ class LiveSnapshot(
     val iqZoomAmp: FloatArray,
     val iqTemp: FloatArray,
     val iqSaturatedFrames: Long,
-    /** Frames mit frame_delayed (V1.5) */
+    /** Frames with frame_delayed (V1.5) */
     val iqDelayedFrames: Long,
     val lastIq3: Iq3?,
     val lastRaw: Raw?,
     val rawFrames: Long,
-    // Raum
+    // Room
     val roomProfile: RoomProfile?,
     val waterfall: List<FloatArray>,
     val waterfallT: FloatArray,
@@ -92,16 +92,16 @@ class LiveSnapshot(
     val dspComputeMs: FloatArray,
     val dspMotion: FloatArray,
     val lastDsp: Dsp?,
-    /** Zustand der Messung (@STATE, V3.5) und Atemzüge (@BREATH, V3.4) */
+    /** Measurement state (@STATE, V3.5) and breaths (@BREATH, V3.4) */
     val lastState: MeasState?,
     val breathT: FloatArray,
     val breathRate: FloatArray,
     val lastBreath: Breath?,
-    /** EKG-Gurt (V0.1): Puls auf derselben Zeitachse wie vitalT */
+    /** ECG chest strap (V0.1): pulse on the same time axis as vitalT */
     val refT: FloatArray,
     val refHr: FloatArray,
     val lastRef: HrMeasurement?,
-    /** Handy-DSP (V5.2, A121_DSP_HEAVY): Puls und Konfidenz auf derselben Zeitachse wie vitalT, CPU-Anteil in % */
+    /** Phone DSP (V5.2, A121_DSP_HEAVY): pulse and confidence on the same time axis as vitalT, CPU share in % */
     val phoneT: FloatArray,
     val phoneHr: FloatArray,
     val phoneConf: FloatArray,
@@ -124,7 +124,7 @@ class LiveSnapshot(
     val sessPeakAmp: FloatArray,
     val sessStat: SessStat?,
     val sessEnd: SessEnd?,
-    // Diagnose
+    // Diagnostics
     val events: List<StreamEvent>,
     val console: List<String>,
     val lines: Long,
@@ -139,9 +139,9 @@ class LiveSnapshot(
 )
 
 /**
- * Hält alle Live-Daten. [apply] läuft im Lese-Thread, [snapshot] in der Oberfläche; beide unter derselben Sperre.
- * Zeitachse über [TickClock]; Frameverlust über den Frame-Zähler in `@IQ3`/`@DOPPLER` (Verlust zwischen ESP32 und
- * Handy), Lücken am Sensor erkennt man an der tick-Zeitachse.
+ * Holds all live data. [apply] runs on the read thread, [snapshot] in the UI; both under the same lock.
+ * Time axis via [TickClock]; frame loss via the frame counter in `@IQ3`/`@DOPPLER` (loss between ESP32 and
+ * phone), gaps at the sensor show up on the tick time axis.
  */
 class LiveStore(
     iqSeconds: Int = 60,
@@ -154,8 +154,8 @@ class LiveStore(
     private val clock = TickClock()
 
     /**
-     * Zeitachse über mehrere Streams: Ein neuer Stream (Neustart, ESP nach Abziehen neu gebootet) beginnt bei t_ms ≈ 0;
-     * er wird hinter dem letzten Punkt angehängt, mit der echten Pause dazwischen, damit die Diagramme nicht rückwärts laufen.
+     * Time axis across several streams: a new stream (restart, ESP rebooted after unplugging) starts at t_ms ≈ 0;
+     * it is appended after the last point, with the real pause in between, so that the charts do not run backwards.
      */
     private var tOffset = 0f
     private var tMax = 0f
@@ -257,7 +257,7 @@ class LiveStore(
     private var frameTimeouts = 0L
     private var rezooms = 0
 
-    /** Eine empfangene Zeile verbuchen. */
+    /** Record one received line. */
     fun apply(
         line: String,
         msg: EspMsg,
@@ -290,7 +290,7 @@ class LiveStore(
                 bRate.add(msg.ratePerMin)
             }
             is Dsp -> {
-                // Atemzustand (V1.4): Beginn und Ende von „angehalten" in die Ereignisliste
+                // Breathing state (V1.4): start and end of "held" into the event list
                 val wasApnea = lastDsp?.brState == Dsp.BR_APNEA
                 val isApnea = msg.brState == Dsp.BR_APNEA
                 if (isApnea && !wasApnea) event(EventKind.BREATH, "Atem angehalten")
@@ -369,14 +369,14 @@ class LiveStore(
         version++
     }
 
-    /** Nachricht der App (Verbindung, gesendeter Befehl) in Konsole und Ereignisliste. */
+    /** Message from the app (connection, sent command) into console and event list. */
     /**
-     * Gurt-Benachrichtigung (V0.1): Zeit = letzte Radar-Datenzeit + seitdem vergangene Zeit, damit Referenz- und
-     * Radarkurve übereinander liegen. Ohne Radardaten (noch keine Zeitachse) verworfen.
+     * Chest strap notification (V0.1): time = last radar data time + time elapsed since, so that the reference and
+     * radar curves line up. Dropped without radar data (no time axis yet).
      */
     /**
-     * Handy-DSP (V5.2): eine am Handy neu gerechnete Zeile (`@VITAL`, `@DSP`, `@STATE`). Ihr t_ms ist der des ESP32-Reports;
-     * die Zeit kommt relativ zur letzten `@ROOM`-Zeile, so liegt der Handy-Wert genau neben dem ESP32-Wert.
+     * Phone DSP (V5.2): a line recomputed on the phone (`@VITAL`, `@DSP`, `@STATE`). Its t_ms is that of the ESP32 report;
+     * the time is taken relative to the last `@ROOM` line, so the phone value lies right next to the ESP32 value.
      */
     fun phone(msg: EspMsg) =
         synchronized(lock) {
@@ -497,7 +497,7 @@ class LiveStore(
     }
 
     private fun onIq3(m: Iq3) {
-        if (mode != StreamMode.IQ3) mode = StreamMode.IQ3 // Verbindung mitten im Stream
+        if (mode != StreamMode.IQ3) mode = StreamMode.IQ3 // connection mid-stream
         countFrame(m.frame)
         val t = time(m.tick, m.tMs)
         iqT.add(t)
@@ -514,7 +514,7 @@ class LiveStore(
         roomProfile = m
         val n = m.motion.size
         if (n == 0) return
-        // Bewegung über Rauschen in dB, Rauschen = unteres Viertel der Punkte (wie Firmware und PC-Auswertung)
+        // motion over noise in dB, noise = lower quarter of the points (as in firmware and PC evaluation)
         val noise = m.motion.sortedArray()[n / 4] + 1f
         val row = FloatArray(n) { 20f * log10(max(m.motion[it] / noise, 1e-3f)) }
         waterfall.addLast(row)
@@ -647,7 +647,7 @@ class LiveStore(
         const val CONSOLE_LINES = 400
         private const val NO_DATA = Long.MIN_VALUE
 
-        /** Zu häufig für die Konsole (werden nur gezählt und geplottet). */
+        /** Too frequent for the console (only counted and plotted). */
         val HIGH_RATE_TAGS = setOf("@IQ3", "@RAW", "@ROOMPROF", "@DOPPLER", "@PEAK", "@AMP")
     }
 }

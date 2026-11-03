@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Entwicklungs-Weiterleitung ESP32 ↔ TCP (nur im Tailnet) für die Android-Debug-App.
+"""Development relay ESP32 ↔ TCP (tailnet only) for the Android debug app.
 
-Der ESP32 bleibt am PC (USB), die App verbindet sich per TCP über Tailscale und sieht denselben Bytestrom wie über
-USB-OTG. Nur für die Entwicklung (Phase A2), nicht als Sensor-Verbindung.
+The ESP32 stays at the PC (USB), the app connects via TCP over Tailscale and sees the same byte stream as over
+USB-OTG. For development only (phase A2), not as a sensor connection.
 
-  sg dialout -c ".venv/bin/python host/esp_tcp_bridge.py"            # lauscht auf <Tailscale-IPv4>:7777
-  sg dialout -c ".venv/bin/python host/esp_tcp_bridge.py --log x.log" # zusätzlich alles Empfangene mitschreiben
+  sg dialout -c ".venv/bin/python host/esp_tcp_bridge.py"            # listens on <Tailscale-IPv4>:7777
+  sg dialout -c ".venv/bin/python host/esp_tcp_bridge.py --log x.log" # additionally write everything received to a log
 
-- Lauscht nur auf der Tailscale-Adresse (sonst ausdrücklich mit --bind), ein Client zugleich; ein neuer ersetzt den alten.
-- Liest den ESP32 immer weiter, auch ohne Client: Liest niemand, bremst jede Ausgabe dessen DSP-Schleife.
-- Trennt der Client während eines Streams, wird der Stream mit einem Zeilenende beendet (jedes Zeichen stoppt
-  iq3/doppler/sess run), damit der ESP32 nicht endlos weiterstreamt.
-- DTR/RTS werden nicht angefasst (RTS bei DTR=0 setzt den ESP32-S3 über USB-Serial/JTAG zurück).
+- Listens only on the Tailscale address (otherwise explicitly with --bind), one client at a time; a new one replaces the old one.
+- Keeps reading the ESP32 even without a client: if nobody reads, any output slows down its DSP loop.
+- If the client disconnects during a stream, the stream is ended with a line ending (any character stops
+  iq3/doppler/sess run) so the ESP32 does not keep streaming forever.
+- DTR/RTS are not touched (RTS with DTR=0 resets the ESP32-S3 via USB-Serial/JTAG).
 """
 
 from __future__ import annotations

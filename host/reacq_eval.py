@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Pulsausfälle (ok == 0) auf Aufnahmen messen: wie lange fehlt der Puls, besonders nach Bewegung? (V6, Plan
-2026-11-02-pulse-reacquisition). Basislinie, an der Bewegungskarte und Pulsgedächtnis der DSP gemessen werden.
+"""Measure pulse dropouts (ok == 0) on recordings: how long is the pulse missing, especially after motion? (V6, plan
+2026-11-02-pulse-reacquisition). Baseline against which the motion map and pulse memory of the DSP are measured.
 
-Ein Ausfall ist eine Folge von @DSP-Reports mit ok == 0 nach einem gültigen Report. Folgen, in denen mehr als die Hälfte
-der Reports Zustand 0 (KEINE_PERSON) hat, zählen nicht. Ursache: "bewegung" (im Ausfall ein Report mit motion_pct > 30,
-Zustand 4 oder win_s == 0 bei mindestens 6 s Daten seit Start/Rezoom (snap_frame ≥ 360), d. h. Puls
-von der Bewegungskarte abgeschaltet; win_s gibt es nur mit A121_DSP_REACQ), sonst "keine_atemspitze" (br_state == 1 in der Mehrheit der Reports), sonst "rest".
+A dropout is a run of @DSP reports with ok == 0 after a valid report. Runs in which more than half of the reports
+have state 0 (KEINE_PERSON, no person) do not count. Cause: "bewegung" (motion; within the dropout a report with motion_pct > 30,
+state 4 or win_s == 0 with at least 6 s of data since start/rezoom (snap_frame ≥ 360), i.e. pulse
+switched off by the motion map; win_s exists only with A121_DSP_REACQ), otherwise "keine_atemspitze" (no breathing peak; br_state == 1 in the majority of the reports), otherwise "rest".
 
   .venv/bin/python host/reacq_eval.py <ordner>… [--replay <header-ordner>] [--define NAME[=WERT]]… [--keine-person-zaehlen]
       [--ohne-karte]
 
---keine-person-zaehlen schaltet den Personenfilter ab (alle Läufe von ok == 0 zählen, auch mit Zustand 0 in der Mehrheit).
---ohne-karte zählt win_s == 0 nicht als Bewegung (Basisregel: nur motion_pct > 30 oder Zustand 4), damit Läufe ohne und
-mit A121_DSP_REACQ nach derselben Regel verglichen werden (Ruling R16).
+--keine-person-zaehlen switches the person filter off (all runs of ok == 0 count, also with state 0 in the majority).
+--ohne-karte does not count win_s == 0 as motion (baseline rule: only motion_pct > 30 or state 4), so that runs without and
+with A121_DSP_REACQ are compared by the same rule (ruling R16).
 
-Ohne --replay wird stream.log unverändert ausgewertet. Mit --replay wird es (braucht @RAW) mit dem a121_esp_dsp.h aus dem
-Ordner neu gerechnet. Mit --define wird eine Kopie des Headers (aus --replay, sonst firmware/esp32s3/src) mit
-vorangestellten #define-Zeilen in ein Temp-Verzeichnis geschrieben und dafür benutzt, z. B. --define A121_DSP_REACQ.
-Die Zeit ist die Empfangszeit der @DSP-Zeilen; @VITAL (hr_fused) gibt es nur für gültige Reports und gehört zum
-vorangehenden @DSP.
+Without --replay, stream.log is evaluated unchanged. With --replay it is recomputed (needs @RAW) with the a121_esp_dsp.h from the
+folder. With --define, a copy of the header (from --replay, otherwise firmware/esp32s3/src) with
+prepended #define lines is written to a temp directory and used for that, e.g. --define A121_DSP_REACQ.
+The time is the receive time of the @DSP lines; @VITAL (hr_fused) exists only for valid reports and belongs to the
+preceding @DSP.
 """
 
 from __future__ import annotations
@@ -40,33 +40,33 @@ ROOT = HOST.parent
 FIRMWARE_SRC = ROOT / "firmware" / "esp32s3" / "src"
 HEADER_NAME = "a121_esp_dsp.h"
 
-STATE_NO_PERSON = 0     # @STATE KEINE_PERSON
-STATE_MOTION = 4        # @STATE BEWEGUNG
-BR_NO_PEAK = 1          # br_state: keine Atemspitze
-MOTION_PCT_THR = 30.0   # motion_pct darüber = Bewegung
-MIN_WIN_FRAMES = 360    # kHrMinWin: erst ab 6 s Daten seit Start/Rezoom gibt es ein Pulsfenster
+STATE_NO_PERSON = 0     # @STATE KEINE_PERSON (no person)
+STATE_MOTION = 4        # @STATE BEWEGUNG (motion)
+BR_NO_PEAK = 1          # br_state: no breathing peak
+MOTION_PCT_THR = 30.0   # motion_pct above this = motion
+MIN_WIN_FRAMES = 360    # kHrMinWin: a pulse window exists only from 6 s of data since start/rezoom
 CAUSES = ("bewegung", "keine_atemspitze", "rest")
 
 
 @dataclasses.dataclass
 class Dropout:
-    start_s: float   # Zeit des ersten ungültigen Reports
-    dur_s: float     # bis zum nächsten gültigen Report (am Ende der Aufnahme: bis zum letzten Report)
+    start_s: float   # time of the first invalid report
+    dur_s: float     # until the next valid report (at the end of the recording: until the last report)
     cause: str
 
 
 def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = False, win_s=None,
              frames=None, ohne_karte: bool = False) -> list[Dropout]:
-    """Läufe von ok == 0 nach einem gültigen Report (siehe Modulkopf); keine_person_zaehlen: auch Läufe mit Zustand 0
-    in der Mehrheit zählen. NaN in state/motion_pct/br_state/win_s erfüllt keine der Bedingungen; win_s None = Feld fehlt
-    (Ruling R10: win_s == 0 zählt als Bewegung). frames: Frames seit Start/Rezoom (@DSP snap_frame); win_s == 0 zählt
-    nur ab MIN_WIN_FRAMES, sonst ist es die Anlaufzeit nach einem Rezoom (kein Fenster), keine Bewegung. None = nicht
-    prüfen. ohne_karte: win_s nicht beachten (Basisregel, Ruling R16)."""
+    """Runs of ok == 0 after a valid report (see module header); keine_person_zaehlen: also count runs with state 0
+    in the majority. NaN in state/motion_pct/br_state/win_s meets none of the conditions; win_s None = field missing
+    (ruling R10: win_s == 0 counts as motion). frames: frames since start/rezoom (@DSP snap_frame); win_s == 0 counts
+    only from MIN_WIN_FRAMES, otherwise it is the ramp-up time after a rezoom (no window), not motion. None = do not
+    check. ohne_karte: ignore win_s (baseline rule, ruling R16)."""
     t_s, ok = np.asarray(t_s, float), np.asarray(ok, float) > 0
     motion_pct, br_state, state = (np.asarray(x, float) for x in (motion_pct, br_state, state))
     win_s = np.full(ok.size, np.nan) if win_s is None or ohne_karte else np.asarray(win_s, float)
     frames = np.full(ok.size, np.inf) if frames is None else np.asarray(frames, float)
-    karte_aus = (win_s == 0) & (frames >= MIN_WIN_FRAMES)  # Puls von der Bewegungskarte abgeschaltet
+    karte_aus = (win_s == 0) & (frames >= MIN_WIN_FRAMES)  # pulse switched off by the motion map
     out: list[Dropout] = []
     seen_valid = False
     i, n = 0, ok.size
@@ -77,7 +77,7 @@ def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = 
             continue
         j = i
         while j < n and not ok[j]:
-            j += 1  # [i, j) ungültig
+            j += 1  # [i, j) invalid
         if seen_valid:
             run = slice(i, j)
             size = j - i
@@ -96,10 +96,10 @@ def dropouts(t_s, ok, motion_pct, br_state, state, keine_person_zaehlen: bool = 
 
 
 def summary(t_s, ok, hr, state, drops: list[Dropout]) -> dict:
-    """anteil_gueltig_pct (Reports mit ok, ohne Zustand 0), ursachen {Ursache: n, median_s, summe_s}, spruenge,
-    summe_s (Ausfallzeit über alle Ursachen)."""
+    """anteil_gueltig_pct (reports with ok, excluding state 0), ursachen {cause: n, median_s, summe_s}, spruenge,
+    summe_s (dropout time across all causes)."""
     ok, state = np.asarray(ok, float) > 0, np.asarray(state, float)
-    person = state != STATE_NO_PERSON  # NaN (kein @STATE) zählt als Person
+    person = state != STATE_NO_PERSON  # NaN (no @STATE) counts as person
     share = 100.0 * float(np.mean(ok[person])) if person.any() else math.nan
     causes = {}
     for c in CAUSES:
@@ -110,7 +110,7 @@ def summary(t_s, ok, hr, state, drops: list[Dropout]) -> dict:
 
 
 def header_with_defines(src_dir: pathlib.Path, defines: list[str], dest_dir: pathlib.Path) -> pathlib.Path:
-    """Kopie von a121_esp_dsp.h aus src_dir mit vorangestellten #define-Zeilen nach dest_dir; Rückgabe dest_dir.
+    """Copy of a121_esp_dsp.h from src_dir with prepended #define lines into dest_dir; returns dest_dir.
     "NAME" → `#define NAME`, "NAME=WERT" → `#define NAME WERT`."""
     head = "".join(f"#define {d.replace('=', ' ', 1)}\n" for d in defines)
     (dest_dir / HEADER_NAME).write_text(head + (src_dir / HEADER_NAME).read_text(encoding="utf-8"), encoding="utf-8")
@@ -119,8 +119,8 @@ def header_with_defines(src_dir: pathlib.Path, defines: list[str], dest_dir: pat
 
 def evaluate_folder(folder: pathlib.Path, header_dir: pathlib.Path | None,
                     keine_person_zaehlen: bool = False, ohne_karte: bool = False) -> tuple[dict, list[Dropout]]:
-    """Eine Aufnahme (ggf. neu gerechnet) auswerten. @VITAL gibt es nur für gültige Reports; jede Zeile gehört zum
-    vorangehenden @DSP (wie vital_eval.evaluate), daher Zuordnung über die Empfangszeit, nicht über den Index."""
+    """Evaluate one recording (recomputed if requested). @VITAL exists only for valid reports; each line belongs to the
+    preceding @DSP (like vital_eval.evaluate), hence assignment by receive time, not by index."""
     lines = replay_lines(folder, header_dir) if header_dir else None
     rec = load_recording(folder, lines)
     d = rec.dsp

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Phase über den Session-Neustart beim Rezoom prüfen (docs/VITAL_AUDIT.md, V2.3 Schritt 1, Experiment M5).
+"""Check the phase across the session restart at a rezoom (docs/VITAL_AUDIT.md, V2.3 step 1, experiment M5).
 
-Frage: Bleibt die Phase an gleichen Entfernungen stetig, wenn der ESP32 für einen Rezoom die Session neu aufsetzt?
-Nur dann lohnt es, beim Rezoom die überlappenden Zoom-Punkte zu übernehmen und die Lücke zu füllen (V2.3 Schritt 4).
+Question: does the phase stay continuous at equal distances when the ESP32 sets up the session again for a rezoom?
+Only then is it worth taking over the overlapping zoom points at the rezoom and filling the gap (V2.3 step 4).
 
-Braucht eine Aufnahme mit `iq3 … raw` (stream.log mit @RAW). Je @REZOOM: Mittel der letzten k Frames davor und der
-ersten k Frames danach, je Entfernung (überlappende Zoom-Punkte, alle Raum-Punkte):
-  Sprung    gewichtetes Kreismittel der Phasendifferenz (Gewicht = Amplitude), roh und mit Loopback-Derotation
-            (jeder Frame mit dem Einheitszeiger des Loopbacks zurückgedreht)
-  Streuung  Kreis-Standardabweichung der Differenz über die Punkte: klein bei großem Sprung = gemeinsame Drehung,
-            die sich mit einer einzigen Drehung ausgleichen ließe
-  Amplitude Median des Verhältnisses danach/davor
-Die Atmung bewegt die Phase in der Lücke (≈ 0,4 s) mit; k klein halten und mit dem Phasengang vor dem Rezoom vergleichen.
+Needs a recording with `iq3 … raw` (stream.log with @RAW). Per @REZOOM: mean of the last k frames before and of the
+first k frames after, per distance (overlapping zoom points, all room points):
+  Sprung    (jump) weighted circular mean of the phase difference (weight = amplitude), raw and with loopback derotation
+            (each frame rotated back with the unit phasor of the loopback)
+  Streuung  (spread) circular standard deviation of the difference across the points: small with a large jump = common rotation
+            that a single rotation could compensate
+  Amplitude median of the ratio after/before
+Breathing moves the phase during the gap (≈ 0.4 s); keep k small and compare with the phase trend before the rezoom.
 
   .venv/bin/python host/rezoom_check.py <stream.log | aufnahme-ordner> [--k 5]
 """
@@ -28,7 +28,7 @@ import numpy as np
 
 ROOM_N = 80
 STEP_MM = 2.5
-CONT_RAD = 0.1  # „stetig": |Sprung| darunter
+CONT_RAD = 0.1  # "continuous": |jump| below this
 
 
 def _raw_frame(line: str) -> np.ndarray | None:
@@ -45,7 +45,7 @@ def _raw_frame(line: str) -> np.ndarray | None:
 
 
 def _segments(lines: list[str]) -> tuple[list[dict], list[tuple[int, int, int]]]:
-    """Frames je Abschnitt zwischen Neustarts; rezooms = (Abschnitt davor, Start davor, Start danach)."""
+    """Frames per section between restarts; rezooms = (section before, start before, start after)."""
     segs: list[dict] = []
     rezooms: list[tuple[int, int, int]] = []
     start = None
@@ -67,7 +67,7 @@ def _segments(lines: list[str]) -> tuple[list[dict], list[tuple[int, int, int]]]
 
 
 def _jump(before: np.ndarray, after: np.ndarray) -> tuple[float, float, float]:
-    """before/after: komplexe Mittel je Punkt. Rückgabe (Sprung, Streuung, Amplitudenverhältnis)."""
+    """before/after: complex means per point. Returns (jump, spread, amplitude ratio)."""
     if before.size == 0:
         return math.nan, math.nan, math.nan
     w = np.abs(before)

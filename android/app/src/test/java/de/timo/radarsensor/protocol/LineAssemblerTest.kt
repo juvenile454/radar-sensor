@@ -8,7 +8,7 @@ class LineAssemblerTest {
         val out = mutableListOf<String>()
         val a = LineAssembler { out += it }
         val text = "@IQ3,1,2\r\n@ROOM,1\n\n@END\n@HALB"
-        // in 3-Byte-Stücken, wie kleine USB-Pakete
+        // in 3-byte chunks, like small USB packets
         val b = text.toByteArray()
         var i = 0
         while (i < b.size) {

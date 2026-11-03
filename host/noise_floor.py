@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Weg-Rauschen an einem statischen Ziel (V4.1, docs/VITAL_AUDIT.md; Messplan in docs/EXPERIMENTS.md).
+"""Displacement noise at a static target (V4.1, docs/VITAL_AUDIT.md; measurement plan in docs/EXPERIMENTS.md).
 
-Rauschboden = RMS des Wegs (Phase × λ/4π, linear entzerrt) im Pulsband 0,6–5 Hz je Zoom-Punkt, berichtet als Median
-der starken Punkte (mittlere Amplitude ≥ halbe stärkste) und bester Punkt. Drei Arten der Loopback-Derotation:
-  aus       ohne Derotation
-  roh       Loopback-Phase je Frame abziehen (wie die Firmware, a121_esp_dsp.h)
-  tiefpass  Loopback-Phase erst tiefpassgefiltert (Butterworth 2. Ordnung, 0,8 Hz, nullphasig; wie früher am PC)
+Noise floor = RMS of the displacement (phase × λ/4π, linearly detrended) in the pulse band 0.6–5 Hz per zoom point, reported as the median
+of the strong points (mean amplitude ≥ half the strongest) and the best point. Three kinds of loopback derotation:
+  aus       without derotation
+  roh       subtract the loopback phase per frame (like the firmware, a121_esp_dsp.h)
+  tiefpass  loopback phase low-pass filtered first (Butterworth 2nd order, 0.8 Hz, zero-phase; as formerly on the PC)
 
-Eingaben: `iq3 … raw`-Aufnahme (Ordner mit stream.log oder die Datei; Punkt 0 Loopback, dann die Zoom-Punkte, die
-80 Raum-Punkte fallen weg; nur bis zum ersten @REZOOM/@RECAL/@RECONNECT) oder eine npz aus `record`.
+Inputs: `iq3 … raw` recording (folder with stream.log or the file; point 0 loopback, then the zoom points, the
+80 room points are dropped; only up to the first @REZOOM/@RECAL/@RECONNECT) or an npz from `record`.
 
   .venv/bin/python host/noise_floor.py eval <aufnahme>…
   sg dialout -c ".venv/bin/python host/noise_floor.py record --out ~/Data/radar-sensor/v41/p1_h32_60hz.npz \\
       --start-mm 600 --profile 1 --hwaas 32 --rate 60"
 
-`record` schaltet den ESP32 in `bridge` (transparente Brücke zum Exploration Server, docs/HARDWARE.md) und nimmt mit
-exptool 7.18.2 eine 2-Subsweep-Session auf (Loopback + Zoom, frei einstellbar; `sess run` liefert keine Phase).
-Port automatisch über /dev/serial/by-id (genau ein ESP32). Ergebnisse sind Sensor-Rauschen, keine Vitalwerte.
+`record` switches the ESP32 to `bridge` (transparent bridge to the Exploration Server, docs/HARDWARE.md) and records
+a 2-subsweep session with exptool 7.18.2 (loopback + zoom, freely configurable; `sess run` delivers no phase).
+Port automatically via /dev/serial/by-id (exactly one ESP32). Results are sensor noise, not vital values.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from scipy import signal
 HOST = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HOST))
 
-RAD_TO_UM = 299792458.0 / 60.5e9 / (4.0 * np.pi) * 1e6  # ≈ 394,37 µm/rad, wie kRadToUm im Header
+RAD_TO_UM = 299792458.0 / 60.5e9 / (4.0 * np.pi) * 1e6  # ≈ 394.37 µm/rad, like kRadToUm in the header
 STEP_MM = 2.5
 ROOM_N = 80
 BAND = (0.6, 5.0)
@@ -44,15 +44,15 @@ LOOP_LP_HZ = 0.8
 
 @dataclass
 class Recording:
-    frames: np.ndarray  # N × P komplex, Zoom-Punkte
-    loop: np.ndarray | None  # N komplex, Loopback (None = ohne)
+    frames: np.ndarray  # N × P complex, zoom points
+    loop: np.ndarray | None  # N complex, loopback (None = without)
     fs: float
     config: dict = field(default_factory=dict)
 
 
 def noise_floor(frames: np.ndarray, fs: float, loop: np.ndarray | None, mode: str,
                 band: tuple[float, float] = BAND) -> np.ndarray:
-    """Weg-RMS in µm im Band je Punkt (Spalte von frames)."""
+    """Displacement RMS in µm in the band per point (column of frames)."""
     if mode not in MODES:
         raise ValueError(f"Derotation {mode!r}: erlaubt {MODES}")
     z = np.asarray(frames, dtype=np.complex128)
@@ -73,7 +73,7 @@ def strong_points(frames: np.ndarray) -> np.ndarray:
     return amp >= 0.5 * amp.max()
 
 
-# --------------------------------------------------------------------------------------------- Laden / Speichern
+# --------------------------------------------------------------------------------------------- Load / save
 
 def save(path: pathlib.Path, rec: Recording) -> None:
     np.savez_compressed(path, frames=rec.frames, loop=rec.loop if rec.loop is not None else np.zeros(0, np.complex64),
@@ -130,7 +130,7 @@ def report(path: pathlib.Path) -> str:
     return "\n".join(out)
 
 
-# --------------------------------------------------------------------------------------------- Aufnahme über bridge
+# --------------------------------------------------------------------------------------------- Recording via bridge
 
 def _prf(a121, value: str):
     return {"19.5": a121.PRF.PRF_19_5_MHz, "15.6": a121.PRF.PRF_15_6_MHz, "13.0": a121.PRF.PRF_13_0_MHz,
@@ -140,9 +140,9 @@ def _prf(a121, value: str):
 def build_config(start_mm: float, points: int = 24, profile: int = 1, hwaas: int = 32, gain: int = 16,
                  prf: str = "15.6", rate: float = 60.0, loop: bool = True, loop_profile: int = 1,
                  loop_prf: str = "19.5", loop_gain: int = 16, loop_hwaas: int = 8):
-    """Loopback (Punkt 0) + Zoom (Schritt 2,5 mm); Standard wie das iq3-Preset der Firmware (a121_server_client.h),
-    jede Größe einstellbar. Regeln von exptool: 19,5 MHz nur mit Profil 1, Loopback nicht mit Profil 2, PRF eines
-    Subsweeps nicht kleiner als die des folgenden (Loopback 15,6 MHz also nur mit Zoom ≤ 15,6 MHz)."""
+    """Loopback (point 0) + zoom (2.5 mm step); default like the iq3 preset of the firmware (a121_server_client.h),
+    every value adjustable. exptool rules: 19.5 MHz only with profile 1, loopback not with profile 2, PRF of a
+    subsweep not smaller than that of the following one (loopback 15.6 MHz thus only with zoom ≤ 15.6 MHz)."""
     from acconeer.exptool import a121
 
     subs = []
@@ -160,7 +160,7 @@ def build_config(start_mm: float, points: int = 24, profile: int = 1, hwaas: int
                              inter_sweep_idle_state=a121.IdleState.READY)
 
 
-def record(a: argparse.Namespace) -> int:  # pragma: no cover - braucht das Gerät
+def record(a: argparse.Namespace) -> int:  # pragma: no cover - needs the device
     import serial
     from acconeer.exptool import a121
     from esp_record import find_port

@@ -7,7 +7,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.concurrent.thread
 
-/** Entwicklungs-Weiterleitung: ESP32 am PC, `host/esp_tcp_bridge.py` stellt ihn per TCP (nur Tailscale) bereit. */
+/** Development forwarding: ESP32 on the PC, `host/esp_tcp_bridge.py` provides it over TCP (Tailscale only). */
 class TcpTransport(
     private val host: String,
     private val port: Int,

@@ -3,16 +3,16 @@
 
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
 
-    <!-- Nur für die Entwicklungs-Weiterleitung (TCP im Tailnet, host/esp_tcp_bridge.py). -->
+    <!-- Only for the development forwarding (TCP in the tailnet, host/esp_tcp_bridge.py). -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Vordergrunddienst Typ connectedDevice; CHANGE_NETWORK_STATE ist eine der dafür nötigen Voraussetzungen. -->
+    <!-- Foreground service of type connectedDevice; CHANGE_NETWORK_STATE is one of its required prerequisites. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Lesen bei ausgeschaltetem Bildschirm (Aufnahme), nur solange verbunden. -->
+    <!-- Reading with the screen off (recording), only while connected. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- EKG-Gurt als Pulsreferenz (V0.1): BLE-Suche ohne Standort, Verbinden. -->
+    <!-- ECG chest strap as pulse reference (V0.1): BLE scan without location, connect. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"

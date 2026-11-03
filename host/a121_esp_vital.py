@@ -1,25 +1,25 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Eigene Puls-/Atem-Auswertung für den I2C-Befehl `vital` (Distance Detector). Neue Auswertungen nur mit
-host/vital_eval.py und Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier
-bewährt, wandert in den Header. Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Own pulse/breathing analysis for the I2C command `vital` (distance detector). New analyses only with
+host/vital_eval.py and variants of the firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what
+proves itself here moves into the header. Function of the script unchanged.
 
-Vitaldaten-Aufnahme und -Auswertung über ESP32-S3 + A121 I2C Distance Detector.
+Vital-data recording and analysis via ESP32-S3 + A121 I2C distance detector.
 
-Nutzt das optimierte `vital [start_mm end_mm]`-Kommando der ESP32-S3-Firmware:
-- 400 kHz I2C + Hardware-Interrupt-Polling (`GPIO18` / `MCU_INT`) -> ~37 Hz Abtastrate
+Uses the optimized `vital [start_mm end_mm]` command of the ESP32-S3 firmware:
+- 400 kHz I2C + hardware-interrupt polling (`GPIO18` / `MCU_INT`) -> ~37 Hz sampling rate
 - `close_range_leakage_cancellation = false` (`0x43 = 0`), `PROFILE_1` (`0x45 = 1`, 40 mm FWHM),
-  `max_step_length = 1` (`0x42 = 1`, 2,5 mm), `FIXED_STRENGTH = -25 dB`
-- Gated Scatterer Tracking (±15 mm Gate) für primären (Vorderbrust) und sekundären (Oberkörper) Streuer
-- Integration ge-gateter Frame-zu-Frame-Differenzen (Δd, ΔS mit 0,001 dB Auflösung) gegen Zieltausch-Sprünge
-- Hilbert-basierte Atmungs-Oberwellen-Projektion + Multi-Feature-Spektren-Fusion
+  `max_step_length = 1` (`0x42 = 1`, 2.5 mm), `FIXED_STRENGTH = -25 dB`
+- gated scatterer tracking (±15 mm gate) for primary (front chest) and secondary (upper body) scatterer
+- integration of gated frame-to-frame differences (Δd, ΔS with 0.001 dB resolution) against target-swap jumps
+- Hilbert-based breathing-harmonic projection + multi-feature spectrum fusion
 
-Live-Aufnahme:
+Live recording:
   sg dialout -c ".venv/bin/python host/a121_esp_vital.py <ESP_PORT> <AUSGABE_OHNE_ENDUNG> [START_MM END_MM ANZAHL]"
 
-Offline-Auswertung einer bestehenden Aufnahme:
+Offline analysis of an existing recording:
   .venv/bin/python host/a121_esp_vital.py --offline <EINGABE.npz> <AUSGABE_OHNE_ENDUNG>
 
-Ohne Referenzpuls (Pulsoximeter/Smartwatch/EKG) ist das Ergebnis ein Rhythmus-Kandidat, keine Pulsmessung.
+Without a reference pulse (pulse oximeter/smartwatch/ECG) the result is a rhythm candidate, not a pulse measurement.
 """
 import re
 import sys
@@ -109,7 +109,7 @@ def track_scatterer(
     max_step_mm: float = 6.0,
     alpha: float = 0.12,
 ):
-    """Verfolgt einen Streuer mit gleitendem Gate (±gate_mm) und integriert ge-gatete Frame-zu-Frame-Deltas."""
+    """Tracks a scatterer with a sliding gate (±gate_mm) and integrates gated frame-to-frame deltas."""
     d_trk = np.full(len(t), np.nan)
     s_trk = np.full(len(t), np.nan)
     state_d = d_init
@@ -152,11 +152,11 @@ def track_scatterer(
 
 
 def find_initial_scatterers(d_mat: np.ndarray, s_mat: np.ndarray) -> tuple[float, float]:
-    """Findet automatisch die beiden dominanten Streuer-Entfernungen (Vorderbrust & Sekundärstreuer)."""
+    """Automatically finds the two dominant scatterer distances (front chest & secondary scatterer)."""
     d_filt = np.where((~np.isnan(d_mat)) & (s_mat > -24.5), d_mat, np.nan)
     if np.all(np.isnan(d_filt)):
         raise RuntimeError("Keine gültigen Ziele in der Aufnahme erkannt.")
-    # Vorderste Brustwand: 35-%-Perzentil des jeweils nächsten gültigen Streuers pro Frame
+    # Front chest wall: 35th percentile of the nearest valid scatterer per frame
     d_closest = np.nanmin(d_filt, axis=1)
     d1 = float(np.percentile(d_closest[~np.isnan(d_closest)], 35))
     valid_sec = (~np.isnan(d_filt)) & (d_filt >= d1 + 35.0) & (d_filt <= d1 + 165.0)
@@ -186,7 +186,7 @@ def analyze_esp_vital(t: np.ndarray, n_peaks: np.ndarray, d_mat: np.ndarray, s_m
     print(f"Track A (Vorderbrust ~{np.median(dtA):.1f} mm, {med_sA:+.2f} dB): {covA*100:.1f} % Gated")
     print(f"Track B (Sekundär    ~{np.median(dtB):.1f} mm, {med_sB:+.2f} dB): {covB*100:.1f} % Gated")
 
-    # Ruhigsten zusammenhängenden 20-s-Abschnitt (kleinste Makro-Bewegungsenergie in Abstand + Stärke) finden
+    # Find the quietest contiguous 20 s section (lowest macro-motion energy in distance + strength)
     w_mot = int(3.0 * fs)
     mot_d = np.array([
         np.ptp(dintA[max(0, i - w_mot // 2):min(len(dintA), i + w_mot // 2)])
@@ -210,7 +210,7 @@ def analyze_esp_vital(t: np.ndarray, n_peaks: np.ndarray, d_mat: np.ndarray, s_m
     sos_b = signal.butter(2, [0.12, 0.50], btype="band", fs=fs, output="sos")
     sos_h = signal.butter(4, [0.85, 2.00], btype="band", fs=fs, output="sos")
 
-    # Gemeinsame Schmalband-Atemphase θ_1(t) + gleitende 7-s-Hann-Hilbert-Projektion
+    # Common narrow-band breathing phase θ_1(t) + sliding 7 s Hann-Hilbert projection
     d_segA = dintA[qa:qb] - np.mean(dintA[qa:qb])
     brA_full = signal.sosfiltfilt(sos_b, dintA - np.mean(dintA))
     brA = signal.sosfiltfilt(sos_b, d_segA)
@@ -265,7 +265,7 @@ def analyze_esp_vital(t: np.ndarray, n_peaks: np.ndarray, d_mat: np.ndarray, s_m
     hr_stB, _, _, p_stB = process_chan(stB)
     print(f"ATMUNG (ruhiger Abschnitt): {br_bpm:.1f} /min (Oberwellen: {[round(br_bpm * k, 1) for k in range(2, 7)]})")
 
-    # Gewichtung von Track B abhängig vom Echo-Stärke-Abstand zu Track A
+    # Weighting of track B depends on the echo-strength gap to track A
     use_track_b = (covB >= 0.65) and ((med_sA - med_sB) <= 12.0)
     if not use_track_b:
         print(f"  Hinweis: Track B ist {med_sA - med_sB:.1f} dB schwächer als Track A -> Fusion nutzt primär Track A (Δd + dB).")

@@ -1,5 +1,5 @@
-/* PC-Fassung des Live-Pfads (V5.2): dsp_live <stream.log> → die Handy-Zeilen auf stdout, Rechenzeit auf stderr.
- * Liest die Datei Zeile für Zeile wie die App den Empfang (host/tests/test_dsp_live.py). Übersetzen:
+/* PC version of the live path (V5.2): dsp_live <stream.log> → the phone lines on stdout, compute time on stderr.
+ * Reads the file line by line like the app reads the reception (host/tests/test_dsp_live.py). Compile:
  *   g++ -O2 -std=c++17 -ffp-contract=off [-DA121_DSP_HEAVY] -I host/dsp_replay -I firmware/esp32s3/src \
  *       host/dsp_replay/dsp_live_main.cpp
  */

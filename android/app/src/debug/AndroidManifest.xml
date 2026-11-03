@@ -3,8 +3,8 @@
 
     <application>
         <!--
-          Nur im Debug-Build: Steuerung per adb ohne Bildschirm (Aufnahme bei ausgeschaltetem Display).
-          android.permission.DUMP haben nur Shell (adb) und System, keine normalen Apps.
+          Debug build only: control via adb without a screen (recording with the display off).
+          Only the shell (adb) and the system hold android.permission.DUMP, not normal apps.
         -->
         <receiver
             android:name=".debug.DebugReceiver"

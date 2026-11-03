@@ -1,48 +1,48 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Eigene DSP-Kette am PC (Kåsa + DACM + Hilbert-Projektion + HPS, USB Exploration Server). Neue Auswertungen nur mit
-host/vital_eval.py und Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier
-bewährt, wandert in den Header. Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Own DSP chain on the PC (Kåsa + DACM + Hilbert projection + HPS, USB Exploration Server). New analyses only with
+host/vital_eval.py and variants of the firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what
+proves itself here moves into the header. Function of the script unchanged.
 
-Ultimatives 3-Subsweep Sparse-IQ Vital- & Umfeld-System für den Acconeer A121 (USB Exploration Server).
+Ultimate 3-subsweep sparse-IQ vital and environment system for the Acconeer A121 (USB Exploration Server).
 
-Schöpft die Hardware des A121 (RSS v1.12.0) voll aus, indem pro Frame (100 Hz) drei Subsweeps
-simultan im Silizium ausgeführt werden (Gesamtdauer im Radar-Frontend ~5,7 ms/Sweep):
+Makes full use of the A121 hardware (RSS v1.12.0) by running three subsweeps per frame (100 Hz)
+simultaneously in silicon (total duration in the radar front end ~5.7 ms/sweep):
 
-  - Subsweep 0 (On-Chip Loopback, 0,026 ms):
-      enable_loopback=True, 1 Punkt @ 0 mm, PROFILE_1, PRF 19,5 MHz, HWAAS 16.
-      Misst in jedem Frame die exakte momentane Sender-Empfänger-Eigenphase φ_loop(t) des
-      60-GHz-Synthesizers und kompensiert niederfrequentes 1/f-Phasenrauschen im Vitalband.
-  - Subsweep 1 (Ultra-Fine Vital-Zoom, ~4,9 ms):
-      120 Punkte im 2,5-mm-Raster (300-mm-Fenster automatisch zentriert auf den Brustkorb),
-      PROFILE_1 (40 mm Halbwertsbreite), PRF 19,5 MHz (höchste Pulsfolgefrequenz des A121),
+  - Subsweep 0 (on-chip loopback, 0.026 ms):
+      enable_loopback=True, 1 point @ 0 mm, PROFILE_1, PRF 19.5 MHz, HWAAS 16.
+      Measures in every frame the exact instantaneous transmitter-receiver intrinsic phase φ_loop(t) of the
+      60 GHz synthesizer and compensates low-frequency 1/f phase noise in the vital band.
+  - Subsweep 1 (ultra-fine vital zoom, ~4.9 ms):
+      120 points on a 2.5 mm grid (300 mm window automatically centered on the chest),
+      PROFILE_1 (40 mm half-power width), PRF 19.5 MHz (highest pulse repetition frequency of the A121),
       HWAAS 32, phase_enhancement=True, iq_imbalance_compensation=True.
-  - Subsweep 2 (Simultanes Vollraum-Radar 0,15–2,55 m, ~0,76 ms):
-      80 Punkte im 30-mm-Raster (step_length=12), PROFILE_3, PRF 15,6 MHz, HWAAS 8,
+  - Subsweep 2 (simultaneous full-room radar 0.15–2.55 m, ~0.76 ms):
+      80 points on a 30 mm grid (step_length=12), PROFILE_3, PRF 15.6 MHz, HWAAS 8,
       phase_enhancement=True, iq_imbalance_compensation=True.
-      Überwacht gleichzeitig den gesamten Raum, klassifiziert Ziele und führt Subsweep 1
-      automatisch nach (Auto-Zoom), wenn sich die Person im Raum bewegt.
+      Monitors the entire room at the same time, classifies targets and follows subsweep 1
+      automatically (auto-zoom) when the person moves in the room.
 
-Signalverarbeitung (Sparse-IQ Pipeline):
-  1. On-Chip Loopback-Phasen-Derotation: z_corr(t, d) = z(t, d) * exp(-j * Δφ_loop(t))
-  2. Dynamische komplexe Standziel-Unterdrückung (< 0,05 Hz LPF im Komplexen gegen Möbel/Mehrwege)
-  3. Qualitätsgewichtetes kohärentes Multi-Bin-Beamforming über die stabilsten Brustwand-Bins
-  4. Kåsa-Kreiszentrierung + regularisierte DACM-Mikrometer-Phasendemodulation (~5 µm Rauschboden)
-  5. Automatische Auswahl des ruhigsten 20-s-Analysefensters (Minimum-Motion-Selector)
-  6. Zeitvariable Hilbert-Atmungsoberwellen-Projektion (1..6. Harmonische von θ_breath(t))
-  7. Dual-Domain Herzschlag-Extraktion:
-     - Frequenzbereich: Spektrum + Beschleunigungs-HPS (f0·2f0·3f0) + Autokorrelation
-     - Zeitbereich: Einzelne systolische Mikrometer-Pulswellen, Schlag-zu-Schlag-Intervalle (IBI),
-       Variationskoeffizient (CV %) und RMSSD (ms)
-  8. Vollständige 10-Metriken-Telemetrie (analog zum mobilen Auto-Modus, aber mit echter µm-Phase)
+Signal processing (sparse-IQ pipeline):
+  1. On-chip loopback phase derotation: z_corr(t, d) = z(t, d) * exp(-j * Δφ_loop(t))
+  2. Dynamic complex stationary-target suppression (< 0.05 Hz LPF in the complex domain against furniture/multipath)
+  3. Quality-weighted coherent multi-bin beamforming over the most stable chest-wall bins
+  4. Kåsa circle centering + regularized DACM micrometer phase demodulation (~5 µm noise floor)
+  5. Automatic selection of the quietest 20 s analysis window (minimum-motion selector)
+  6. Time-varying Hilbert breathing-harmonic projection (1st..6th harmonic of θ_breath(t))
+  7. Dual-domain heartbeat extraction:
+     - frequency domain: spectrum + acceleration HPS (f0·2f0·3f0) + autocorrelation
+     - time domain: individual systolic micrometer pulse waves, beat-to-beat intervals (IBI),
+       coefficient of variation (CV %) and RMSSD (ms)
+  8. Complete 10-metric telemetry (analogous to the mobile auto mode, but with true µm phase)
 
-Hinweis (AGENTS.md): Ohne simultane Referenzmessung (Smartwatch/Pulsoximeter/EKG) sind alle
-Puls- und IBI-Werte experimentelle Rhythmus-Kandidaten im Radarsignal und keine validierte
-Puls-Genauigkeitsaussage.
+Note (AGENTS.md): Without a simultaneous reference measurement (smartwatch/pulse oximeter/ECG) all
+pulse and IBI values are experimental rhythm candidates in the radar signal and not a validated
+statement of pulse accuracy.
 
-Verwendung:
-  Live-Messung am A121 (USB):
+Usage:
+  Live measurement at the A121 (USB):
     sg dialout -c ".venv/bin/python host/a121_ultimate_vital.py <PORT> <OUT_BASISPFAD> [DAUER_S] [BESCHREIBUNG]"
-  Offline-Auswertung:
+  Offline analysis:
     .venv/bin/python host/a121_ultimate_vital.py --offline <EINGABE.npz> [OUT_BASISPFAD]
 """
 from __future__ import annotations
@@ -57,16 +57,16 @@ from acconeer.exptool import a121
 from scipy import signal
 
 POINT_M = 0.0025
-FRAME_RATE = 60.0          # 60 Hz garantiert frame_delayed=False & <55% UART-Last bei 921600 Baud mit 3 Subsweeps
-ZOOM_POINTS = 100          # 250 mm Zoom-Fenster @ 2,5 mm
+FRAME_RATE = 60.0          # 60 Hz guarantees frame_delayed=False & <55% UART load at 921600 baud with 3 subsweeps
+ZOOM_POINTS = 100          # 250 mm zoom window @ 2.5 mm
 ROOM_START_PT = 60         # 150 mm
 ROOM_POINTS = 64           # 64 * 30 mm = 1920 mm -> 150..2070 mm
 ROOM_STEP = 12             # 30 mm
-MM_PER_RAD = 2.4776236 / (2 * np.pi)  # ≈ 0,394326 mm/rad (394,3 µm/rad)
+MM_PER_RAD = 2.4776236 / (2 * np.pi)  # ≈ 0.394326 mm/rad (394.3 µm/rad)
 
 
 def build_3subsweep_config(zoom_start_pt: int, frame_rate: float = FRAME_RATE) -> a121.SensorConfig:
-    """Erstellt die simultane 3-Subsweep-Konfiguration (Loopback + Vital-Zoom + Vollraum-Scan)."""
+    """Creates the simultaneous 3-subsweep configuration (loopback + vital zoom + full-room scan)."""
     s0_loopback = a121.SubsweepConfig(
         start_point=0,
         num_points=1,
@@ -133,7 +133,7 @@ def connect_client(port: str, tries: int = 3) -> a121.Client:
 
 
 def auto_search_primary_chest(client: a121.Client, scan_s: float = 1.8) -> tuple[int, float]:
-    """Scannt den Vollraum (0,15–2,55 m) und lokalisiert automatisch die atmende/bewegte Person."""
+    """Scans the full room (0.15–2.55 m) and automatically locates the breathing/moving person."""
     scan_cfg = a121.SensorConfig(
         start_point=ROOM_START_PT,
         num_points=ROOM_POINTS,
@@ -154,18 +154,18 @@ def auto_search_primary_chest(client: a121.Client, scan_s: float = 1.8) -> tuple
     client.stop_session()
 
     room_dists_m = (ROOM_START_PT + np.arange(ROOM_POINTS) * ROOM_STEP) * POINT_M
-    # Dynamische Änderung trennt atmenden Brustkorb von starren Raumreflexionen
+    # Dynamic change separates the breathing chest from rigid room reflections
     dyn_iq = frames - np.mean(frames, axis=0, keepdims=True)
     amp_mean = np.mean(np.abs(frames), axis=0)
     dyn_std = np.std(dyn_iq, axis=0)
 
-    #Bevorzuge Ziele im typischen Personenbereich 0,20..2,20 m mit hoher dynamischer Energie
+    # Prefer targets in the typical person range 0.20..2.20 m with high dynamic energy
     valid = (room_dists_m >= 0.20) & (room_dists_m <= 2.20) & (amp_mean >= 0.08 * np.max(amp_mean))
     score = np.where(valid, dyn_std * np.sqrt(amp_mean), -1.0)
     best_idx = int(np.argmax(score))
     chest_m = float(room_dists_m[best_idx])
     center_pt = int(round(chest_m / POINT_M))
-    # Vorderbrust liegt meist leicht vor dem Schwerpunkt des Grobsweeps -> 45 % vor, 55 % hinter Zentrum
+    # The front chest usually lies slightly in front of the centroid of the coarse sweep -> 45 % before, 55 % behind center
     zoom_start_pt = max(40, center_pt - int(0.45 * ZOOM_POINTS))
     print(
         f"[Auto-Search 0,15–2,55 m] Bewegtes Primärziel bei {chest_m*1000:.0f} mm erkannt "
@@ -176,7 +176,7 @@ def auto_search_primary_chest(client: a121.Client, scan_s: float = 1.8) -> tuple
 
 
 def record_ultimate_3subsweep(port: str, duration_s: float = 45.0) -> dict:
-    """Nimmt simultan Loopback (Sub 0), 2,5-mm-Vital-Zoom (Sub 1) und 2,55-m-Raumscan (Sub 2) mit Auto-Rezoom auf."""
+    """Records loopback (sub 0), 2.5 mm vital zoom (sub 1) and 2.55 m room scan (sub 2) simultaneously with auto-rezoom."""
     client = connect_client(port)
     zoom_start_pt, init_chest_m = auto_search_primary_chest(client, scan_s=1.8)
     cfg = build_3subsweep_config(zoom_start_pt, frame_rate=FRAME_RATE)
@@ -212,7 +212,7 @@ def record_ultimate_3subsweep(port: str, duration_s: float = 45.0) -> dict:
             zoom_starts[i] = zoom_start_pt
             n_captured = i + 1
 
-            # Alle 3,0 s prüfen, ob das Brustziel im Vital-Zoom-Fenster an den Rand (< 25 mm) gewandert oder verloren ist
+            # Every 3.0 s check whether the chest target in the vital-zoom window has drifted to the edge (< 25 mm) or been lost
             if (i - last_rezoom_idx) >= int(3.0 * FRAME_RATE) and (n_total - i) > int(6.0 * FRAME_RATE):
                 w_zoom = np.mean(np.abs(iq_zoom[max(0, i - int(2.0 * FRAME_RATE)) : i + 1]), axis=0)
                 zoom_pk = int(np.argmax(w_zoom))
@@ -270,7 +270,7 @@ def record_ultimate_3subsweep(port: str, duration_s: float = 45.0) -> dict:
     fs_eff = (n_captured - 1) / total_time
     print(f"Aufnahme beendet ({n_captured} Frames in {total_time:.2f} s -> effektiv {fs_eff:.2f} Hz)")
 
-    # Für die Auswertung das längste zusammenhängende Zoom-Segment wählen
+    # For the analysis choose the longest contiguous zoom segment
     vals, counts = np.unique(zoom_starts, return_counts=True)
     dom_start = int(vals[np.argmax(counts)])
     dom_mask = zoom_starts == dom_start
@@ -307,8 +307,8 @@ def dacm_displacement_mm(z: np.ndarray, reg_quantile: float = 5.0) -> np.ndarray
     center = fit_iq_circle(z)
     zc = z - center
     amp_sq = np.abs(zc) ** 2
-    # Sanfte Regularisierung (1e-3 des Medians): greift nur bei echten Multipath-Nulldurchgängen (|z| -> 0),
-    # verzerrt aber bei normaler Signalstärke die Phase nicht durch Amplitudenmodulation.
+    # Soft regularization (1e-3 of the median): acts only at true multipath zero crossings (|z| -> 0),
+    # but at normal signal strength does not distort the phase through amplitude modulation.
     eps = float(np.percentile(amp_sq, reg_quantile)) * 0.01 + 1e-6
     prod = zc[1:] * np.conj(zc[:-1])
     dphi = np.arctan2(prod.imag, prod.real)
@@ -331,14 +331,14 @@ def extract_coherent_chest_iq(
     fs: float,
     iq_loop: np.ndarray | None = None,
 ) -> tuple[int, int, np.ndarray, float]:
-    """Wendet Loopback-Derotation, Fading-freie Bin-Selektion und kohärentes Multi-Bin-Beamforming an."""
+    """Applies loopback derotation, fading-free bin selection and coherent multi-bin beamforming."""
     iq_work = iq_zoom.astype(np.complex128).copy()
     loop_jitter_um = 0.0
 
     if iq_loop is not None and len(iq_loop) == len(iq_work) and np.all(np.abs(iq_loop) > 10):
         phi_loop = np.unwrap(np.angle(iq_loop.astype(np.complex128)))
         phi_loop_rel = phi_loop - phi_loop[0]
-        # Tiefpass (< 0,8 Hz) isoliert die langsame thermische 1/f-PLL-Phasendrift ohne weißes Rauschen einzukoppeln
+        # Low-pass (< 0.8 Hz) isolates the slow thermal 1/f PLL phase drift without coupling in white noise
         sos_lp_loop = signal.butter(2, 0.8, btype="low", fs=fs, output="sos")
         phi_loop_slow = signal.sosfiltfilt(sos_lp_loop, phi_loop_rel)
         loop_jitter_um = float(np.std(phi_loop_slow) * MM_PER_RAD * 1000.0)
@@ -354,7 +354,7 @@ def extract_coherent_chest_iq(
     quality = np.where(mask, (amp_min / amp_std) * (amp_min / amp_mean[k_raw]), -1.0)
     k_best = int(np.argmax(quality))
 
-    # Kohärentes Spatial Matched Filtering über ±2 Nachbar-Bins (dank phase_enhancement=True)
+    # Coherent spatial matched filtering over ±2 neighbor bins (thanks to phase_enhancement=True)
     sl = slice(max(k_best - 2, 0), min(k_best + 3, iq_work.shape[1]))
     sub = iq_work[:, sl]
     ref = iq_work[:, k_best : k_best + 1]
@@ -367,7 +367,7 @@ def project_out_respiration_harmonics(disp: np.ndarray, fs: float, max_harm: int
     sos_b = signal.butter(2, [0.10, 0.55], btype="band", fs=fs, output="sos")
     breath = signal.sosfiltfilt(sos_b, disp)
 
-    # Schätze dominante Atem-Grundfrequenz f_b0 für ein schmalbandiges Fundamental-Phasenmodell θ_1(t)
+    # Estimate the dominant breathing fundamental frequency f_b0 for a narrow-band fundamental phase model θ_1(t)
     f_b, p_b = signal.welch(breath, fs=fs, nperseg=min(len(breath), int(fs * 16)), nfft=int(fs * 120))
     mb = (f_b >= 0.12) & (f_b <= 0.55)
     fb0 = float(f_b[mb][np.argmax(p_b[mb])]) if np.any(mb) else 0.30
@@ -375,7 +375,7 @@ def project_out_respiration_harmonics(disp: np.ndarray, fs: float, max_harm: int
     b_f1 = signal.sosfiltfilt(sos_f1, disp)
     theta1 = np.unwrap(np.angle(signal.hilbert(b_f1)))
 
-    # Gleitende Kurzzeit-Projektion (7-s-Hann-Fenster, 1-s-Schritt) passt sich Atemzug für Atemzug an
+    # Sliding short-time projection (7 s Hann window, 1 s step) adapts breath by breath
     wlen = min(len(disp), int(7.0 * fs))
     step = max(1, int(1.0 * fs))
     if len(disp) <= wlen + step:
@@ -420,9 +420,9 @@ def extract_time_domain_beats(
     fs: float,
     target_bpm: float | None = None,
 ) -> dict:
-    """Extrahiert einzelne Herzschläge im Zeitbereich aus der bereits bandgefilterten Mikrometer-Phasenwelle."""
+    """Extracts individual heartbeats in the time domain from the already band-filtered micrometer phase wave."""
 
-    # Mindestabstand zweier Herzschläge orientiert sich am Spektral-Kandidaten (oder 0,42 s = 142 /min)
+    # Minimum spacing of two heartbeats is based on the spectral candidate (or 0.42 s = 142 /min)
     if target_bpm is not None and 45.0 <= target_bpm <= 140.0:
         expected_period_s = 60.0 / target_bpm
         min_dist = max(int(0.68 * expected_period_s * fs), int(0.42 * fs))
@@ -434,7 +434,7 @@ def extract_time_domain_beats(
 
     if len(peaks) >= 4:
         ibi_s = np.diff(peaks) / fs
-        # Physiologische Plausibilitätsfilterung (0,40..1,35 s)
+        # Physiological plausibility filter (0.40..1.35 s)
         valid_ibi = ibi_s[(ibi_s >= 0.40) & (ibi_s <= 1.35)]
         if len(valid_ibi) >= 3:
             med_ibi_ms = float(np.median(valid_ibi) * 1000.0)
@@ -479,7 +479,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
     disp_full = dacm_displacement_mm(z_beam)
     t_full = np.arange(len(disp_full)) / fs
 
-    # Gleitender Stabilitäts-Score (0..100 %) über langsame Rumpf-Grundlinie (> 3,5 s)
+    # Sliding stability score (0..100 %) over a slow torso baseline (> 3.5 s)
     drift_win = int(3.5 * fs) | 1
     body_drift = signal.savgol_filter(disp_full, min(len(disp_full) | 1, max(5, drift_win)), 1)
     stab_trace = np.zeros_like(disp_full)
@@ -488,7 +488,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         seg = body_drift[max(0, i - w_stab) : min(len(body_drift), i + w_stab)]
         stab_trace[i] = float(np.clip(100.0 * np.exp(-np.ptp(seg) / 3.0), 0.0, 100.0))
 
-    # Ruhigstes 20-s-Fenster für die Spektral-/Pulsanalyse auswählen
+    # Select the quietest 20 s window for the spectral/pulse analysis
     win_len = min(len(disp_full), int(20.0 * fs))
     step_len = max(1, int(1.0 * fs))
     margin = int(2.0 * fs) if len(disp_full) > int(25.0 * fs) else 0
@@ -512,7 +512,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
     clean_win = disp_clean_full[best_s0:s1]
     heart_win = heart_full[best_s0:s1]
 
-    # 1. Atmung & Apnoe
+    # 1. Breathing & apnea
     f_b, p_b = signal.welch(breath_win, fs=fs, nperseg=min(len(breath_win), int(fs * 16)), nfft=int(fs * 120))
     mb = (f_b >= 0.10) & (f_b <= 0.55)
     br_bpm = float(f_b[mb][np.argmax(p_b[mb])] * 60.0) if np.any(mb) else float("nan")
@@ -524,7 +524,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         if np.ptp(breath_full[a0 : a0 + ap_win]) < 0.20:
             apnea_episodes += 1
 
-    # 2. Herzschlag Frequenzbereich (Spektrum + Beschleunigungs-HPS + Autokorrelation)
+    # 2. Heartbeat frequency domain (spectrum + acceleration HPS + autocorrelation)
     f_h, p_h = signal.welch(heart_win, fs=fs, nperseg=min(len(heart_win), int(fs * 15)), nfft=int(fs * 120))
 
     acc_win = np.gradient(np.gradient(clean_win, 1.0 / fs), 1.0 / fs)
@@ -555,7 +555,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         hr_bpm = float("nan")
         snr_spec = 1.0
 
-    # Autokorrelation im ruhigen Fenster
+    # Autocorrelation in the quiet window
     ac = np.correlate(heart_win - np.mean(heart_win), heart_win - np.mean(heart_win), mode="full")
     ac = ac[len(ac) // 2 :] / (ac[len(ac) // 2] + 1e-12)
     lag_min, lag_max = int(0.48 * fs), int(1.15 * fs)
@@ -567,7 +567,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
     else:
         ac_bpm, ac_r = None, 0.0
 
-    # 3. Zeitbereichs-Pulswelle & Schlag-zu-Schlag-Intervalle (IBI)
+    # 3. Time-domain pulse wave & beat-to-beat intervals (IBI)
     td_info = extract_time_domain_beats(heart_win * 1000.0, fs, target_bpm=hr_bpm)
 
     hr_conf = float(
@@ -581,7 +581,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         )
     )
 
-    # 4. Raum-Ziele (Multi-Target) & Mikrovibration (5..40 Hz)
+    # 4. Room targets (multi-target) & micro-vibration (5..40 Hz)
     target_dist_mm = float(dist_m[k_best] * 1000.0)
     amp_best = float(np.mean(np.abs(iq_zoom[:, k_best])))
     amp_db_equiv = float(20.0 * np.log10(max(amp_best, 1.0)))
@@ -708,7 +708,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
 
         fig, ax = plt.subplots(6, 1, figsize=(12, 16))
 
-        # Panel 0: Vollraum + Vital-Zoom Tiefenprofil
+        # Panel 0: full room + vital-zoom depth profile
         amp_zoom = np.mean(np.abs(iq_zoom), axis=0)
         if iq_room is not None and room_dist_m is not None and len(iq_room):
             amp_room = np.mean(np.abs(iq_room), axis=0)
@@ -722,7 +722,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         ax[0].set_title("1. Simultanes Vollraum- & Vital-Zoom-Tiefenprofil (mit dynamischer Clutter-Unterdrückung)")
         ax[0].grid(True, alpha=0.25)
 
-        # Panel 1: DACM Brustverschiebung & Atmung
+        # Panel 1: DACM chest displacement & breathing
         ax[1].plot(t_full, disp_full, color="tab:cyan", lw=0.8, alpha=0.8, label="DACM Gesamtweg (mm)")
         ax[1].plot(t_full, breath_full, color="tab:blue", lw=1.8, label=f"Atmung ({br_bpm:.1f} /min, Hub {breath_ptp_mm:.2f} mm)")
         ax[1].axvspan(t_win_start, t_win_end, color="gold", alpha=0.18, label="Ruhigstes 20-s-Analysefenster")
@@ -731,7 +731,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         ax[1].set_title("2. Millimeter-Brustwandbewegung (Loopback-korrigiert + Kåsa-Kreis-Fit + DACM)")
         ax[1].grid(True, alpha=0.25)
 
-        # Panel 2: Stabilität & Relativgeschwindigkeit
+        # Panel 2: stability & relative velocity
         ax2_r = ax[2].twinx()
         ax[2].plot(t_full, stab_trace, color="tab:green", lw=1.5, label="Ruhe-/Stabilitäts-Score (%)")
         ax2_r.plot(t_full, vel_mm_s, color="tab:orange", lw=0.8, alpha=0.6, label="Rumpf-Driftgeschwindigkeit (mm/s)")
@@ -741,7 +741,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         ax[2].set_title(f"3. Bewegungs-Stabilität (Mittel: {np.mean(stab_trace):.1f} %, Ruhefenster: {np.mean(stab_trace[best_s0:s1]):.1f} %)")
         ax[2].grid(True, alpha=0.25)
 
-        # Panel 3: Mikrometer-Pulswelle im ruhigen 20-s-Fenster mit Einzel-Herzschlägen
+        # Panel 3: micrometer pulse wave in the quiet 20 s window with individual heartbeats
         t_win = np.arange(len(clean_win)) / fs + t_win_start
         hw_um = td_info["heart_um"]
         pks = td_info["peaks"]
@@ -756,7 +756,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         )
         ax[3].grid(True, alpha=0.25)
 
-        # Panel 4: Frequenzspektrum & Beschleunigungs-HPS
+        # Panel 4: frequency spectrum & acceleration HPS
         ax[4].plot(f_grid * 60.0, p_disp_norm, color="tab:blue", alpha=0.6, lw=1.2, label="Weg-Spektrum nach Hilbert-Atmungsprojektion")
         ax[4].plot(f_grid * 60.0, hps_norm, color="tab:orange", alpha=0.7, lw=1.2, label="Beschleunigungs-HPS (f0·2f0·3f0)")
         ax[4].plot(f_grid * 60.0, fused_spec / (np.max(fused_spec) + 1e-12), color="tab:red", lw=2.2, label=f"Fusionierter Puls-Kandidat ({hr_bpm:.1f} /min, Konf. {hr_conf:.0f} %)")
@@ -769,7 +769,7 @@ def analyze_ultimate(data: dict, out_base: str, label: str) -> dict:
         ax[4].set_title("5. Herzschlag-Spektrum & Harmonic Product Spectrum (grau gepunktet: mittlere Atmungs-Oberwellen)")
         ax[4].grid(True, alpha=0.25)
 
-        # Panel 5: Autokorrelation & Schlag-zu-Schlag-Intervall-Verlauf (Tachogramm)
+        # Panel 5: autocorrelation & beat-to-beat interval trace (tachogram)
         lags_s = np.arange(len(ac)) / fs
         m_ac = (lags_s >= 0.40) & (lags_s <= 2.0)
         ax[5].plot(60.0 / lags_s[m_ac], ac[m_ac], color="tab:purple", lw=1.6, label=f"Autokorrelation R_xx (Peak: {ac_bpm} /min, r={ac_r})")

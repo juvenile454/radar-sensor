@@ -4,9 +4,9 @@ import android.os.SystemClock
 import java.io.File
 
 /**
- * A5: Rechnet eine `iq3 … raw`-Aufnahme mit dem DSP-Header der Firmware am Handy neu (NDK, `host/dsp_replay/`) und
- * vergleicht jede Zeile mit der Live-Ausgabe des ESP32. Schreibt `dsp_phone.log` (neu gerechnete Zeilen im selben
- * Format, auswertbar mit `host/a121_esp_ultimate.py --mode plot`) und `dsp_phone_report.txt` in den Aufnahmeordner.
+ * A5: Recomputes an `iq3 … raw` recording on the phone with the firmware's DSP header (NDK, `host/dsp_replay/`) and
+ * compares every line with the live output of the ESP32. Writes `dsp_phone.log` (recomputed lines in the same
+ * format, can be evaluated with `host/a121_esp_ultimate.py --mode plot`) and `dsp_phone_report.txt` into the recording folder.
  */
 object DspReplay {
     init {
@@ -30,7 +30,7 @@ object DspReplay {
         reportPath: String,
     ): Int
 
-    /** Blockiert (bei 30 min Aufnahme einige Sekunden); nicht auf dem UI-Thread aufrufen. */
+    /** Blocks (a few seconds for a 30 min recording); do not call on the UI thread. */
     fun run(dir: File): Result {
         val rep = File(dir, "dsp_phone_report.txt")
         val t0 = SystemClock.elapsedRealtime()

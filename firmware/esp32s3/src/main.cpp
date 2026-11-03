@@ -1,21 +1,21 @@
-// Bring-up-Firmware ESP32-S3 ↔ A121 (Waveshare A121 Range Sensor)
+// Bring-up firmware ESP32-S3 ↔ A121 (Waveshare A121 Range Sensor)
 //
-// Konsole über den nativen USB-Port (115200, Zeilenende \n). Befehle: help
-// Pins wie in docs/HARDWARE.md (= Waveshare-ESP32-S3-Demos):
-//   I2C SDA 15, SCL 16, WAKE_UP 17 (nur lesen, s. u.), MCU_INT 18 (Eingang, high = bereit)
-//   UART1: RX 5 ← A121 TXD (Debug-UART des STM32, 921600 Baud); GPIO4 bleibt hochohmig, weil der CH342
-//          die A121-RXD-Leitung (PA10) über R9 = 22 Ω selbst treibt.
+// Console over the native USB port (115200, line ending \n). Commands: help
+// Pins as in docs/HARDWARE.md (= Waveshare ESP32-S3 demos):
+//   I2C SDA 15, SCL 16, WAKE_UP 17 (read only, see below), MCU_INT 18 (input, high = ready)
+//   UART1: RX 5 ← A121 TXD (debug UART of the STM32, 921600 baud); GPIO4 stays high-impedance because the CH342
+//          itself drives the A121 RXD line (PA10) via R9 = 22 Ω.
 //
-// Server-Link (Modus A): Serial2 auf denselben Adern wie I2C – GPIO15 RX ← PB11 (LPUART1_TX, SDA-Ader),
-// GPIO16 TX → PB10 (LPUART1_RX, SCL-Ader). Braucht eine Server-Firmware auf LPUART1 (Acconeer-SDK-Neubau,
-// firmware/stm32l431/README.md). I2C und Server-UART sind nie gleichzeitig aktiv ('link i2c|srv').
+// Server link (mode A): Serial2 on the same wires as I2C – GPIO15 RX ← PB11 (LPUART1_TX, SDA wire),
+// GPIO16 TX → PB10 (LPUART1_RX, SCL wire). Needs a server firmware on LPUART1 (Acconeer SDK rebuild,
+// firmware/stm32l431/README.md). I2C and server UART are never active at the same time ('link i2c|srv').
 //
-// WAKE_UP treibt auf dem Waveshare-Board der USB-Chip CH342 (DTR0, Push-Pull) – auch ohne USB, weil er
-// am 5V-Netz hängt. Der ESP32 treibt GPIO17 deshalb nur auf ausdrücklichen Befehl ('wake') und gibt die
-// Leitung wieder frei, wenn sie nicht folgt.
+// On the Waveshare board WAKE_UP is driven by the USB chip CH342 (DTR0, push-pull) – even without USB, because it
+// sits on the 5V net. The ESP32 therefore drives GPIO17 only on an explicit command ('wake') and releases the
+// line again if it does not follow.
 //
-// Hinweis: Die I2C-Register gibt es nur mit einer i2c_*-Firmware auf dem STM32.
-// Mit der Werksfirmware (Exploration Server) findet der Scan nichts unter 0x52.
+// Note: The I2C registers exist only with an i2c_* firmware on the STM32.
+// With the factory firmware (Exploration Server) the scan finds nothing at 0x52.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -35,39 +35,39 @@ static const int PIN_WAKE = 17;
 static const int PIN_INT = 18;
 static const int PIN_UART_TX = 4;
 static const int PIN_UART_RX = 5;
-static const int PIN_MISC_GPIO0 = 6;  // braune Ader -> STM32 PB1 (MISC_GPIO0)
-static const int PIN_MISC_GPIO1 = 7;  // graue Ader  -> STM32 PA4 (MISC_GPIO1)
-static const uint32_t A121_BAUD = 921600;   // Debug-UART des STM32 (printf auf PA9 → GPIO5)
-// Server-UART (LPUART1): Höchstrate des Servers. Am 2026-11-01 über die Bridge ~10 MB ohne einen UART-Fehler;
-// netto ≈ 195 kB/s, bei 921 600 Baud wären es ≈ 90 kB/s.
+static const int PIN_MISC_GPIO0 = 6;  // brown wire -> STM32 PB1 (MISC_GPIO0)
+static const int PIN_MISC_GPIO1 = 7;  // gray wire   -> STM32 PA4 (MISC_GPIO1)
+static const uint32_t A121_BAUD = 921600;   // debug UART of the STM32 (printf on PA9 → GPIO5)
+// Server UART (LPUART1): maximum rate of the server. On 2026-11-01 ~10 MB over the bridge without a UART error;
+// net ≈ 195 kB/s, at 921,600 baud it would be ≈ 90 kB/s.
 static const uint32_t SRV_BAUD = 2000000;
 static const uint8_t A121_ADDR = 0x52;
 
-static const int PIN_SRV_RX = PIN_SDA;  // GPIO15 ← STM32 PB11 (LPUART1_TX), orange Ader
-static const int PIN_SRV_TX = PIN_SCL;  // GPIO16 → STM32 PB10 (LPUART1_RX), grüne Ader
+static const int PIN_SRV_RX = PIN_SDA;  // GPIO15 ← STM32 PB11 (LPUART1_TX), orange wire
+static const int PIN_SRV_TX = PIN_SCL;  // GPIO16 → STM32 PB10 (LPUART1_RX), green wire
 static HardwareSerial &SrvUart = Serial2;
 
-// Stand der Firmware für '@HELLO' (App/PC erkennen damit Protokoll und Fähigkeiten, docs/ANDROID_APP.md).
-// proto 1: @IQ3 mit Frame-Zähler + Sensor-tick, @RAW, @RECONNECT, @DOPPLER mit Frame-Zähler + tick.
-// Mit dem Schalter A121_DSP_REACQ (V6, Umgebung esp32s3-n16r8-reacq) hängt die Kennung "-reacq" an, damit Aufnahmen
-// mit und ohne Wiederfinden in @HELLO unterscheidbar sind. Ohne Schalter bleibt die Kennung unverändert.
+// Firmware version for '@HELLO' (app/PC use it to recognize protocol and capabilities, docs/ANDROID_APP.md).
+// proto 1: @IQ3 with frame counter + sensor tick, @RAW, @RECONNECT, @DOPPLER with frame counter + tick.
+// With the compile switch A121_DSP_REACQ (V6, environment esp32s3-n16r8-reacq) the identifier gets the suffix "-reacq", so that
+// recordings with and without reacquisition can be told apart in @HELLO. Without the switch the identifier stays unchanged.
 #ifdef A121_DSP_REACQ
 #define FW_VERSION_SUFFIX "-reacq"
 #else
 #define FW_VERSION_SUFFIX ""
 #endif
-static const char *FW_VERSION = "2026-11-02-vital1" FW_VERSION_SUFFIX;  // DSP-Stand Audit V0–V5 (vorher 2026-11-01-app1 = Basislinie)
+static const char *FW_VERSION = "2026-11-02-vital1" FW_VERSION_SUFFIX;  // DSP state of audit V0–V5 (previously 2026-11-01-app1 = baseline)
 static const int PROTO_VERSION = 1;
-static String g_serverVersion = "-";  // rss_version der letzten erfolgreichen Server-Verbindung
+static String g_serverVersion = "-";  // rss_version of the last successful server connection
 
-static int rgbPin = 48;  // DevKitC-1 v1.0: 48, v1.1: 38 — mit "led <pin>" umstellbar
+static int rgbPin = 48;  // DevKitC-1 v1.0: 48, v1.1: 38 — switchable with "led <pin>"
 static bool uartBridge = false;
 static String line;
 
-// Wer nutzt gerade GPIO15/16? Beim Start niemand (beide hochohmig): Schon Wire.begin() erzeugt Pegelwechsel
-// auf SCL, und die landen bei der LPUART1-Server-Firmware auf PB10 (RX). Danach war der Server am 2026-11-01
-// zweimal taub (Neustart des ESP32), bis die RESET-Taste am A121 gedrückt wurde. I2C startet beim ersten
-// I2C-Befehl, die Server-UART beim ersten Server-Befehl.
+// Who is using GPIO15/16 right now? At startup nobody (both high-impedance): Wire.begin() alone produces level changes
+// on SCL, and with the LPUART1 server firmware these arrive on PB10 (RX). After that the server was deaf twice on
+// 2026-11-01 (ESP32 restart) until the RESET button on the A121 was pressed. I2C starts on the first
+// I2C command, the server UART on the first server command.
 enum class Link { NONE, I2C, SRV };
 static Link g_link = Link::NONE;
 
@@ -80,13 +80,13 @@ static a121_sess::SessionConsole g_sess;
 static void led(uint8_t r, uint8_t g, uint8_t b) { neopixelWrite(rgbPin, r, g, b); }
 
 static void startI2c() {
-  Wire.begin(PIN_SDA, PIN_SCL, 400000);  // Pull-ups 4,7 kΩ sitzen auf dem A121-Board (Schaltplan R13/R14)
+  Wire.begin(PIN_SDA, PIN_SCL, 400000);  // 4.7 kΩ pull-ups sit on the A121 board (schematic R13/R14)
   Wire.setTimeOut(20);
 }
 
-// GPIO15/16 an die Server-UART geben. Sicher, egal welche Firmware auf dem STM32 läuft:
-// SDA (= ESP32-RX) wird nicht getrieben, also sieht ein I2C-Slave nie eine START-Bedingung.
-// Serial2 selbst startet g_srv.begin() beim ersten Verbindungsversuch.
+// Hand GPIO15/16 to the server UART. Safe regardless of which firmware runs on the STM32:
+// SDA (= ESP32 RX) is not driven, so an I2C slave never sees a START condition.
+// g_srv.begin() starts Serial2 itself on the first connection attempt.
 static void useSrvLink() {
   if (g_link == Link::SRV) return;
   if (g_link == Link::I2C) Wire.end();
@@ -95,8 +95,8 @@ static void useSrvLink() {
   g_link = Link::SRV;
 }
 
-// Nur auf ausdrücklichen Befehl: Läuft auf dem STM32 der Server, treibt PB11 die SDA-Ader push-pull,
-// und jede I2C-Übertragung des ESP32 würde dagegen arbeiten.
+// Only on explicit command: if the server runs on the STM32, PB11 drives the SDA wire push-pull,
+// and every I2C transfer by the ESP32 would work against it.
 static void useI2cLink() {
   if (g_link == Link::I2C) return;
   if (g_link == Link::SRV) g_srv.release();
@@ -106,7 +106,7 @@ static void useI2cLink() {
 
 static bool requireI2c() {
   if (g_link == Link::I2C) return true;
-  if (g_link == Link::NONE) {  // erster I2C-Befehl nach dem Start
+  if (g_link == Link::NONE) {  // first I2C command after startup
     useI2cLink();
     return true;
   }
@@ -125,7 +125,7 @@ static void cmdInfo() {
                 digitalRead(PIN_WAKE));
 }
 
-// Pegel der Leitungen lesen (funktioniert auch, während die Pins am I2C-Peripheral hängen)
+// Read the line levels (also works while the pins are attached to the I2C peripheral)
 static void cmdBus() {
   Serial.printf("SDA (GPIO%d) = %d, SCL (GPIO%d) = %d, MCU_INT = %d, WAKE_UP = %d, UART-RX (GPIO%d) = %d\n",
                 PIN_SDA, gpio_get_level((gpio_num_t)PIN_SDA), PIN_SCL, gpio_get_level((gpio_num_t)PIN_SCL),
@@ -135,8 +135,8 @@ static void cmdBus() {
   Serial.println("Erwartet mit versorgtem A121: SDA = SCL = 1 (Pull-ups auf dem A121-Board, UART-Ruhepegel ebenfalls 1).");
 }
 
-// Leitung kurz vom Peripheral lösen und mit internem Pull-up/-down lesen:
-// folgt sie beiden → offen; bleibt 0 → aktiv low getrieben; bleibt 1 → extern hochgezogen/getrieben
+// Briefly detach the line from the peripheral and read it with internal pull-up/-down:
+// follows both → open; stays 0 → actively driven low; stays 1 → externally pulled up/driven
 static void probePin(int pin) {
   pinMode(pin, INPUT_PULLUP);
   delay(5);
@@ -152,14 +152,14 @@ static void probePin(int pin) {
 }
 
 static void startDebugUart() {
-  // Nur RX (GPIO5 ← PA9). TX = -1: GPIO4 nicht gegen den CH342 an PA10 treiben.
+  // RX only (GPIO5 ← PA9). TX = -1: do not drive GPIO4 against the CH342 on PA10.
   Serial1.begin(A121_BAUD, SERIAL_8N1, PIN_UART_RX, -1);
   pinMode(PIN_UART_TX, INPUT);
 }
 
 static void cmdProbe() {
   if (g_link == Link::I2C) Wire.end();
-  else if (g_link == Link::SRV) g_srv.release();  // nächster Server-Befehl startet Serial2 neu
+  else if (g_link == Link::SRV) g_srv.release();  // the next server command restarts Serial2
   Serial1.end();
   pinMode(PIN_WAKE, INPUT);
   for (int pin : {PIN_SDA, PIN_SCL, PIN_WAKE, PIN_INT, PIN_UART_TX, PIN_UART_RX}) probePin(pin);
@@ -189,7 +189,7 @@ static void cmdScan() {
   Serial.printf("Scan fertig, %d Gerät(e).\n", found);
 }
 
-// A121-Registerprotokoll: 16-bit-Adresse schreiben, 32-bit-Wert (big endian) lesen
+// A121 register protocol: write 16-bit address, read 32-bit value (big endian)
 static bool readReg(uint16_t reg, uint32_t &val) {
   Wire.beginTransmission(A121_ADDR);
   Wire.write(reg >> 8);
@@ -211,21 +211,21 @@ static bool writeReg(uint16_t reg, uint32_t val) {
   return Wire.endTransmission(true) == 0;
 }
 
-// Register/Kommandos des i2c_distance_detector (Acconeer, wie Waveshare-Demo)
+// Registers/commands of the i2c_distance_detector (Acconeer, like the Waveshare demo)
 static const uint16_t REG_DETECTOR_STATUS = 0x0003, REG_DISTANCE_RESULT = 0x0010, REG_PEAK0_DISTANCE = 0x0011,
                       REG_PEAK0_STRENGTH = 0x001B, REG_START = 0x0040, REG_END = 0x0041, REG_MAX_STEP_LENGTH = 0x0042,
                       REG_CLOSE_RANGE_LEAKAGE = 0x0043, REG_SIGNAL_QUALITY = 0x0044, REG_MAX_PROFILE = 0x0045,
                       REG_THRESHOLD_METHOD = 0x0046, REG_PEAK_SORTING = 0x0047, REG_FIXED_STRENGTH_THRESH = 0x004C,
                       REG_COMMAND = 0x0100;
 static const uint32_t CMD_APPLY_CONFIG_AND_CALIBRATE = 1, CMD_MEASURE_DISTANCE = 2, CMD_RESET_MODULE = 1381192737UL;
-static const uint32_t ST_BUSY = 1UL << 31, ST_ERRORS = 0x13FF0000UL;  // Fehlerbits 16–25 und 28
+static const uint32_t ST_BUSY = 1UL << 31, ST_ERRORS = 0x13FF0000UL;  // error bits 16–25 and 28
 
-// wartet über MCU_INT (LOW = beschäftigt, HIGH = fertig) + Statusregister; liefert 0xFFFFFFFF bei Timeout/I2C-Fehler
+// waits via MCU_INT (LOW = busy, HIGH = done) + status register; returns 0xFFFFFFFF on timeout/I2C error
 static uint32_t waitNotBusy(uint32_t ms) {
   uint32_t t0 = millis(), u0 = micros(), st = 0;
-  // Kurz warten, bis der STM32 das Kommando übernimmt und MCU_INT auf LOW zieht (max. 3 ms)
+  // Wait briefly until the STM32 accepts the command and pulls MCU_INT LOW (max. 3 ms)
   while (digitalRead(PIN_INT) == 1 && (uint32_t)(micros() - u0) < 3000) delayMicroseconds(50);
-  // Warten, bis MCU_INT wieder HIGH wird
+  // Wait until MCU_INT goes HIGH again
   while (digitalRead(PIN_INT) == 0) {
     if (millis() - t0 >= ms) return 0xFFFFFFFF;
     delayMicroseconds(200);
@@ -238,7 +238,7 @@ static uint32_t waitNotBusy(uint32_t ms) {
   return 0xFFFFFFFF;
 }
 
-// WAKE_UP nur lesen (CH342 treibt die Leitung), dann auf MCU_INT = bereit warten
+// Only read WAKE_UP (CH342 drives the line), then wait for MCU_INT = ready
 static bool a121Ready(uint32_t ms) {
   if (digitalRead(PIN_WAKE) == 0)
     Serial.println("WAKE_UP ist LOW (vom CH342/DTR0 gehalten?) – A121 schläft; A121 stromlos machen und neu einschalten");
@@ -256,7 +256,7 @@ static void cmdCfg(uint32_t startMm, uint32_t endMm) {
                 (st == 0xFFFFFFFF) ? " (Timeout)" : (st & ST_ERRORS) ? " (FEHLERBIT gesetzt)" : " (ok)");
 }
 
-// Flexible Zoom-/Such-Konfiguration mit wählbarem Profil, Schrittweite und Schwelle
+// Flexible zoom/search configuration with selectable profile, step length and threshold
 static bool applyZoomConfig(uint32_t startMm, uint32_t endMm, uint32_t maxProf, uint32_t stepLen, int32_t threshDbX1000) {
   if (!a121Ready(1000)) { Serial.println("MCU_INT nicht bereit"); return false; }
   uint32_t tReset = millis();
@@ -281,7 +281,7 @@ static bool applyZoomConfig(uint32_t startMm, uint32_t endMm, uint32_t maxProf, 
   return ok && (st != 0xFFFFFFFF) && !(st & ST_ERRORS);
 }
 
-// Optimale Brust-/Vitalkonfiguration (inkl. Modul-Reset, Profile 1, Step 1 = 2,5 mm, Leakage-Cancel aus, Fixed Strength -25 dB, Closest)
+// Optimal chest/vital configuration (incl. module reset, profile 1, step 1 = 2.5 mm, leakage cancel off, fixed strength -25 dB, closest)
 static void cmdVitalCfg(uint32_t startMm, uint32_t endMm) {
   uint32_t t0 = millis();
   bool ok = applyZoomConfig(startMm, endMm, 1, 1, -25000);
@@ -289,12 +289,12 @@ static void cmdVitalCfg(uint32_t startMm, uint32_t endMm) {
                 (unsigned long)startMm, (unsigned long)endMm, ok ? "ok" : "FEHLER", (unsigned long)(millis() - t0));
 }
 
-// Automatischer mobiler Modus: WIDE_SEARCH (150-2500 mm) -> TARGET_LOCK -> VITAL_ZOOM (±135 mm um Ziel) mit Auto-Rezoom
+// Automatic mobile mode: WIDE_SEARCH (150-2500 mm) -> TARGET_LOCK -> VITAL_ZOOM (±135 mm around target) with auto-rezoom
 static void cmdAuto(uint32_t durSec) {
   enum AutoState { ST_SEARCH = 0, ST_LOCK = 1, ST_ZOOM = 2 };
   AutoState state = ST_SEARCH;
   uint32_t curStart = 150, curEnd = 2500, curProf = 2, curStep = 4;
-  led(0, 0, 35);  // Blau = Weitbereichs-Suche
+  led(0, 0, 35);  // Blue = wide-range search
   if (!applyZoomConfig(curStart, curEnd, curProf, curStep, -22000)) return;
 
   float trackD = 0.0f;
@@ -342,10 +342,10 @@ static void cmdAuto(uint32_t durSec) {
     }
     Serial.println();
 
-    // Zielauswahl für Zustandsautomat
+    // Target selection for the state machine
     int chosenIdx = -1;
     if (state == ST_SEARCH) {
-      // Nächstes starkes Ziel (mind. -18 dB und innerhalb von 10 dB zum stärksten Echo)
+      // Next strong target (at least -18 dB and within 10 dB of the strongest echo)
       for (int i = 0; i < num && i < 10; i++) {
         if (sArr[i] >= -18000 && sArr[i] >= maxS - 10000) {
           chosenIdx = i;
@@ -358,7 +358,7 @@ static void cmdAuto(uint32_t durSec) {
         lockCount = 1;
         missCount = 0;
         state = ST_LOCK;
-        led(35, 20, 0);  // Gelb = Ziel erfasst, prüfe Stabilität
+        led(35, 20, 0);  // Yellow = target acquired, checking stability
       }
     } else if (state == ST_LOCK) {
       float bestCost = 1e9f;
@@ -394,7 +394,7 @@ static void cmdAuto(uint32_t durSec) {
               state = ST_ZOOM;
               edgeCount = 0;
               missCount = 0;
-              led(0, 40, 15);  // Türkis/Grün = Vital-Zoom aktiv
+              led(0, 40, 15);  // Teal/green = vital zoom active
             }
           }
         }
@@ -419,7 +419,7 @@ static void cmdAuto(uint32_t durSec) {
           }
         }
       }
-      // Falls das Ziel im Zoom-Fenster schneller gerutscht ist, nächstes starkes Ziel im Fenster nehmen
+      // If the target moved faster within the zoom window, take the next strong target in the window
       if (chosenIdx < 0) {
         for (int i = 0; i < num && i < 10; i++) {
           if (sArr[i] >= -16000) { chosenIdx = i; break; }
@@ -446,7 +446,7 @@ static void cmdAuto(uint32_t durSec) {
       } else {
         missCount++;
         if (missCount >= 35) {
-          // Ziel hat das Zoom-Fenster verlassen -> zurück in Weitbereichs-Suche
+          // Target left the zoom window -> back to wide-range search
           curStart = 150; curEnd = 2500; curProf = 2; curStep = 4;
           applyZoomConfig(curStart, curEnd, curProf, curStep, -22000);
           state = ST_SEARCH;
@@ -510,10 +510,10 @@ static void cmdVer() {
 }
 
 // ============================================================================
-// Voller A121 Exploration-Server & On-Device Sparse-IQ DSP Modus (LPUART1 über SDA/SCL-Adern)
+// Full A121 Exploration Server & on-device sparse IQ DSP mode (LPUART1 over SDA/SCL wires)
 // ============================================================================
 
-// rss_version aus der get_system_info-Antwort merken (für '@HELLO')
+// Remember rss_version from the get_system_info reply (for '@HELLO')
 static void rememberServerVersion(const String &sysInfo) {
   int i = sysInfo.indexOf("\"rss_version\":\"");
   if (i < 0) return;
@@ -529,7 +529,7 @@ static bool ensureServerConnected() {
     rememberServerVersion(sysInfo);
     return true;
   }
-  // Kein I2C-Gegentest: Läuft doch der Server, würde der ESP32 gegen PB11 auf der SDA-Ader treiben.
+  // No I2C counter-test: if the server is running after all, the ESP32 would drive against PB11 on the SDA wire.
   Serial.println("FEHLER: Keine Antwort vom Exploration Server auf GPIO15/16 (nach Break-Reset, 115200 Baud).");
   Serial.println("        Server taub (Break wirkt nicht)? RESET-Taste am A121 drücken und erneut versuchen.");
   Serial.println("        Läuft auf dem STM32 noch eine i2c_*-Firmware? Dann 'link i2c' und 'scan'.");
@@ -550,7 +550,7 @@ static void cmdSrvInfo() {
 static void cmdStmReset() {
   useSrvLink();
   Serial.println("Sende 15-ms UART-Break auf GPIO16 (-> PB10) und verbinde neu...");
-  String sysInfo;  // connectAndNegotiateBaud() schickt den Break selbst
+  String sysInfo;  // connectAndNegotiateBaud() sends the break itself
   if (g_srv.connectAndNegotiateBaud(SRV_BAUD, &sysInfo)) {
     rememberServerVersion(sysInfo);
     Serial.printf("Server antwortet @ %lu Baud: %s\n", (unsigned long)g_srv.currentBaud(), sysInfo.c_str());
@@ -559,10 +559,10 @@ static void cmdStmReset() {
   }
 }
 
-// Maschinenlesbare Kennung für App und PC-Skripte. Verbindet nicht mit dem Server (das würde ihn per Break neu starten);
-// 'server' ist der Stand der letzten Verbindung, '-' vor der ersten.
+// Machine-readable identifier for app and PC scripts. Does not connect to the server (that would restart it via break);
+// 'server' is the state of the last connection, '-' before the first.
 static void cmdHello() {
-  // MAC in derselben Schreibweise wie die USB-Seriennummer (EC:DA:...), damit App/PC das Gerät zuordnen können
+  // MAC in the same notation as the USB serial number (EC:DA:...), so app/PC can match the device
   const uint64_t mac = ESP.getEfuseMac();
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", (unsigned)(mac & 0xFF), (unsigned)((mac >> 8) & 0xFF),
@@ -574,8 +574,8 @@ static void cmdHello() {
                 (unsigned long)millis(), a121_srv::iq3PresetTag());
 }
 
-// Eingabe während eines Streams (iq3, doppler): 0x12 (Strg+R) startet den Server absichtlich per Break neu, damit sich
-// das Neuverbinden prüfen lässt; jedes andere Zeichen beendet den Stream (wie bisher).
+// Input during a stream (iq3, doppler): 0x12 (Ctrl+R) deliberately restarts the server via break, so that
+// reconnecting can be tested; any other character ends the stream (as before).
 enum class StreamInput { NONE, STOP, TEST_SERVER_RESET };
 
 static StreamInput pollStreamInput() {
@@ -588,8 +588,8 @@ static StreamInput pollStreamInput() {
   return stop ? StreamInput::STOP : reset ? StreamInput::TEST_SERVER_RESET : StreamInput::NONE;
 }
 
-// Neuverbinden nach Serververlust (STM32-Neustart durch eine UART-Störung, s. docs/HARDWARE.md): nach so vielen
-// Frame-Timeouts in Folge (je 500 ms) neu verbinden, bei Misserfolg alle kReconnectRetryMs erneut.
+// Reconnecting after server loss (STM32 restart caused by a UART disturbance, see docs/HARDWARE.md): after this many
+// frame timeouts in a row (500 ms each) reconnect, on failure retry every kReconnectRetryMs.
 static const uint32_t kLostAfterTimeouts = 3;
 static const uint32_t kReconnectRetryMs = 2000;
 
@@ -600,7 +600,7 @@ struct ReconnectState {
   bool tried = false;
 };
 
-// Nach einem Frame-Timeout aufrufen. Gibt true zurück, wenn die Session neu läuft.
+// Call after a frame timeout. Returns true if the session is running again.
 static bool handleFrameTimeout(ReconnectState &rs, const a121_srv::SessionSpec &spec, uint32_t tMs) {
   Serial.println("@WARN,frame_timeout");
   if (++rs.consecTimeouts < kLostAfterTimeouts) return false;
@@ -620,20 +620,20 @@ static bool handleFrameTimeout(ReconnectState &rs, const a121_srv::SessionSpec &
   return ok;
 }
 
-// Zeile mit genau einem '\n' ausgeben (wie Serial.printf("...\n"); println hängt "\r\n" an)
+// Print a line with exactly one '\n' (like Serial.printf("...\n"); println appends "\r\n")
 static void printLine(const char *buf, size_t len) {
   Serial.write((const uint8_t *)buf, len);
   Serial.write('\n');
 }
 
-// Reports auf Kern 0 (V2.1, B12): Der Frame-Takt (Kern 1) nimmt alle kReportEvery Frames einen Schnappschuss und gibt
-// ihn an dspTask; der Report rechnet daraus, während weiter Frames ankommen (bis kSnapMaxLag Frames, s. ReportSnapshot).
-// Höchstens ein Report ist unterwegs; Rezoom, Neu-Kalibrierung und Neuverbinden warten auf ihn (waitDsp).
+// Reports on core 0 (V2.1, B12): the frame clock (core 1) takes a snapshot every kReportEvery frames and hands
+// it to dspTask; the report computes from it while frames keep arriving (up to kSnapMaxLag frames, see ReportSnapshot).
+// At most one report is in flight; rezoom, recalibration and reconnecting wait for it (waitDsp).
 struct DspResult {
   a121_dsp::VitalReport rep;
   bool ok;
 };
-static const uint32_t kReportEvery = 60;  // 1 Report/s bei 60 Hz, gezählt in Frames
+static const uint32_t kReportEvery = 60;  // 1 report/s at 60 Hz, counted in frames
 static QueueHandle_t g_snapQ = nullptr, g_resQ = nullptr;
 
 static void dspTask(void *) {
@@ -654,11 +654,11 @@ static bool startDspTask() {
   return xTaskCreatePinnedToCore(dspTask, "dsp", 10240, nullptr, 1, nullptr, 0) == pdPASS;
 }
 
-// 3-Subsweep Sparse-IQ Session (Sub 0 Loopback + Sub 1 2.5-mm Vital-Zoom + Sub 2 Raum-Scan)
-// mit vollständiger On-Device C++ DSP-Pipeline im ESP32-S3 (PSRAM) und Auto-Rezoom.
-// raw = true: zusätzlich je Frame '@RAW,frame,tick,n,<Base64>' mit den unveränderten Punkten vom Server
-// (n komplexe int16-Paare real, imag, Little Endian; Reihenfolge Loopback, kZoomPoints Zoom-Punkte (24, mit
-// A121_ZOOM_POINTS=48 auch 48), 80 Raum-Punkte).
+// 3-subsweep sparse IQ session (sub 0 loopback + sub 1 2.5 mm vital zoom + sub 2 room scan)
+// with a complete on-device C++ DSP pipeline in the ESP32-S3 (PSRAM) and auto-rezoom.
+// raw = true: additionally per frame '@RAW,frame,tick,n,<Base64>' with the unchanged points from the server
+// (n complex int16 pairs real, imag, little endian; order loopback, kZoomPoints zoom points (24, with
+// A121_ZOOM_POINTS=48 also 48), 80 room points).
 static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   if (!ensureServerConnected()) return;
 
@@ -693,8 +693,8 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   a121_srv::FrameMeta meta = {};
   uint32_t tStart = millis();
   uint32_t lastFrameUs = micros();
-  // Raumprofil alle 12 Frames (5 Hz bei 60 Hz), gezählt in Frames statt ESP32-Zeit: Nach jeder Rechenpause kommen die
-  // Frames gebündelt, ein Zeittakt würde dann Profile überspringen.
+  // Room profile every 12 frames (5 Hz at 60 Hz), counted in frames instead of ESP32 time: after every compute pause the
+  // frames arrive bundled, a time-based clock would then skip profiles.
   static const uint32_t kRoomProfEvery = 12;
   static char roomLine[a121_dsp::kRoomLineMax];
   static char repLine[a121_dsp::kReportLineMax];
@@ -702,7 +702,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   static char rawB64[((a121_dsp::kTotal3SubPts * sizeof(a121_dsp::Complex16) + 2) / 3) * 4 + 1];
   uint32_t nFrames = 0;
   ReconnectState rs;
-  // Neu-Kalibrierung (V1.5): höchstens alle 10 s, falls der Sensor das Flag nach dem Neuaufsetzen weiter meldet
+  // Recalibration (V1.5): at most every 10 s, in case the sensor keeps reporting the flag after the restart
   static const uint32_t kRecalMinMs = 10000;
   uint32_t lastRecalMs = 0;
   bool recalDone = false;
@@ -710,9 +710,9 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   static DspResult res;
   bool dspBusy = false;
 
-  // Ergebnis ausgeben: @DSP (Zusatzwerte; @VITAL behält sein Format), @ROOM (auch ohne gültigen Puls), @VITAL; Formate
-  // im DSP-Header. War pushFrame zu weit (Fenster teils überschrieben), gilt der Report nicht (wie die Nachrechnung).
-  // mayRezoom = false vor einem Neubeginn, der ohnehin folgt.
+  // Output the result: @DSP (extra values; @VITAL keeps its format), @ROOM (also without a valid pulse), @VITAL; formats
+  // in the DSP header. If pushFrame was too far ahead (window partly overwritten), the report does not count (like the replay).
+  // mayRezoom = false before a restart that follows anyway.
   auto handleResult = [&](bool mayRezoom) {
     dspBusy = false;
     bool vitalOk = res.ok;
@@ -721,15 +721,15 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       vitalOk = res.rep.valid = false;
     }
     a121_dsp::VitalReport &rep = res.rep;
-    const uint32_t tRep = millis() - tStart;  // eine Zeit für alle Zeilen des Reports (Zuordnung in der Auswertung)
+    const uint32_t tRep = millis() - tStart;  // one time for all lines of the report (for matching in the evaluation)
     printLine(repLine, a121_dsp::formatDspLine(repLine, sizeof(repLine), tRep, vitalOk, rep, rep.compute_us));
     a121_dsp::formatRoomLine(roomLine, sizeof(roomLine), tRep, meta.tick, rep);
     Serial.println(roomLine);
     if (vitalOk) printLine(repLine, a121_dsp::formatVitalLine(repLine, sizeof(repLine), tRep, rep));
     printLine(repLine, a121_dsp::formatStateLine(repLine, sizeof(repLine), tRep, rep));  // V3.5
-    g_dsp.setBreathGate(a121_dsp::breathGateOpen(rep.state));  // @BREATH ab dem nächsten Frame nur mit Person (V3.4)
+    g_dsp.setBreathGate(a121_dsp::breathGateOpen(rep.state));  // @BREATH from the next frame on only with a person (V3.4)
 
-    // Rezoom auch vor dem ersten Puls-Report (Ziel suchen), s. extractRoomTargets()
+    // Rezoom also before the first pulse report (look for a target), see extractRoomTargets()
     if (mayRezoom && rep.needs_rezoom && rep.recommended_zoom_start_pt != zoomStartPt) {
       zoomStartPt = rep.recommended_zoom_start_pt;
       g_srv.stopStreaming();
@@ -740,7 +740,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       }
     }
   };
-  // Vor jedem Neubeginn der Historie (und am Ende): laufenden Report abwarten und ausgeben.
+  // Before every restart of the history (and at the end): wait for the running report and output it.
   auto waitDsp = [&]() {
     if (dspBusy && xQueueReceive(g_resQ, &res, portMAX_DELAY) == pdTRUE) handleResult(false);
   };
@@ -757,17 +757,17 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     }
 
     if (!g_srv.readStreamFrame(pts, a121_dsp::kTotal3SubPts, meta, 500)) {
-      waitDsp();  // vor @RECONNECT, damit die Nachrechnung den Report noch vor dem Neubeginn rechnet
+      waitDsp();  // before @RECONNECT, so that the replay computes the report before the restart
       if (handleFrameTimeout(rs, spec, millis() - tStart)) {
-        g_dsp.setZoomStartPoint(zoomStartPt);  // Lücke im Signal: Verlauf neu beginnen (wie beim Rezoom)
+        g_dsp.setZoomStartPoint(zoomStartPt);  // gap in the signal: restart the history (as with rezoom)
         lastFrameUs = micros();
       }
       continue;
     }
     rs.consecTimeouts = 0;
 
-    // calibration_needed (Hersteller: Temperatur ±15 °C seit der letzten Kalibrierung): Session mit demselben
-    // Zoom-Fenster neu aufsetzen (setup kalibriert den Sensor), Historie neu wie beim Rezoom (V1.5, B15)
+    // calibration_needed (vendor: temperature ±15 °C since the last calibration): restart the session with the same
+    // zoom window (setup calibrates the sensor), history restarts as with rezoom (V1.5, B15)
     if (meta.calibration_needed && (!recalDone || (millis() - lastRecalMs) >= kRecalMinMs)) {
       recalDone = true;
       lastRecalMs = millis();
@@ -780,7 +780,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
         Serial.printf("@RECAL,%lu\n", (unsigned long)(millis() - tStart));
       }
       lastFrameUs = micros();
-      continue;  // der markierte Frame gehört noch zur alten Kalibrierung
+      continue;  // the flagged frame still belongs to the old calibration
     }
 
     uint32_t nowUs = micros();
@@ -788,7 +788,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     lastFrameUs = nowUs;
 
     uint16_t nPts = meta.payload_bytes / sizeof(a121_dsp::Complex16);
-    if (nPts > a121_dsp::kTotal3SubPts) nPts = a121_dsp::kTotal3SubPts;  // readStreamFrame liest höchstens so viele
+    if (nPts > a121_dsp::kTotal3SubPts) nPts = a121_dsp::kTotal3SubPts;  // readStreamFrame reads at most this many
     float dispUm = 0.0f;
     a121_dsp::FrameFlags ff;
     ff.tick = meta.tick;
@@ -802,7 +802,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
     const float zAmp  = sqrtf((float)pts[b0].real * pts[b0].real + (float)pts[b0].imag * pts[b0].imag);
     const uint32_t frameNo = nFrames++;
 
-    // @IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated,frame,tick,delayed (frame/tick seit proto 1, delayed seit V1.5)
+    // @IQ3,t_ms,temp,lb_amp,disp_um,zoom_amp,saturated,frame,tick,delayed (frame/tick since proto 1, delayed since V1.5)
     Serial.printf("@IQ3,%lu,%d,%.1f,%.2f,%.1f,%u,%lu,%lu,%u\n",
                   (unsigned long)(millis() - tStart),
                   (int)meta.temperature_c,
@@ -823,7 +823,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       Serial.print('\n');
     }
 
-    // V3.4: je erkanntem Atemzug @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (direkt nach @IQ3/@RAW des Frames)
+    // V3.4: per detected breath @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (directly after @IQ3/@RAW of the frame)
     a121_dsp::BreathEvent breath;
     if (g_dsp.takeBreathEvent(breath))
       printLine(breathLine, a121_dsp::formatBreathLine(breathLine, sizeof(breathLine), millis() - tStart, meta.tick, breath));
@@ -833,7 +833,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
       Serial.println(roomLine);
     }
 
-    // Schnappschuss im Frame-Takt (Frames seit dem letzten Neubeginn); läuft noch einer, fällt dieser Report aus
+    // Snapshot on the frame clock (frames since the last restart); if one is still running, this report is dropped
     if (g_dsp.frameCount() % kReportEvery == 0) {
       if (dspBusy) {
         Serial.println("@WARN,dsp_busy");
@@ -851,7 +851,7 @@ static void cmdIq3(uint32_t durationSec, int32_t startMm, bool raw) {
   Serial.println("@END");
 }
 
-// Continuous Sweep Mode (CSM) + Double-Buffering Mikro-Doppler-Modus (64 Sweeps/Frame @ bis zu 2000 Hz)
+// Continuous sweep mode (CSM) + double buffering micro-Doppler mode (64 sweeps/frame @ up to 2000 Hz)
 static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) {
   if (!ensureServerConnected()) return;
 
@@ -889,7 +889,7 @@ static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) 
     }
     rs.consecTimeouts = 0;
 
-    // Kohärente Mittelung über die 4 Nachbar-Bins pro Sweep & Differenzphasen-Geschwindigkeit
+    // Coherent averaging over the 4 neighboring bins per sweep & differential-phase velocity
     float meanI = 0.0f, meanQ = 0.0f;
     float velSumSq = 0.0f;
     float prevI = 0.0f, prevQ = 0.0f;
@@ -914,7 +914,7 @@ static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) 
     }
     float rmsVelMmS = sqrtf(velSumSq / (float)(kSweeps - 1U));
     float amp = sqrtf(meanI * meanI + meanQ * meanQ) / (float)(kSweeps * kPtsPerSweep);
-    // @DOPPLER,t_ms,v_rms_mm_s,amp,temp,frame,tick (frame/tick seit proto 1)
+    // @DOPPLER,t_ms,v_rms_mm_s,amp,temp,frame,tick (frame/tick since proto 1)
     Serial.printf("@DOPPLER,%lu,%.2f,%.1f,%d,%lu,%lu\n",
                   (unsigned long)(millis() - tStart), rmsVelMmS, amp, (int)meta.temperature_c,
                   (unsigned long)nFrames++, (unsigned long)meta.tick);
@@ -924,7 +924,7 @@ static void cmdDoppler(uint32_t durationSec, int32_t distMm, float sweepRateHz) 
   Serial.println("@END");
 }
 
-// Transparente High-Speed Bridge USB-CDC <-> Server-UART (inkl. automatischer Baudraten-Umschaltung)
+// Transparent high-speed bridge USB-CDC <-> server UART (incl. automatic baud rate switching)
 static void cmdBridge() {
   Serial.println("Starte transparente High-Speed Exploration-Server Bridge (USB <-> GPIO15/GPIO16).");
   Serial.println("Host-Skripte (z.B. a121_ultimate_vital.py) können diesen Port direkt nutzen.");
@@ -936,11 +936,11 @@ static void cmdBridge() {
   uint8_t rxBuf[1024];
   uint8_t txBuf[512];
 
-  // Statistik für '+++EXIT': findet Datenverluste (UART-FIFO/Puffer voll, Bitfehler, USB-Schreibfehler).
+  // Statistics for '+++EXIT': finds data loss (UART FIFO/buffer full, bit errors, USB write errors).
   static volatile uint32_t errOvf, errBufFull, errFrame, errParity, errBreak;
   errOvf = errBufFull = errFrame = errParity = errBreak = 0;
   uint32_t bytesToHost = 0, bytesToSrv = 0, usbShort = 0, maxAvail = 0;
-  // Nach connectAndNegotiateBaud() registrieren: HardwareSerial::end() löscht den Callback.
+  // Register after connectAndNegotiateBaud(): HardwareSerial::end() clears the callback.
   SrvUart.onReceiveError([](hardwareSerial_error_t e) {
     switch (e) {
       case UART_FIFO_OVF_ERROR: errOvf++; break;
@@ -957,7 +957,7 @@ static void cmdBridge() {
       if (avail > maxAvail) maxAvail = avail;
       if (avail > sizeof(rxBuf)) avail = sizeof(rxBuf);
       size_t n = SrvUart.readBytes(rxBuf, avail);
-      // Rest nach einem unvollständigen USB-Write erneut senden statt verwerfen (bis ~2 s, dann aufgeben).
+      // Resend the remainder after an incomplete USB write instead of discarding it (up to ~2 s, then give up).
       size_t done = 0;
       for (int tries = 0; done < n && tries < 4; tries++) {
         size_t w = Serial.write(rxBuf + done, n - done);
@@ -966,7 +966,7 @@ static void cmdBridge() {
       }
       bytesToHost += done;
     }
-    // Host → Server blockweise weiterreichen; jede abgeschlossene Zeile vorher auf Steuerbefehle prüfen.
+    // Pass host → server on in blocks; check every completed line for control commands first.
     while (Serial.available()) {
       size_t n = Serial.read(txBuf, min((size_t)Serial.available(), sizeof(txBuf)));
       size_t from = 0;
@@ -997,7 +997,7 @@ static void cmdBridge() {
         }
         hostLine = "";
         if (newBaud >= 9600 && newBaud <= 3000000) {
-          // Befehl ganz raus, ACK vom STM32 durchreichen, dann ESP32-UART nachziehen
+          // Send the command out completely, pass on the ACK from the STM32, then follow with the ESP32 UART
           SrvUart.flush();
           uint32_t t0 = millis();
           while ((millis() - t0) < 40) {
@@ -1067,7 +1067,7 @@ static void help() {
       "  uart                  Debug-Logs des STM32 (GPIO5 <- PA9, 921600, nur Empfang) an/aus");
 }
 
-// Befehle, die über I2C mit dem A121 sprechen
+// Commands that talk to the A121 over I2C
 static bool isI2cCommand(const String &cmd) {
   for (const char *p : {"scan", "ver", "r ", "w ", "cfg", "vital", "zoom", "auto", "dist"}) {
     if (cmd == p || cmd.startsWith(p)) return true;
@@ -1142,12 +1142,12 @@ static void handle(String cmd) {
       Serial.printf("WAKE_UP freigegeben, Pegel %d\n", digitalRead(PIN_WAKE));
     } else {
       int want = cmd.endsWith("1") ? HIGH : LOW;
-      pinMode(PIN_WAKE, OUTPUT);  // nach 'probe' ist WAKE_UP Eingang – sonst wirkt digitalWrite nicht
+      pinMode(PIN_WAKE, OUTPUT);  // after 'probe' WAKE_UP is an input – otherwise digitalWrite has no effect
       digitalWrite(PIN_WAKE, want);
       delayMicroseconds(100);
-      int got = digitalRead(PIN_WAKE);  // OUTPUT = Ein-/Ausgang → liest den echten Pegel
+      int got = digitalRead(PIN_WAKE);  // OUTPUT = input/output → reads the real level
       if (got != want) {
-        pinMode(PIN_WAKE, INPUT);  // nicht gegen den CH342 arbeiten
+        pinMode(PIN_WAKE, INPUT);  // do not work against the CH342
         Serial.printf("WAKE_UP folgt nicht (Pegel %d) – extern getrieben (CH342 DTR0?), wieder freigegeben\n", got);
       } else Serial.printf("WAKE_UP = %d (getrieben; 'wake z' gibt frei)\n", got);
     }
@@ -1168,19 +1168,19 @@ static void handle(String cmd) {
 }
 
 void setup() {
-  // Standard sind 256 Bytes, und HWCDC verwirft alles darüber stillschweigend. Ein exptool-setup-Befehl
-  // ist ~460 Bytes lang und kam in der Bridge sonst ohne Zeilenende an (2026-11-01 am Gerät gesehen).
+  // The default is 256 bytes, and HWCDC silently discards everything above that. An exptool setup command
+  // is ~460 bytes long and otherwise arrived in the bridge without a line end (seen on the device 2026-11-01).
   Serial.setRxBufferSize(4096);
-  // Sendeseite ebenso: Standard sind 256 Bytes, und HWCDC verwirft Daten, wenn der PC 100 ms lang nicht abholt.
-  // In der Bridge kam das bei Überlast (exptool > 2-Mbaud-Grenze) vor (2026-11-01, usb_short=1).
+  // Same for the send side: the default is 256 bytes, and HWCDC discards data if the PC does not pick up for 100 ms.
+  // In the bridge this happened under overload (exptool > 2-Mbaud limit) (2026-11-01, usb_short=1).
   Serial.setTxBufferSize(16384);
   Serial.setTxTimeoutMs(500);
   Serial.begin(115200);
-  pinMode(PIN_WAKE, INPUT);  // nie dauerhaft treiben: auf dem Board treibt der CH342 (DTR0) WAKE_UP
+  pinMode(PIN_WAKE, INPUT);  // never drive permanently: on the board the CH342 (DTR0) drives WAKE_UP
   pinMode(PIN_INT, INPUT_PULLDOWN);
-  // GPIO15/16 bleiben hochohmig (Link 'frei'), s. g_link.
-  // GPIO4 nie treiben: Ruhepegel 3,3 V würde einen unversorgten A121 über RXD speisen, und der CH342
-  // treibt dieselbe Leitung (PA10) über R9.
+  // GPIO15/16 stay high-impedance (link 'free'), see g_link.
+  // Never drive GPIO4: an idle level of 3.3 V would feed an unpowered A121 via RXD, and the CH342
+  // drives the same line (PA10) via R9.
   pinMode(PIN_UART_TX, INPUT);
   led(0, 20, 0);
   uint32_t t0 = millis();
@@ -1200,7 +1200,7 @@ void loop() {
     while (Serial1.available()) Serial.write(Serial1.read());
   }
   static uint32_t tBlink = 0;
-  if (millis() - tBlink > 1000) {  // Lebenszeichen: grün blinkend
+  if (millis() - tBlink > 1000) {  // sign of life: blinking green
     tBlink = millis();
     static bool on = false;
     on = !on;

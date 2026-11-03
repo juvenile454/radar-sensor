@@ -1,5 +1,5 @@
-/* PC-Fassung der DSP-Nachrechnung: dsp_replay <stream.log> [neu.log]  → Bericht auf stdout, Exit 0 = bitgleich.
- * Übersetzen (macht host/a121_esp_ultimate.py --mode replay-cpp):
+/* PC version of the DSP replay: dsp_replay <stream.log> [neu.log]  → report on stdout, exit 0 = bit-identical.
+ * Compile (done by host/a121_esp_ultimate.py --mode replay-cpp):
  *   g++ -O2 -std=c++17 -ffp-contract=off -I host/dsp_replay -I firmware/esp32s3/src host/dsp_replay/dsp_replay_main.cpp
  */
 #include "dsp_replay.h"

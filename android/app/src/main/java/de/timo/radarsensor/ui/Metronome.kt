@@ -15,9 +15,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Metronom-Atmung (V0.2): ein kurzer Ton je Atemzug zum Einatmen, Takt 6 / 10 / 15 / 20 /min. Die Töne liegen ohne
- * Drift auf [MetronomeSchedule]; nach jedem Ton ruft [onTick] mit der Zeit des Tons (elapsedRealtimeNanos) — der
- * Controller schreibt daraus den Marker „ein". Die Ausgabelatenz des Tons ist ein fester Versatz, die Rate stimmt.
+ * Metronome breathing (V0.2): a short tone per breath for inhaling, tempo 6 / 10 / 15 / 20 /min. The tones lie without
+ * drift on [MetronomeSchedule]; after each tone it calls [onTick] with the time of the tone (elapsedRealtimeNanos) — the
+ * controller writes the marker "ein" from it. The output latency of the tone is a fixed offset, the rate is correct.
  */
 class Metronome(
     private val scope: CoroutineScope,
@@ -34,7 +34,7 @@ class Metronome(
         _rate.value = ratePerMin
         job =
             scope.launch {
-                // ToneGenerator gehört dem Lauf (runMetronome gibt ihn im finally frei), stop() bricht nur ab
+                // The ToneGenerator belongs to the run (runMetronome releases it in finally), stop() only cancels
                 runMetronome(sched, SystemClock::elapsedRealtimeNanos, { delay(it) }, { ToneBeeper() }, onTick)
             }
     }

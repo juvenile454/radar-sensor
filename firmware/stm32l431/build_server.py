@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Baut den Acconeer Exploration Server für das Waveshare-A121-Board aus dem offiziellen XM125-SDK.
+"""Builds the Acconeer Exploration Server for the Waveshare A121 board from the official XM125 SDK.
 
-Varianten:
-  original  SDK unverändert (Server auf USART2 = CH342 Kanal A / USB). Prüft Toolchain und Build-Umgebung;
-            das Ergebnis wird mit dem vorgebauten Image aus dem SDK verglichen.
-  lpuart1   Server auf LPUART1 über die SDA/SCL-Adern (PB11 TX -> ESP32 GPIO15, PB10 RX <- GPIO16).
+Variants:
+  original  SDK unchanged (server on USART2 = CH342 channel A / USB). Checks toolchain and build environment;
+            the result is compared with the prebuilt image from the SDK.
+  lpuart1   Server on LPUART1 over the SDA/SCL wires (PB11 TX -> ESP32 GPIO15, PB10 RX <- GPIO16).
 
-Ablauf: SDK nach firmware/stm32l431/build/<variante>/ kopieren (gitignored), bei lpuart1 die wenigen Stellen
-ändern (jede mit exakter Prüfung des Originaltexts) und src/xm125_lpuart1_link.c dazulegen, dann `make`.
-Ins Repo kommen nur dieses Skript und unsere eigene C-Datei, keine SDK-Dateien (AGENTS.md).
+Procedure: copy the SDK to firmware/stm32l431/build/<variant>/ (gitignored), for lpuart1 change the few places
+(each with an exact check of the original text) and add src/xm125_lpuart1_link.c, then `make`.
+Only this script and our own C file go into the repo, no SDK files (AGENTS.md).
 
-Voraussetzungen (Versionen laut doc/XM125 Software User Guide des SDK):
+Prerequisites (versions per doc/XM125 Software User Guide of the SDK):
   vendor/acconeer_sdk/a121-v1.13.0/xm125              Acconeer XM125 SDK a121-v1.13.0
-  vendor/stm32cube/STM32Cube_FW_L4_V1.18.1/Drivers     HAL/CMSIS aus STM32CubeL4 v1.18.1
+  vendor/stm32cube/STM32Cube_FW_L4_V1.18.1/Drivers     HAL/CMSIS from STM32CubeL4 v1.18.1
   ~/.local/opt/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi   Arm GNU Toolchain 13.3.Rel1
 """
 
@@ -35,7 +35,7 @@ GCC_BIN = pathlib.Path.home() / ".local" / "opt" / "arm-gnu-toolchain-13.3.rel1-
 DATA_DIR = pathlib.Path("~/Data/radar-sensor").expanduser()
 TARGET = "out/acc_exploration_server_a121.elf"
 
-# (Datei relativ zum SDK, Originaltext, Ersatz). Jeder Originaltext muss genau einmal vorkommen.
+# (file relative to the SDK, original text, replacement). Each original text must occur exactly once.
 LPUART1_EDITS: list[tuple[str, str, str]] = [
     (
         "Inc/main.h",
@@ -67,16 +67,16 @@ LPUART1_EDITS: list[tuple[str, str, str]] = [
         "void xm125_sdk_HAL_UART_MspDeInit(UART_HandleTypeDef* huart)\n",
     ),
     (
-        # Beim Start wartet der Server, bis ein Break des Hosts vorbei ist – jetzt auf PB10 statt PA3.
+        # At startup the server waits until a break from the host is over – now on PB10 instead of PA3.
         "Src/applications/acc_exploration_server_stm32.c",
         "HAL_GPIO_ReadPin(UART_RX_GPIO_Port, UART_RX_Pin)",
         "HAL_GPIO_ReadPin(SERVER_UART_RX_GPIO_Port, SERVER_UART_RX_Pin)",
     ),
     (
-        # Härtung (2026-11-01): Im DMA-Modus bricht die ST-HAL bei JEDEM UART-Fehler (Noise, Overrun, Parity,
-        # Framing) den Empfang ab und schaltet die Fehler-Interrupts ab. Das SDK startet nur bei einem Framing-
-        # Error (Break) neu, nach jedem anderen Fehler bleibt der Server taub, bis RESET gedrückt wird.
-        # Deshalb Neustart bei jedem Fehler. Ein Break wirkt weiter wie vorher.
+        # Hardening (2026-11-01): In DMA mode the ST HAL aborts reception on EVERY UART error (noise, overrun, parity,
+        # framing) and switches off the error interrupts. The SDK only restarts on a framing
+        # error (break); after any other error the server stays deaf until RESET is pressed.
+        # Hence restart on every error. A break still acts as before.
         "Src/applications/acc_exploration_server_stm32.c",
         "\t\t/* Check framing error bit to detect break condition */\n"
         "\t\tif ((huart->ErrorCode & HAL_UART_ERROR_FE) == HAL_UART_ERROR_FE)\n",
@@ -135,7 +135,7 @@ def main() -> int:
     build_sdk = build_root / "xm125"
     if build_root.exists():
         shutil.rmtree(build_root)
-    # out/ (vorgebaute Images) und doc/ nicht mitkopieren: frischer Build, kleiner Ordner
+    # Do not copy out/ (prebuilt images) and doc/: fresh build, smaller folder
     shutil.copytree(SDK_DIR, build_sdk, ignore=shutil.ignore_patterns("out", "doc"))
     print(f"SDK {SDK_VERSION} kopiert nach {build_sdk}")
 

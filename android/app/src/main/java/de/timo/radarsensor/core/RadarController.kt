@@ -53,7 +53,7 @@ sealed interface ConnState {
         val message: String,
     ) : ConnState
 
-    /** Gegenstelle hat ohne Fehler beendet (Ende der Wiedergabe, Bridge beendet) */
+    /** The remote end finished without error (end of replay, bridge terminated) */
     data class Ended(
         val label: String,
     ) : ConnState
@@ -67,15 +67,15 @@ data class LinkStats(
 )
 
 /**
- * Verbindung, Datenfluss und Aufnahme, unabhängig von der Oberfläche (lebt im Prozess; der [RadarService] hält ihn
- * im Vordergrund, solange eine Verbindung oder Aufnahme läuft). Das Lesen läuft immer, auch ohne Aufnahme: Liest
- * niemand, bremst jede Ausgabe des ESP32 seine DSP-Schleife (500 ms TX-Timeout).
+ * Connection, data flow and recording, independent of the UI (lives in the process; the [RadarService] keeps it
+ * in the foreground while a connection or recording is active). Reading always runs, even without a recording: if
+ * nobody reads, every output of the ESP32 slows its DSP loop (500 ms TX timeout).
  */
 object RadarController {
     private const val TAG = "RadarController"
     private const val ACTION_USB_PERMISSION = "de.timo.radarsensor.USB_PERMISSION"
 
-    /** Befehle, die einen Stream starten (siehe Hilfe der Firmware). */
+    /** Commands that start a stream (see the firmware help). */
     private val STREAM_CMD = Regex("""^\s*(iq3|doppler|sess\s+run)\b""")
 
     val store = LiveStore()
@@ -96,7 +96,7 @@ object RadarController {
 
     @Volatile private var recorder: Recorder? = null
 
-    /** Nach Abziehen und Einstecken automatisch wieder per USB verbinden (bis der Nutzer selbst trennt). */
+    /** Reconnect over USB automatically after unplugging and replugging (until the user disconnects). */
     @Volatile var autoUsb = false
         private set
 
@@ -106,8 +106,8 @@ object RadarController {
     private var lastLabel: String? = null
 
     /**
-     * Zuletzt gestarteter Stream (iq3/doppler/sess run), solange er nicht beendet wurde. Der ESP32 hängt am Handy-Strom:
-     * Abziehen startet ihn neu, der Stream ist danach weg. Beim Neuverbinden derselben Quelle wird er wieder gestartet.
+     * Most recently started stream (iq3/doppler/sess run) as long as it has not ended. The ESP32 runs on phone power:
+     * unplugging restarts it, and the stream is gone afterwards. When the same source reconnects, it is started again.
      */
     @Volatile private var activeStream: String? = null
 
@@ -126,12 +126,12 @@ object RadarController {
         scope.launch { rateLoop() }
     }
 
-    // ---------------------------------------------------------------- Verbindung
+    // ---------------------------------------------------------------- Connection
 
     fun connect(t: Transport) {
         if (t.kind != "usb") autoUsb = false
         disconnectInternal(userInitiated = false)
-        // andere Quelle: Anzeige und Zähler leeren; dieselbe Quelle (USB neu eingesteckt): Zähler über die Sitzung behalten
+        // different source: clear display and counters; same source (USB replugged): keep counters across the session
         val sameSource = t.label == lastLabel
         if (!sameSource) {
             store.clear()
@@ -140,8 +140,8 @@ object RadarController {
         lastLabel = t.label
         _state.value = ConnState.Connecting(t.label)
         store.note("verbinde: ${t.label}")
-        // sofort setzen: verhindert doppeltes Öffnen (Attach-Broadcast und Activity-Start kommen fast gleichzeitig) und
-        // muss vor start() stehen, weil onClosed() schon während start() kommen kann (kurze Wiedergabe)
+        // set immediately: prevents opening twice (attach broadcast and activity start arrive almost simultaneously) and
+        // must come before start() because onClosed() can already arrive during start() (short replay)
         transport = t
         scope.launch {
             val assembler = LineAssembler { onLine(it) }
@@ -167,7 +167,7 @@ object RadarController {
                 store.note("Verbindung fehlgeschlagen: ${e.message}")
                 return@launch
             }
-            if (transport !== t) return@launch // schon wieder beendet
+            if (transport !== t) return@launch // already finished again
             connectedSince = SystemClock.elapsedRealtime()
             _state.value = ConnState.Connected(t.label, t.kind)
             RadarService.update(app)
@@ -184,7 +184,7 @@ object RadarController {
         }
     }
 
-    /** Vom Nutzer: trennen und nicht automatisch wieder per USB verbinden. */
+    /** By the user: disconnect and do not reconnect over USB automatically. */
     fun disconnect() {
         activeStream = null
         disconnectInternal(userInitiated = true)
@@ -206,7 +206,7 @@ object RadarController {
         t: Transport,
         error: Exception?,
     ) {
-        if (transport !== t) return // schon ersetzt oder vom Nutzer getrennt
+        if (transport !== t) return // already replaced or disconnected by the user
         transport = null
         t.close()
         _state.value =
@@ -221,24 +221,24 @@ object RadarController {
 
     val isConnected: Boolean get() = transport != null
 
-    // ---------------------------------------------------------------- Befehle
+    // ---------------------------------------------------------------- Commands
 
-    /** Befehlszeile an den ESP32 (Zeilenende wird angehängt). */
+    /** Command line to the ESP32 (line ending is appended). */
     fun send(cmd: String) {
         if (STREAM_CMD.containsMatchIn(cmd)) activeStream = cmd
         sendBytes((cmd + "\n").toByteArray(), cmd)
     }
 
     /**
-     * Stream beenden: Jedes Zeichen beendet iq3/doppler/sess run. Ein einzelnes `\n` stört nicht, falls gerade
-     * kein Stream läuft (leere Zeile → Hilfe, die nur in der Konsole landet).
+     * End the stream: any character ends iq3/doppler/sess run. A single `\n` does no harm if no stream is
+     * running (empty line → help, which only ends up in the console).
      */
     fun stopStream() {
         activeStream = null
         sendBytes(byteArrayOf('\n'.code.toByte()), "(Stopp)")
     }
 
-    /** Strg+R während iq3/doppler: Server absichtlich neu starten, prüft das Neuverbinden der Firmware. */
+    /** Ctrl+R during iq3/doppler: restart the server on purpose, tests the firmware's reconnect. */
     fun testServerReset() = sendBytes(byteArrayOf(0x12), "(Server-Neustart-Test)")
 
     private fun sendBytes(
@@ -261,13 +261,13 @@ object RadarController {
         }
     }
 
-    // ---------------------------------------------------------------- Empfang
+    // ---------------------------------------------------------------- Receive
 
     private fun onLine(line: String) {
         lines.incrementAndGet()
         recorder?.line(line, SystemClock.elapsedRealtimeNanos())
         val m = LineParser.parse(line)
-        if (m is End || m is SessEnd) activeStream = null // Stream regulär zu Ende (feste Dauer oder Stopp)
+        if (m is End || m is SessEnd) activeStream = null // stream ended normally (fixed duration or stop)
         store.apply(line, m)
         dspExec.execute { phoneDsp.offer(line) }
     }
@@ -293,7 +293,7 @@ object RadarController {
         }
     }
 
-    // ---------------------------------------------------------------- Aufnahme
+    // ---------------------------------------------------------------- Recording
 
     fun startRecording(label: String) {
         if (recorder != null) return
@@ -327,9 +327,9 @@ object RadarController {
 
     val recordingLines: Long get() = recorder?.lines ?: 0
 
-    // ---------------------------------------------------------------- EKG-Gurt (V0.1), Marker und Metronom (V0.2)
+    // ---------------------------------------------------------------- ECG chest strap (V0.1), markers and metronome (V0.2)
 
-    /** EKG-Gurt über BLE; jede Benachrichtigung in die Aufnahme (ref_hr.csv) und als Referenzkurve in die Anzeige. */
+    /** ECG chest strap over BLE; every notification goes into the recording (ref_hr.csv) and into the display as a reference curve. */
     val hrRef: HrReference by lazy { HrReference(app, ::onReference) { store.note(it) } }
 
     private fun onReference(
@@ -340,7 +340,7 @@ object RadarController {
         store.reference(m)
     }
 
-    /** Marker in events.csv (nur während einer Aufnahme) und als Ereignis in der Anzeige. */
+    /** Marker in events.csv (only during a recording) and as an event in the display. */
     fun mark(text: String) {
         val now = SystemClock.elapsedRealtimeNanos()
         val r = recorder
@@ -348,15 +348,15 @@ object RadarController {
         store.note(if (r != null) "Marker: $text" else "Marker ohne Aufnahme: $text")
     }
 
-    /** Metronom-Atmung: jeder Einatem-Ton schreibt „ein" (ohne Ereignis in der Anzeige, das wäre zu oft). */
+    /** Metronome breathing: every inhale tone writes "ein" (without an event in the display, that would be too frequent). */
     val metronome: Metronome by lazy { Metronome(scope) { nanos -> recorder?.mark(nanos, "ein") } }
 
-    // ---------------------------------------------------------------- DSP nachrechnen (A5)
+    // ---------------------------------------------------------------- Replay DSP (A5)
 
     private val _dspStatus = MutableStateFlow<String?>(null)
     val dspStatus: StateFlow<String?> = _dspStatus.asStateFlow()
 
-    /** iq3-raw-Aufnahme am Handy mit dem Firmware-DSP neu rechnen und mit der ESP32-Ausgabe vergleichen. */
+    /** Recompute an iq3-raw recording on the phone with the firmware DSP and compare it with the ESP32 output. */
     fun replayDsp(dir: File) {
         if (_dspStatus.value?.startsWith("rechnet") == true) return
         _dspStatus.value = "rechnet: ${dir.name}"
@@ -373,21 +373,21 @@ object RadarController {
         }
     }
 
-    // ---------------------------------------------------------------- Handy-DSP live (V5.2)
+    // ---------------------------------------------------------------- Phone DSP live (V5.2)
 
-    /** Eigener Thread: Empfang wartet nicht auf die Rechnung, Reihenfolge der Zeilen bleibt. */
+    /** Own thread: receiving does not wait for the computation, line order is preserved. */
     private val dspExec = Executors.newSingleThreadExecutor { r -> Thread(r, "handy-dsp").apply { isDaemon = true } }
 
-    /** Live-DSP aus `@RAW` (nur bei `iq3 … raw`), Ergebnisse als zweite Reihe neben den ESP32-Werten. */
+    /** Live DSP from `@RAW` (only with `iq3 … raw`), results as a second series next to the ESP32 values. */
     private val phoneDsp = PhoneDsp(LiveDsp) { line -> store.phone(LineParser.parse(line)) }
 
     private val _phoneDspOn = MutableStateFlow(false)
     val phoneDspOn: StateFlow<Boolean> = _phoneDspOn.asStateFlow()
 
-    /** Warum die Bibliothek fehlt (null = geladen). */
+    /** Why the library is missing (null = loaded). */
     val phoneDspError: String? get() = LiveDsp.loadError
 
-    /** Ein: rechnet ab sofort mit (mitten im Stream mit dessen Start- und Zoom-Zeile), aus: keine Rechenlast. */
+    /** On: computes from now on (mid-stream, with its start and zoom lines), off: no computation load. */
     fun setPhoneDsp(on: Boolean) {
         dspExec.execute {
             phoneDsp.setEnabled(on)
@@ -405,10 +405,10 @@ object RadarController {
 
     // ---------------------------------------------------------------- USB
 
-    /** Erstes serielles USB-Gerät verbinden; fragt bei Bedarf die Berechtigung an. */
+    /** Connect the first serial USB device; requests permission if needed. */
     fun connectUsb() {
         autoUsb = true
-        if (transport?.kind == "usb") return // schon verbunden oder im Aufbau
+        if (transport?.kind == "usb") return // already connected or being set up
         val usb = app.getSystemService(UsbManager::class.java)
         val driver = UsbSerialTransport.findDrivers(usb).firstOrNull()
         if (driver == null) {
@@ -431,7 +431,7 @@ object RadarController {
         connect(UsbSerialTransport(usb, driver))
     }
 
-    /** Vom USB_DEVICE_ATTACHED-Start der Activity (Berechtigung ist dann erteilt, wenn der Nutzer bestätigt hat). */
+    /** From the activity's USB_DEVICE_ATTACHED start (permission is granted then if the user confirmed). */
     fun onUsbAttachedIntent() {
         if (transport == null) connectUsb()
     }
@@ -451,8 +451,8 @@ object RadarController {
                     }
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                         store.note("USB eingesteckt: ${dev?.let { UsbSerialTransport.describe(it) }}")
-                        // Mit „Immer öffnen“ erteilt das System die Berechtigung erst beim Activity-Start, kurz nach diesem
-                        // Broadcast; ohne Pause käme ein unnötiger Berechtigungsdialog.
+                        // With "Always open" the system grants the permission only at activity start, shortly after this
+                        // broadcast; without a pause an unnecessary permission dialog would appear.
                         if (autoUsb && transport == null) {
                             scope.launch {
                                 delay(1500)

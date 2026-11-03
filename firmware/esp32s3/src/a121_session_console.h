@@ -1,16 +1,16 @@
 /**
  * @file a121_session_console.h
- * @brief Konsolenbefehl `sess`: beliebige Sparse-IQ-Session auf dem A121 einstellen und auf dem ESP32 auswerten.
+ * @brief Console command `sess`: set up an arbitrary sparse IQ session on the A121 and evaluate it on the ESP32.
  *
- * Die Konfiguration liegt im RAM und wird Feld für Feld geändert; `sess run` schickt sie an den Exploration Server,
- * streamt und wertet je Subsweep aus (Amplitude über alle Sweeps gemittelt, stärkster Punkt). Die Ausgabe ist
- * gedrosselt, damit der ESP32 nie hinter den Datenstrom fällt (sonst liefe der 32-KB-UART-Puffer über).
- * Grenzen prüft der Server; abgelehnte Konfigurationen meldet `sess` mit dem Grund aus dem Server-Log.
+ * The configuration lives in RAM and is changed field by field; `sess run` sends it to the Exploration Server,
+ * streams and evaluates per subsweep (amplitude averaged over all sweeps, strongest point). The output is
+ * throttled so that the ESP32 never falls behind the data stream (otherwise the 32 KB UART buffer would overflow).
+ * The server checks the limits; `sess` reports rejected configurations with the reason from the server log.
  *
- * Ausgabezeilen (CSV, für Skripte):
+ * Output lines (CSV, for scripts):
  *   @SESS_META,frame_pts,sweep_pts,max_sweep_rate_hz,high_speed,cal_temp_c,base_step_mm,kB_pro_Frame
  *   @SESS_SUB,i,offset,length,start_mm,step_mm
- *   @SESS_STAT,t_ms,fps,frames,delayed,saturated,temp_c,rx_backlog,{peak_mm,peak_amp}×Subsweeps   (1× pro s)
+ *   @SESS_STAT,t_ms,fps,frames,delayed,saturated,temp_c,rx_backlog,{peak_mm,peak_amp}×Subsweeps   (1× per s)
  *   @PEAK,t_ms,tick,temp_c,flags,{peak_mm,peak_amp}×Subsweeps                                     (max. 100/s)
  *   @AMP,t_ms,i,start_mm,step_mm,a0,a1,...                                                       (max. 10/s)
  *   @SESS_END,frames,dauer_s,fps,delayed,saturated,cal_needed,timeouts,uart_ovf,uart_buf_full,uart_frame,max_backlog
@@ -27,9 +27,9 @@
 
 namespace a121_sess {
 
-static const uint16_t kMaxFramePts = 4096;      // Punkte pro Frame, die der ESP32 annimmt (16 KB)
-static const float    kLinkLimitKBs = 190.0f;   // netto ≈ 195 kB/s bei 2 Mbaud (am Gerät 2026-11-01)
-static const float    kHeaderBytes  = 150.0f;   // JSON-Kopfzeile pro Frame; bei kleinen Frames spürbar (137 Hz statt 141 Hz)
+static const uint16_t kMaxFramePts = 4096;      // points per frame the ESP32 accepts (16 KB)
+static const float    kLinkLimitKBs = 190.0f;   // net ≈ 195 kB/s at 2 Mbaud (on the device 2026-11-01)
+static const float    kHeaderBytes  = 150.0f;   // JSON header line per frame; noticeable with small frames (137 Hz instead of 141 Hz)
 
 struct Metadata {
     bool     valid = false;
@@ -41,7 +41,7 @@ struct Metadata {
     bool     high_speed = false;
 };
 
-// ---- kleine JSON-Helfer (die Server-Antworten sind flach und bekannt) ----
+// ---- small JSON helpers (the server replies are flat and known) ----
 inline bool jsonNum(const String &js, const char *key, double &out) {
     String k = String("\"") + key + "\":";
     int i = js.indexOf(k);
@@ -92,7 +92,7 @@ inline Metadata parseMetadata(const String &ack) {
     return md;
 }
 
-// UART-Fehlerzähler während `sess run` (Callback läuft im Event-Task des UART-Treibers)
+// UART error counters during `sess run` (callback runs in the UART driver's event task)
 static volatile uint32_t g_errOvf = 0, g_errBufFull = 0, g_errFrame = 0;
 
 class SessionConsole {
@@ -106,13 +106,13 @@ public:
         spec_.frame_rate_hz          = 10.0f;
         spec_.continuous_sweep_mode  = false;
         spec_.double_buffering       = false;
-        spec_.inter_frame_idle_state = "deep_sleep";   // exptool-Standard
+        spec_.inter_frame_idle_state = "deep_sleep";   // exptool default
         spec_.inter_sweep_idle_state = "ready";
         spec_.num_subsweeps          = 1;
         for (auto &s : spec_.subsweeps) s = defaultSub();
     }
 
-    /** `args` = alles nach "sess". `ensure` verbindet den Server (Break-Reset + Baud-Aushandlung). */
+    /** `args` = everything after "sess". `ensure` connects the server (break reset + baud negotiation). */
     void handle(const String &args, a121_srv::ExplorationServerClient &srv, bool (*ensure)()) {
         String tok[6];
         int n = split(args, tok, 6);
@@ -146,12 +146,12 @@ private:
     enum class Mode { CHECK, STAT, PEAK, AMP };
     a121_srv::SessionSpec spec_;
 
-    // große Puffer statisch (der Arduino-Loop-Task hat nur 8 KB Stack)
+    // large buffers static (the Arduino loop task has only 8 KB of stack)
     static a121_dsp::Complex16 *frameBuf() { static a121_dsp::Complex16 b[kMaxFramePts]; return b; }
     static float *ampBuf() { static float b[kMaxFramePts]; return b; }
 
     static a121_srv::SubsweepSpec defaultSub() {
-        // exptool-Standard, nur Bereich sinnvoller: 200–395 mm im 5-mm-Raster
+        // exptool default, only a more useful range: 200–395 mm on a 5 mm grid
         return {80, 40, 2, 3, 8, 16, true, false, false, false, "15_6_MHz"};
     }
 
@@ -201,7 +201,7 @@ private:
         else if (k == "sidle" && parseIdle(v)) spec_.inter_sweep_idle_state = parseIdle(v);
         else if (k == "subs") {
             int ns = constrain(v.toInt(), 1, 4);
-            for (int i = spec_.num_subsweeps; i < ns; i++) spec_.subsweeps[i] = spec_.subsweeps[0];  // neue = Kopie von 0
+            for (int i = spec_.num_subsweeps; i < ns; i++) spec_.subsweeps[i] = spec_.subsweeps[0];  // new ones = copy of 0
             spec_.num_subsweeps = (uint8_t)ns;
         } else return false;
         return true;
@@ -213,7 +213,7 @@ private:
         const String &k = t[1], &v = t[2];
         bool b;
         if (k == "range" && n >= 4) {
-            // a..b mm im aktuellen Raster: Start auf den nächsten Punkt, Anzahl so, dass b noch drin ist
+            // a..b mm on the current grid: start at the next point, count such that b is still inside
             float a = v.toFloat(), e = t[3].toFloat();
             if (e < a) return false;
             s.start_point = (int32_t)lroundf(a / 2.5f);
@@ -242,7 +242,7 @@ private:
         return p;
     }
 
-    /** Erwartete Frame-Rate: gesetzte frame_rate, sonst bei sweep_rate sweep_rate/spf, sonst unbekannt (0). */
+    /** Expected frame rate: the set frame_rate, else with sweep_rate sweep_rate/spf, else unknown (0). */
     float expectedFps() const {
         if (spec_.frame_rate_hz > 0.0f) return spec_.frame_rate_hz;
         if (spec_.sweep_rate_hz > 0.0f) return spec_.sweep_rate_hz / spec_.sweeps_per_frame;
@@ -359,7 +359,7 @@ private:
             return;
         }
 
-        // Timeout pro Frame: dreifache erwartete Periode, mindestens 0,5 s, höchstens 10 s
+        // Timeout per frame: three times the expected period, at least 0.5 s, at most 10 s
         const float fps = expectedFps();
         const uint32_t frameTimeout = fps > 0.0f ? (uint32_t)constrain(3000.0f / fps + 300.0f, 500.0f, 10000.0f) : 1000U;
 
@@ -403,7 +403,7 @@ private:
                 continue;
             }
 
-            // Amplitude je Punkt über alle Sweeps mitteln, stärksten Punkt je Subsweep suchen
+            // average amplitude per point over all sweeps, find the strongest point per subsweep
             const uint32_t sp = md.sweep_pts;
             for (uint32_t k = 0; k < sp; k++) amp[k] = 0.0f;
             for (uint16_t s = 0; s < spec_.sweeps_per_frame; s++) {

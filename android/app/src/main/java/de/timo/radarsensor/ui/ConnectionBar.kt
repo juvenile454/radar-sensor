@@ -34,8 +34,8 @@ import de.timo.radarsensor.core.RadarController
 import de.timo.radarsensor.transport.TcpTransport
 import java.io.File
 
-/** Vorbelegung der Entwicklungs-Weiterleitung (host/esp_tcp_bridge.py), z. B. der PC im Tailnet; aus
- *  android/local.properties `radar.bridge=<host>:7777` (nicht im Repo), sonst leer. */
+/** Default for the development forwarding (host/esp_tcp_bridge.py), e.g. the PC in the tailnet; from
+ *  android/local.properties `radar.bridge=<host>:7777` (not in the repo), otherwise empty. */
 val DEFAULT_BRIDGE: String = BuildConfig.DEFAULT_BRIDGE
 
 @Composable
@@ -88,7 +88,7 @@ fun ConnectionBar(
                 Text("  Bildschirm an lassen, solange verbunden", fontSize = 13.sp)
             }
         }
-        // Aufnahme und Stream-Befehle immer sichtbar
+        // recording and stream commands always visible
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (recording == null) {
                 OutlinedTextField(label, { label = it }, Modifier.weight(1f), placeholder = { Text("Name (optional)") }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp))

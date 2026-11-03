@@ -63,7 +63,7 @@ private fun Page(content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp)) { content() }
 }
 
-// ------------------------------------------------------------------------------------------------- Übersicht
+// ------------------------------------------------------------------------------------------------- Overview
 
 @Composable
 fun OverviewPage(
@@ -126,7 +126,7 @@ fun SignalPage(s: LiveSnapshot) =
         Labeled("Zoom-Fenster", if (s.zoomStartMm.isNaN()) "–" else "%.0f–%.0f mm (%d × neu gewählt)".format(s.zoomStartMm, s.zoomEndMm, s.rezooms))
         val raw = s.lastRaw
         if (raw != null && raw.points >= 1 + 24 + 80) {
-            val zoomN = raw.points - 1 - 80  // 24, mit A121_ZOOM_POINTS=48 auch 48 (V2.3)
+            val zoomN = raw.points - 1 - 80  // 24, 48 with A121_ZOOM_POINTS=48 (V2.3)
             HorizontalDivider()
             Labeled("Rohframes (@RAW)", "${s.rawFrames}, letzter Frame ${raw.frame}, ${raw.points} Punkte")
             val zoomX = FloatArray(zoomN) { s.zoomStartMm.takeIf { !it.isNaN() }?.plus(2.5f * it) ?: it.toFloat() }
@@ -140,7 +140,7 @@ fun SignalPage(s: LiveSnapshot) =
         }
     }
 
-// ------------------------------------------------------------------------------------------------- Raum
+// ------------------------------------------------------------------------------------------------- Room
 
 @Composable
 fun RoomPage(s: LiveSnapshot) =
@@ -187,7 +187,7 @@ fun VitalPage(s: LiveSnapshot) =
         val xw = window.toFloat()
         val v = s.lastVital
         ReferencePanel()
-        // Gütezustand (V5.1): Puls grau bei Konfidenz < 50 %, Bewegung oder ohne gültige Messung
+        // Quality state (V5.1): pulse grey at confidence < 50 %, motion or without a valid measurement
         val q = pulseQuality(v, s.lastDsp, s.lastState)
         Labeled("Zustand", q.stateText + (q.reason?.let { " · Puls grau: $it" } ?: ""))
         Labeled(
@@ -240,7 +240,7 @@ fun VitalPage(s: LiveSnapshot) =
             height = 130,
         )
         LineChart("Zoom-SNR", listOf(Series(s.vitalT, s.vitalSnr, Pal.c3, "dB")), xWindow = xw, unit = "dB", height = 110)
-        // RMSSD aus 15 s, nur bei ≥ 90 % gültigen Schlägen (sonst 0, nicht gezeichnet); gegen den Gurt nicht geprüft (V1.6)
+        // RMSSD from 15 s, only with ≥ 90 % valid beats (otherwise 0, not drawn); not checked against the chest strap (V1.6)
         LineChart("RMSSD (experimentell, nicht validiert)", listOf(Series(s.vitalT, s.vitalRmssd, Pal.c5, "ms")), xWindow = xw, unit = "ms", height = 110, skipNonPositive = true)
         LineChart("DSP-Rechenzeit / Bewegungsanteil", listOf(Series(s.dspT, s.dspComputeMs, Pal.c4, "ms"), Series(s.dspT, s.dspMotion, Pal.c2, "% Bew.")), xWindow = xw, height = 120)
         if (v != null) {
@@ -257,8 +257,8 @@ fun VitalPage(s: LiveSnapshot) =
     }
 
 /**
- * Handy-DSP live (V5.2): derselbe Firmware-Header am Handy aus `@RAW`, mit Viterbi und Abzug der Atem-Oberwellen
- * (A121_DSP_HEAVY). Werte zeitgleich neben dem ESP32; braucht einen Stream `iq3 … raw`.
+ * Phone DSP live (V5.2): the same firmware header on the phone from `@RAW`, with Viterbi and subtraction of breathing harmonics
+ * (A121_DSP_HEAVY). Values at the same time next to the ESP32; needs an `iq3 … raw` stream.
  */
 @Composable
 private fun PhoneDspPanel(s: LiveSnapshot) {
@@ -292,8 +292,8 @@ private fun PhoneDspPanel(s: LiveSnapshot) {
 }
 
 /**
- * EKG-Gurt (V0.1), Marker und Metronom-Atmung (V0.2). Marker landen in events.csv der laufenden Aufnahme
- * (Namen wie host/vital_eval.py sie liest).
+ * ECG chest strap (V0.1), markers and metronome breathing (V0.2). Markers end up in events.csv of the running recording
+ * (names as host/vital_eval.py reads them).
  */
 @Composable
 private fun ReferencePanel() {
@@ -360,7 +360,7 @@ fun DopplerPage(s: LiveSnapshot) =
         s.lastDoppler?.let { Labeled("Letzter Wert", "%.2f mm/s · Amp %.0f · %d °C · Frame %s".format(it.vRmsMmS, it.amp, it.tempC, it.frame?.toString() ?: "–")) }
     }
 
-// ------------------------------------------------------------------------------------------------- Experten
+// ------------------------------------------------------------------------------------------------- Expert
 
 @Composable
 fun ExpertPage(s: LiveSnapshot) =
@@ -396,7 +396,7 @@ fun ExpertPage(s: LiveSnapshot) =
         s.sessEnd?.let { Labeled("Ende", "${it.frames} Frames · %.1f s · %.1f fps · Zähler ${it.counters.joinToString(" ")}".format(it.durationS, it.fps)) }
     }
 
-// ------------------------------------------------------------------------------------------------- Diagnose
+// ------------------------------------------------------------------------------------------------- Diagnostics
 
 @Composable
 fun DiagPage(
@@ -428,7 +428,7 @@ fun DiagPage(
     }
 }
 
-// ------------------------------------------------------------------------------------------------- Konsole
+// ------------------------------------------------------------------------------------------------- Console
 
 @Composable
 fun ConsolePage(s: LiveSnapshot) {
@@ -480,7 +480,7 @@ fun ConsolePage(s: LiveSnapshot) {
     }
 }
 
-// ------------------------------------------------------------------------------------------------- Aufnahmen
+// ------------------------------------------------------------------------------------------------- Recordings
 
 @Composable
 fun RecordingsPage(recording: File?) =

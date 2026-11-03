@@ -1,5 +1,5 @@
-"""Tests für den Live-Pfad der Handy-DSP (V5.2): host/dsp_replay/dsp_live.h über die PC-Fassung dsp_live_main.cpp,
-gespeist mit synthetischen iq3-Logs aus host/vital_sim.py (nur Simulation, keine Laufzeitprüfung am Handy).
+"""Tests for the live path of the phone DSP (V5.2): host/dsp_replay/dsp_live.h via the PC version dsp_live_main.cpp,
+fed with synthetic iq3 logs from host/vital_sim.py (simulation only, no runtime check on the phone).
 
   .venv/bin/python -m unittest host/tests/test_dsp_live.py
 """
@@ -42,7 +42,7 @@ class LiveDspTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     def live(self, *defines: str, log: pathlib.Path | None = None) -> tuple[list[str], str]:
-        """Skelett (oder log) Zeile für Zeile durch die Live-Fassung; Rückgabe (Handy-Zeilen, Bericht auf stderr)."""
+        """Skeleton (or log) line by line through the live version; returns (phone lines, report on stderr)."""
         log = log or self.skel
         if (defines, log) in self.cache:
             return self.cache[(defines, log)]
@@ -56,13 +56,13 @@ class LiveDspTest(unittest.TestCase):
         return self.cache[(defines, log)]
 
     def esp_like(self) -> list[str]:
-        """Skelett mit den @DSP-Zeilen der Nachrechnung: Feld 13 = Frame-Stand des Schnappschusses wie beim ESP32."""
+        """Skeleton with the @DSP lines of the replay: field 13 = frame count of the snapshot, as on the ESP32."""
         dsp = iter(ln for ln in self.replayed.read_text().splitlines() if ln.startswith("@DSP,"))
         return [next(dsp) if ln.startswith("@DSP,") else ln for ln in self.skel.read_text().splitlines()]
 
     def test_started_mid_stream(self):
-        """Handy-DSP erst nach 10 s eingeschaltet (PhoneDsp schickt das gemerkte @IQ3_START vorweg): Der Frame-Stand
-        in @DSP ist der des ESP32 und liegt vor dem eigenen; trotzdem gültige Werte nach der Einschwingzeit."""
+        """Phone DSP switched on only after 10 s (PhoneDsp sends the remembered @IQ3_START first): The frame count
+        in @DSP is the ESP32's and lies before its own; still valid values after the settling time."""
         lines = self.esp_like()
         self.assertTrue(lines[0].startswith("@IQ3_START,"))
         cut = lines.index(next(ln for ln in lines if ln.startswith("@RAW,600,")))
@@ -74,7 +74,7 @@ class LiveDspTest(unittest.TestCase):
         self.assertGreater(sum(ln.startswith("@VITAL,") for ln in got), 5)
 
     def test_esp_snapshot_field_from_start(self):
-        """Von Anfang an mit Feld 13: dieselben Zeilen wie die Nachrechnung (Schnappschuss gefunden, nicht veraltet)."""
+        """With field 13 from the start: the same lines as the replay (snapshot found, not stale)."""
         whole = self.dir / "esp_like.log"
         whole.write_text("\n".join(self.esp_like()) + "\n")
         want = [ln for ln in self.replayed.read_text().splitlines() if ln.startswith(LIVE_TAGS)]
@@ -82,7 +82,7 @@ class LiveDspTest(unittest.TestCase):
         self.assertEqual(got, want)
 
     def test_same_lines_as_replay(self):
-        """Ohne Variante liefert der Live-Pfad genau die neu gerechneten Zeilen der Nachrechnung (nur Handy-Tags)."""
+        """Without a variant, the live path yields exactly the recomputed lines of the replay (phone tags only)."""
         want = [ln for ln in self.replayed.read_text().splitlines() if ln.startswith(LIVE_TAGS)]
         got, _ = self.live()
         self.assertGreater(sum(ln.startswith("@VITAL,") for ln in want), 5)
@@ -106,7 +106,7 @@ class LiveDspTest(unittest.TestCase):
         self.assertNotEqual(hv, [ln for ln in plain if ln.startswith("@VITAL,")])
 
     def test_cpu_share_reported(self):
-        """Rechenzeit je Datensekunde (am PC; die Abnahme ≤ 20 % eines Kerns gilt am Handy und bleibt offen)."""
+        """Compute time per second of data (on the PC; the acceptance criterion ≤ 20 % of one core applies on the phone and stays open)."""
         _, rep = self.live("-DA121_DSP_HEAVY")
         m = re.search(r"Rechenzeit ([\d.]+) ms für ([\d.]+) s Daten \(([\d.]+) % eines Kerns\)", rep)
         self.assertIsNotNone(m, rep)

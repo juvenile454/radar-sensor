@@ -1,34 +1,34 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Eigene Puls-/Atem-Auswertung für den I2C-Befehl `auto` (Distance Detector). Neue Auswertungen nur mit
-host/vital_eval.py und Varianten des Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier
-bewährt, wandert in den Header. Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Own pulse/breathing analysis for the I2C command `auto` (distance detector). New analyses only with
+host/vital_eval.py and variants of the firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what
+proves itself here moves into the header. Function of the script unchanged.
 
-Vollautomatischer Mobiler Radar-Modus (ESP32-S3 + A121): Auto-Search -> Auto-Lock -> Auto-Zoom + 10-fach Multi-Info.
+Fully automatic mobile radar mode (ESP32-S3 + A121): auto-search -> auto-lock -> auto-zoom + 10-fold multi-info.
 
-Nutzt das `auto [sek]`-Kommando der ESP32-S3-Firmware:
-- Startet automatisch im Weitbereich (`WIDE_SEARCH`, 150–2500 mm, Profile 2) und erfasst die Raum-Ziele.
-- Prüft im Zustand `TARGET_LOCK` die Stabilität des vordersten starken Ziels (~1,5 s).
-- Schaltet automatisch in `VITAL_ZOOM` ([d0 - 135 mm, d0 + 155 mm], Profile 1/2, Step 2,5 mm, ~45 Hz)
-  und führt das Fenster bei Positionsänderungen automatisch nach (`@Z`).
-- Berechnet gleichzeitig 10 Messgrößen (wie für das spätere Android-App-Dashboard):
-  1. Auto-State & Zoom-Fenster (SEARCH / LOCK / ZOOM, Profil, Abtastrate Hz)
-  2. Primär-Entfernung d0 (mm) + Raum-Mehr-Ziel-Landkarte (bis 10 Echos)
-  3. Relativgeschwindigkeit v (mm/s bzw. cm/s)
-  4. Hand-/Ziel-Stabilitäts-Score (0–100 %, Ruhe-Ampel)
-  5. Automatische Ziel-Klassifikation (Mensch/Vital vs. Statisches Objekt/Wand vs. Vibration vs. Bewegung)
-  6. Atemfrequenz (/min), Atemhub (mm) & Atemphase
-  7. Atem-Anhalte- / Apnoe-Detektor (Sekunden)
-  8. Herzschlag-Kandidat (/min) + Konfidenz-Index (0–100 %) nach Hilbert-Oberwellenprojektion
-  9. Technische Vibrations-Frequenz (2,5–20 Hz / RPM)
-  10. Reflexionsgüte (dB + entfernungsnormierter RCS-Index) & Chip-Temperatur (°C)
+Uses the `auto [sek]` command of the ESP32-S3 firmware:
+- Starts automatically in the wide range (`WIDE_SEARCH`, 150–2500 mm, profile 2) and captures the room targets.
+- In state `TARGET_LOCK` checks the stability of the foremost strong target (~1.5 s).
+- Switches automatically to `VITAL_ZOOM` ([d0 - 135 mm, d0 + 155 mm], profile 1/2, step 2.5 mm, ~45 Hz)
+  and follows the window automatically on position changes (`@Z`).
+- Computes 10 measured quantities at the same time (as for the later Android app dashboard):
+  1. Auto state & zoom window (SEARCH / LOCK / ZOOM, profile, sampling rate Hz)
+  2. Primary distance d0 (mm) + room multi-target map (up to 10 echoes)
+  3. Relative velocity v (mm/s or cm/s)
+  4. Hand/target stability score (0–100 %, calm indicator)
+  5. Automatic target classification (human/vital vs. static object/wall vs. vibration vs. motion)
+  6. Breathing rate (/min), breathing stroke (mm) & breathing phase
+  7. Breath-hold / apnea detector (seconds)
+  8. Heartbeat candidate (/min) + confidence index (0–100 %) after Hilbert harmonic projection
+  9. Technical vibration frequency (2.5–20 Hz / RPM)
+  10. Reflection quality (dB + distance-normalized RCS index) & chip temperature (°C)
 
-Live-Lauf:
+Live run:
   sg dialout -c ".venv/bin/python host/a121_esp_auto.py <ESP_PORT> <AUSGABE_OHNE_ENDUNG> [DAUER_S]"
 
-Offline-Auswertung:
+Offline analysis:
   .venv/bin/python host/a121_esp_auto.py --offline <EINGABE.npz> <AUSGABE_OHNE_ENDUNG>
 
-Ohne Referenzpuls (Smartwatch/Pulsoximeter/EKG) ist der Herzschlag-Wert ein Rhythmus-Kandidat, keine Messung.
+Without a reference pulse (smartwatch/pulse oximeter/ECG) the heartbeat value is a rhythm candidate, not a measurement.
 """
 import json
 import sys
@@ -138,7 +138,7 @@ def capture_auto_stream(port: str, duration_s: int = 40):
 
 
 def extract_room_map(states: np.ndarray, d_mat: np.ndarray, s_mat: np.ndarray) -> list[dict]:
-    """Extrahiert aus allen Frames (insb. SEARCH/LOCK) die erkannten Raum-Echos als Distanz-Cluster."""
+    """Extracts from all frames (esp. SEARCH/LOCK) the detected room echoes as distance clusters."""
     valid = (~np.isnan(d_mat)) & (s_mat > -24.0)
     all_d = d_mat[valid]
     all_s = s_mat[valid]
@@ -186,10 +186,10 @@ def analyze_auto_capture(
     else:
         fs_zoom = fs_all
 
-    # 1. Raum-Landkarte (Multi-Target Map)
+    # 1. Room map (multi-target map)
     room_clusters = extract_room_map(states, d_mat, s_mat)
 
-    # 2. Primär-Streuer-Tracking über den gesamten Verlauf (fokusiert auf das Hauptziel im Zoom-Fenster)
+    # 2. Primary scatterer tracking over the whole run (focused on the main target in the zoom window)
     s_clean = np.where(np.isnan(s_mat), -999.0, s_mat)
     best_j = np.argmax(s_clean, axis=1)
     d_strong = d_mat[np.arange(len(t)), best_j]
@@ -236,7 +236,7 @@ def analyze_auto_capture(
     dint_u = np.interp(tu, t, d_int)
     sint_u = np.interp(tu, t, s_int)
 
-    # 3. Relativgeschwindigkeit v(t) [mm/s] & Stabilitäts-Score [0..100 %] (relativ zur Atem-Grundlinie)
+    # 3. Relative velocity v(t) [mm/s] & stability score [0..100 %] (relative to the breathing baseline)
     d_base = signal.savgol_filter(dt_u, int(3.5 * fs) | 1, 1)
     vel_mm_s = np.gradient(signal.savgol_filter(dt_u, int(1.8 * fs) | 1, 2), 1.0 / fs)
     w2 = int(2.5 * fs)
@@ -244,7 +244,7 @@ def analyze_auto_capture(
     mot_s = np.array([np.std(np.diff(st_u[max(0, i - w2 // 2):min(len(tu), i + w2 // 2)])) for i in range(len(tu))])
     stab_t = np.clip(100.0 - 9.0 * np.maximum(0.0, mot_d - 1.5) - 25.0 * np.maximum(0.0, mot_s - 0.35), 0.0, 100.0)
 
-    # Ruhigstes 18-s-Fenster im ZOOM-Bereich auswählen
+    # Select the quietest 18 s window in the ZOOM range
     zoom_u = np.interp(tu, t, zoom_mask.astype(float)) > 0.5
     mot_score = (100.0 - stab_t) + np.where(zoom_u, 0.0, 200.0)
     win_len = min(len(tu), int(18.0 * fs))
@@ -255,7 +255,7 @@ def analyze_auto_capture(
     else:
         qa, qb = 0, len(tu)
 
-    # 4. Atmung & Apnoe-Detektor
+    # 4. Breathing & apnea detector
     sos_b = signal.butter(2, [0.12, 0.50], btype="band", fs=fs, output="sos")
     sos_h = signal.butter(4, [0.85, 2.00], btype="band", fs=fs, output="sos")
     sos_v = signal.butter(4, [5.00, 19.0], btype="band", fs=fs, output="sos")
@@ -263,7 +263,7 @@ def analyze_auto_capture(
     br_full = signal.sosfiltfilt(sos_b, dint_u - np.mean(dint_u))
     br_env = np.abs(signal.hilbert(br_full))
     apnea_mask = (stab_t >= 70.0) & (br_env < 0.35)
-    # Längste Apnoe-Episode
+    # Longest apnea episode
     best_ap, cur_ap = 0, 0
     for ap in apnea_mask:
         cur_ap = cur_ap + 1 if ap else 0
@@ -279,7 +279,7 @@ def analyze_auto_capture(
     br_bpm = float(fb[mb][np.argmax(pb[mb])] * 60.0)
     br_amp_mm = float(np.percentile(br_seg, 95) - np.percentile(br_seg, 5))
 
-    # 5. Gleitende 7-s-Hann-Hilbert-Oberwellenprojektion (Schmalband-Grundphase θ_1(t)) & Herzschlag-Kandidat
+    # 5. Sliding 7 s Hann-Hilbert harmonic projection (narrow-band fundamental phase θ_1(t)) & heartbeat candidate
     fb0 = br_bpm / 60.0
     bw_lo = max(0.08, fb0 * 0.72)
     bw_hi = min(0.55, fb0 * 1.28)
@@ -343,7 +343,7 @@ def analyze_auto_capture(
     hr_candidates = [(round(float(fh[m][i] * 60), 1), round(float(p_fused[i]), 2)) for i in pks_f]
     hr_best = hr_candidates[0][0] if hr_candidates else 0.0
 
-    # Autokorrelation auf dem kombinierten normierten Zeitsignal
+    # Autocorrelation on the combined normalized time signal
     hr_comb = hr_d / (np.std(hr_d) + 1e-9) + hr_s / (np.std(hr_s) + 1e-9)
     ac = np.correlate(hr_comb - np.mean(hr_comb), hr_comb - np.mean(hr_comb), "full")[len(hr_comb) - 1:]
     ac /= max(float(ac[0]), 1e-12)
@@ -352,7 +352,7 @@ def analyze_auto_capture(
     hr_ac_bpm = round(float(60.0 * fs / j_ac), 1)
     ac_r = round(float(ac[j_ac]), 2)
 
-    # Konfidenz-Score (0..100 %)
+    # Confidence score (0..100 %)
     second_pk = hr_candidates[1][1] if len(hr_candidates) > 1 else 0.5
     prom_score = np.clip((1.0 - second_pk) * 100.0, 15.0, 100.0)
     harm_dist = min(abs(hr_best - br_bpm * k) for k in range(2, 7))
@@ -360,14 +360,14 @@ def analyze_auto_capture(
     stab_mean = float(np.mean(stab_t[qa:qb]))
     hr_conf = round(float(np.clip((0.45 * prom_score + 0.35 * stab_mean + 20.0 * max(ac_r, 0.0)) * harm_factor, 0.0, 98.0)), 1)
 
-    # 6. Technische Vibrations-Analyse (5,0–19 Hz)
+    # 6. Technical vibration analysis (5.0–19 Hz)
     vib_sig = signal.sosfiltfilt(sos_v, s_seg)
     fv, pv = signal.welch(vib_sig, fs=fs, nperseg=min(len(vib_sig), int(8 * fs)), nfft=int(40 * fs))
     mv = (fv >= 5.0) & (fv <= 19.0)
     vib_snr = float(np.max(pv[mv]) / (np.median(pv[mv]) + 1e-12))
     vib_hz = round(float(fv[mv][np.argmax(pv[mv])]), 2) if vib_snr > 25.0 else 0.0
 
-    # 7. Automatische Ziel-Klassifikation
+    # 7. Automatic target classification
     std_s_calm = float(np.std(s_seg))
     std_d_calm = float(np.std(d_seg))
     mean_abs_v = float(np.mean(np.abs(vel_mm_s[qa:qb])))
@@ -380,7 +380,7 @@ def analyze_auto_capture(
     else:
         target_class = "MENSCH (Vital-Ziel erkannt)"
 
-    # 8. Reflexionsgüte & normierter RCS-Index
+    # 8. Reflection quality & normalized RCS index
     med_d_m = float(np.median(dt_u[qa:qb])) / 1000.0
     med_s_db = float(np.median(st_u[qa:qb]))
     rcs_norm_db = round(med_s_db + 40.0 * np.log10(max(med_d_m, 0.1)), 1)
@@ -426,7 +426,7 @@ def analyze_auto_capture(
     print(f"10. Echo-Güte & Temp.  : {summary['primary_strength_db']:+.2f} dB (normiert @ 1 m: {rcs_norm_db:+.1f} dB), Chip-Temp. {summary['temperature_c']} °C")
     print("=" * 72)
 
-    # 5-Panel Dashboard-Plot
+    # 5-panel dashboard plot
     fig, ax = plt.subplots(5, 1, figsize=(12, 13))
     w_s_u = np.interp(tu, t, wins[:, 0])
     w_e_u = np.interp(tu, t, wins[:, 1])

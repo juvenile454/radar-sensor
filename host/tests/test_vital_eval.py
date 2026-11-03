@@ -1,4 +1,4 @@
-"""Tests für host/vital_eval.py (Auswertung gegen Referenz).
+"""Tests for host/vital_eval.py (evaluation against the reference).
 
   .venv/bin/python -m unittest host/tests/test_vital_eval.py
 """
@@ -23,7 +23,7 @@ class RefHrTest(unittest.TestCase):
         self.assertAlmostEqual(ve.ref_hr_at(beats, 30000.0), 75.0, delta=0.01)
 
     def test_ref_hr_uses_rr_values_when_given(self):
-        # Schlagzeiten verrauscht (BLE-Latenz), RR-Werte exakt 1000 ms → 60 /min
+        # beat times noisy (BLE latency), RR values exactly 1000 ms → 60 /min
         beats = np.arange(0, 60000, 1000.0) + np.tile([0.0, 90.0], 30)
         rr = np.full(beats.size, 1000.0)
         self.assertAlmostEqual(ve.ref_hr_at(beats, 30000.0, rr_ms=rr), 60.0, delta=0.01)
@@ -34,7 +34,7 @@ class RefHrTest(unittest.TestCase):
 
 class BeatsFromCsvTest(unittest.TestCase):
     def test_beats_backwards_from_notification(self):
-        # Benachrichtigung bei 5000 ms mit RR 800, 750: Schläge bei 4250 und 5000
+        # notification at 5000 ms with RR 800, 750: beats at 4250 and 5000
         rx = np.array([5000.0, 5000.0])
         rr = np.array([800.0, 750.0])
         beats, rr_out = ve.beats_from_ref(rx, rr)
@@ -47,7 +47,7 @@ class BeatsFromCsvTest(unittest.TestCase):
 
 
 class RefBpmTest(unittest.TestCase):
-    """Referenz ohne RR (Gurt ohne RR-Intervalle oder Uhr): Mittel der Pulswerte im Fenster."""
+    """Reference without RR (chest strap without RR intervals, or a watch): mean of the pulse values in the window."""
 
     def test_mean_in_window(self):
         rx = np.array([-2000.0, 0.0, 5000.0, 10000.0, 20000.0])
@@ -121,7 +121,7 @@ class BreathRefTest(unittest.TestCase):
         self.assertTrue(math.isnan(ve.br_ref_at(marks, 56000.0)))
 
     def test_slow_metronome_uses_last_two_marks(self):
-        marks = np.arange(0, 120000, 10000.0)  # 6 /min: nur 1–2 Marken im 15-s-Fenster
+        marks = np.arange(0, 120000, 10000.0)  # 6 /min: only 1–2 marks in the 15 s window
         self.assertAlmostEqual(ve.br_ref_at(marks, 65000.0), 6.0, delta=0.01)
 
 
@@ -133,8 +133,8 @@ class EventsTest(unittest.TestCase):
     def test_apnea_delay_and_false_alarms(self):
         t = np.arange(0, 100000, 1000.0)
         state = np.zeros(t.size, int)
-        state[(t >= 30000) & (t < 52000)] = 2   # erkannt 10 s nach Beginn (20000)
-        state[(t >= 80000) & (t < 83000)] = 2   # Fehlalarm
+        state[(t >= 30000) & (t < 52000)] = 2   # detected 10 s after the start (20000)
+        state[(t >= 80000) & (t < 83000)] = 2   # false alarm
         r = ve.apnea_eval(t, state, [(20000.0, 45000.0)])
         self.assertEqual(r["detected"], 1)
         self.assertEqual(r["episodes"], 1)
@@ -194,7 +194,7 @@ class LoadRecordingTest(unittest.TestCase):
 
 class SensorCountersTest(unittest.TestCase):
     def test_sums_and_recal(self):
-        """V1.5: Summe der Sensor-Zähler aus @DSP und Zahl der Neu-Kalibrierungen (@RECAL) je Aufnahme."""
+        """V1.5: Sum of the sensor counters from @DSP and number of recalibrations (@RECAL) per recording."""
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d)
             (p / "stream.log").write_text(
@@ -209,8 +209,8 @@ class SensorCountersTest(unittest.TestCase):
 
 
 class SyntheticRecordingTest(unittest.TestCase):
-    """Fertig-Kriterium V0.4 auf einer synthetischen Aufnahme (vital_sim.py record): Bericht entsteht, und --replay mit
-    dem unveränderten Header liefert dieselben Zahlen wie die „Live"-Zeilen. Nur Simulation."""
+    """Done criterion V0.4 on a synthetic recording (vital_sim.py record): a report is produced, and --replay with
+    the unchanged header gives the same numbers as the "live" lines. Simulation only."""
 
     @classmethod
     def setUpClass(cls):
@@ -232,13 +232,13 @@ class SyntheticRecordingTest(unittest.TestCase):
         self.assertGreater(r["hr"]["n"], 80)
         self.assertLess(r["hr"]["mae"], 5.0)
         self.assertGreater(r["br"]["n"], 50)
-        self.assertEqual(r["apnea"]["detected"], 1)  # @DSP br_state (V1.4): Anhalten erkannt, ≤ 12 s, kein Fehlalarm
+        self.assertEqual(r["apnea"]["detected"], 1)  # @DSP br_state (V1.4): breath hold detected, ≤ 12 s, no false alarm
         self.assertLessEqual(r["apnea"]["delays_s"][0], 12.0)
         self.assertEqual(r["apnea"]["false_alarms"], 0)
         self.assertIn("Puls", ve.format_report("sim", r))
 
     def test_report_against_bpm_only_reference(self):
-        """Wie eine Uhr: Pulswerte alle 5 s ohne RR aus den Gurt-Schlägen der Simulation; MAE bleibt klein."""
+        """Like a watch: pulse values every 5 s without RR from the simulation's chest strap beats; MAE stays small."""
         import shutil
         with tempfile.TemporaryDirectory() as d:
             q = pathlib.Path(d) / "watch"
@@ -265,8 +265,8 @@ class SyntheticRecordingTest(unittest.TestCase):
         self.assertAlmostEqual(again["br"]["mae"], live["br"]["mae"], places=6)
 
     def test_beats_against_strap_rr(self):
-        """V1.6/V3.6 (Tag A): je Report IBI-Median und RMSSD der Einzelschläge gegen die Gurt-RR im selben Fenster
-        (Reports, deren IBI nur der Rückfallwert 60 000 / Puls ist, zählen nicht). Nur Simulation."""
+        """V1.6/V3.6 (day A): per report IBI median and RMSSD of the individual beats against the strap RR in the same window
+        (reports whose IBI is only the fallback value 60,000 / pulse do not count). Simulation only."""
         r = ve.evaluate(ve.load_recording(self.folder))
         b = r["ibi_ref"]
         self.assertGreater(b["n"], 50)
@@ -278,10 +278,10 @@ class SyntheticRecordingTest(unittest.TestCase):
 
 class MotionStateEvalTest(unittest.TestCase):
     def test_motion_markers_vs_state(self):
-        """V3.5 (Abnahme R5): Anteil der Reports mit Zustand BEWEGUNG in den Bewegungsabschnitten (bis 15 s danach) und
-        Reports mit BEWEGUNG außerhalb."""
+        """V3.5 (acceptance R5): share of reports with state BEWEGUNG in the motion sections (up to 15 s after) and
+        reports with BEWEGUNG outside."""
         lines, rx = ["@IQ3_START,610,670,60.0,1"], [0]
-        for k in range(1, 41):  # 40 Reports, Bewegung 10–20 s laut Marker
+        for k in range(1, 41):  # 40 reports, motion 10–20 s according to the marker
             st = 4 if 12 <= k <= 24 else (4 if k == 35 else 3)
             lines += [f"@DSP,{k * 1000},1,5,80.0,1000,0,0,0,0,0,0,0", f"@STATE,{k * 1000},{st},0"]
             rx += [k * 1000, k * 1000]
@@ -292,14 +292,14 @@ class MotionStateEvalTest(unittest.TestCase):
             (p / "events.csv").write_text("rx_ms,text\n10000,bewegung_start\n20000,bewegung_ende\n")
             r = ve.evaluate(ve.load_recording(p))
         m = r["motion_state"]
-        self.assertEqual(m["reports_in"], 25)            # 11..35 s (Ende + 15 s)
-        self.assertEqual(m["motion_in"], 14)             # 12..24 und 35
+        self.assertEqual(m["reports_in"], 25)            # 11..35 s (end + 15 s)
+        self.assertEqual(m["motion_in"], 14)             # 12..24 and 35
         self.assertEqual(m["motion_out"], 0)
         self.assertIn("Zustand BEWEGUNG", ve.format_report("x", r))
 
 
 class StatePairingTest(unittest.TestCase):
-    """@STATE gehört zum @DSP davor (gleicher Report), auch wenn der ESP32 beide mit eigenem millis() stempelt."""
+    """@STATE belongs to the @DSP before it (same report), even if the ESP32 stamps both with its own millis()."""
 
     def test_state_after_dsp_with_later_time(self):
         lines = ["@IQ3_START,610,670,60.0,1",
@@ -308,10 +308,10 @@ class StatePairingTest(unittest.TestCase):
                  "@DSP,3000,0,5,80.0,1000,0,0,0,0,0,0,0"]
         _, dd, _ = ve.parse_lines(lines, np.arange(len(lines), dtype=float))
         np.testing.assert_array_equal(dd["state"][:2], [3, 4])
-        self.assertTrue(math.isnan(dd["state"][2]))  # ohne @STATE (alter Header)
+        self.assertTrue(math.isnan(dd["state"][2]))  # without @STATE (old header)
 
     def test_firmware_one_time_per_report(self):
-        """Quelltext-Prüfung (kein Lauf am Gerät): handleResult() stempelt @DSP, @ROOM, @VITAL, @STATE mit einer Zeit."""
+        """Source check (no run on the device): handleResult() stamps @DSP, @ROOM, @VITAL, @STATE with one time."""
         src = (HOST.parent / "firmware" / "esp32s3" / "src" / "main.cpp").read_text()
         body = src[src.index("auto handleResult = [&]"):]
         body = body[:body.index("\n  };\n")]
@@ -320,10 +320,10 @@ class StatePairingTest(unittest.TestCase):
 
 class BreathEventsEvalTest(unittest.TestCase):
     def test_breath_vs_metronome(self):
-        """V3.4 (Abnahme R3): Rate je @BREATH gegen das Metronom (Einatem-Marker „ein"), Anteil ±1 /min, erster Wert
-        nach dem Start; Atemzüge in Anhalte-Abschnitten werden gezählt."""
+        """V3.4 (acceptance R3): rate per @BREATH against the metronome (inhale marker "ein"), share within ±1 /min, first value
+        after the start; breaths in breath-hold sections are counted."""
         lines, rx = ["@IQ3_START,610,670,60.0,1"], [0]
-        for k in range(2, 12):  # Metronom 10 /min (Marker alle 6 s), @BREATH ab 12,5 s, ein Ausreißer 12,5 /min
+        for k in range(2, 12):  # metronome 10 /min (marker every 6 s), @BREATH from 12.5 s, one outlier 12.5 /min
             t = k * 6000 + 500
             lines.append(f"@BREATH,{t},{t},6000,2400,{12.5 if k == 7 else 10.0}")
             rx.append(t)
@@ -340,7 +340,7 @@ class BreathEventsEvalTest(unittest.TestCase):
         self.assertAlmostEqual(b["mae"], 0.25, places=6)
         self.assertAlmostEqual(b["p1"], 90.0, places=6)
         self.assertEqual(b["first_s"], [12.5])
-        self.assertEqual(b["in_hold"], 2)                  # 42,5 s und 48,5 s
+        self.assertEqual(b["in_hold"], 2)                  # 42.5 s and 48.5 s
         self.assertIn("Atemzug für Atemzug", ve.format_report("x", r))
 
     def test_old_firmware_without_breath(self):
@@ -355,18 +355,18 @@ class BreathEventsEvalTest(unittest.TestCase):
 
 class JumpCountTest(unittest.TestCase):
     def test_jumps_between_consecutive_valid_reports(self):
-        """V3.2 (Abnahme): Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports; ein ungültiger Report
-        unterbricht die Folge."""
+        """V3.2 (acceptance): jumps > 15 /min between consecutive valid reports; an invalid report
+        interrupts the sequence."""
         hr = np.array([70, 72, 90, 91, 60, 61, 95, 96], float)
         ok = np.array([1, 1, 1, 1, 1, 0, 1, 1], bool)
-        self.assertEqual(ve.count_jumps(hr, ok), 2)          # 72→90, 91→60; 61 ungültig, 60→95 zählt nicht
+        self.assertEqual(ve.count_jumps(hr, ok), 2)          # 72→90, 91→60; 61 invalid, 60→95 does not count
         self.assertEqual(ve.count_jumps(hr, ok, thr=30.0), 1)
 
 
 class EffectivePointsTest(unittest.TestCase):
     def test_n_eff_median_and_line(self):
-        """V3.1: @DSP mit Schalter A121_DSP_COMBINE trägt als 15. Feld die effektive Punktzahl; die Auswertung meldet
-        ihren Median über die Reports, ohne das Feld (Standard) nichts."""
+        """V3.1: @DSP with the switch A121_DSP_COMBINE carries the effective point count as field 15; the evaluation reports
+        its median over the reports, and nothing without the field (default)."""
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d)
             (p / "stream.log").write_text(
@@ -395,7 +395,7 @@ class ReacqFieldsTest(unittest.TestCase):
         return ve.load_recording(p).dsp
 
     def test_reacq_fields_parsed(self):
-        """V6: @DSP-Felder 15 und 16 (win_s, reacq) hinter n_eff."""
+        """V6: @DSP fields 15 and 16 (win_s, reacq) after n_eff."""
         dd = self._load("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60,,7,2\n")
         self.assertEqual(list(dd["win_s"]), [7.0])
         self.assertEqual(list(dd["reacq"]), [2.0])
@@ -409,12 +409,12 @@ class ReacqFieldsTest(unittest.TestCase):
 
 class RefIbiTest(unittest.TestCase):
     def test_median_rr_and_rmssd_in_window(self):
-        """Gurt im Fenster (t − 15 s, t]: Median der RR und RMSSD aufeinanderfolgender RR; das erste RR im Fenster
-        beginnt vor dem Fenster und zählt nicht (wie ref_hr_at)."""
+        """Strap in the window (t − 15 s, t]: median of the RR and RMSSD of consecutive RR; the first RR in the window
+        begins before the window and does not count (like ref_hr_at)."""
         rr = np.array([800.0, 850.0] * 20)
         beats = np.cumsum(rr)
         med, rmssd = ve.ref_ibi_at(beats, rr, 20000.0, 15.0)
-        sel = rr[(beats > 5000.0) & (beats <= 20000.0)]   # 18 Schläge im Fenster, das erste RR zählt nicht → 17
+        sel = rr[(beats > 5000.0) & (beats <= 20000.0)]   # 18 beats in the window, the first RR does not count → 17
         self.assertEqual(sel.size, 18)
         self.assertAlmostEqual(med, float(np.median(sel[1:])))
         self.assertAlmostEqual(rmssd, 50.0)

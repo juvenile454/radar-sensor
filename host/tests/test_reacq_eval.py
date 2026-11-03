@@ -1,4 +1,4 @@
-"""Tests für host/reacq_eval.py (Pulsausfälle nach Bewegung auf Aufnahmen, V6).
+"""Tests for host/reacq_eval.py (pulse dropouts after motion on recordings, V6).
 
   .venv/bin/python -m unittest host/tests/test_reacq_eval.py
 """
@@ -30,7 +30,7 @@ def _args(ok, motion=None, br=None, state=None):
 
 class DropoutsTest(unittest.TestCase):
     def test_dropout_after_valid_only(self):
-        # führende Ungültige zählen nicht (noch nie gültig); danach ein Ausfall von 3 Reports bis zum nächsten gültigen
+        # leading invalid reports do not count (never valid yet); then a dropout of 3 reports until the next valid one
         d = re_.dropouts(*_args([0, 0, 1, 1, 0, 0, 0, 1]))
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0].start_s, 4.0)
@@ -42,13 +42,13 @@ class DropoutsTest(unittest.TestCase):
         self.assertEqual(d[0].cause, "bewegung")
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], state=[2, 2, 4, 2, 2]))
         self.assertEqual(d[0].cause, "bewegung")
-        # Bewegung nur außerhalb des Ausfalls zählt nicht
+        # motion only outside the dropout does not count
         d = re_.dropouts(*_args([1, 0, 0, 1, 1], motion=[90, 0, 0, 90, 0]))
         self.assertEqual(d[0].cause, "rest")
 
     def test_cause_motion_from_win_s_zero(self):
-        # Ruling R10 (V6): ein Report ohne Pulsfenster (win_s == 0, Bewegungskarte) macht den Ausfall zur Bewegung;
-        # fehlendes Feld (NaN, Aufnahme ohne A121_DSP_REACQ) und win_s > 0 nicht
+        # Ruling R10 (V6): a report without a pulse window (win_s == 0, motion map) turns the dropout into motion;
+        # a missing field (NaN, recording without A121_DSP_REACQ) and win_s > 0 do not
         ok = [1, 0, 0, 0, 1]
         d = re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=np.array([15, 0, 6, 7, 15], float))
         self.assertEqual(d[0].cause, "bewegung")
@@ -56,14 +56,14 @@ class DropoutsTest(unittest.TestCase):
         self.assertEqual(d[0].cause, "keine_atemspitze")
         d = re_.dropouts(*_args(ok), win_s=np.full(5, NAN))
         self.assertEqual(d[0].cause, "rest")
-        d = re_.dropouts(*_args(ok, motion=[0, 0, 0, 0, 0]))   # ohne win_s wie bisher
+        d = re_.dropouts(*_args(ok, motion=[0, 0, 0, 0, 0]))   # without win_s as before
         self.assertEqual(d[0].cause, "rest")
-        # win_s == 0 nur außerhalb des Ausfalls zählt nicht
+        # win_s == 0 only outside the dropout does not count
         d = re_.dropouts(*_args(ok), win_s=np.array([0, 6, 6, 6, 0], float))
         self.assertEqual(d[0].cause, "rest")
 
     def test_rezoom_start_is_not_motion(self):
-        # win_s == 0 in den ersten 6 s nach Rezoom (snap_frame < 360) ist Anlaufzeit, keine Bewegung
+        # win_s == 0 in the first 6 s after a rezoom (snap_frame < 360) is warm-up, not motion
         ok = [1, 0, 0, 0, 1]
         w = np.array([15, 0, 0, 6, 7], float)
         d = re_.dropouts(*_args(ok), win_s=w, frames=np.array([900, 60, 300, 360, 420], float))
@@ -72,8 +72,8 @@ class DropoutsTest(unittest.TestCase):
         self.assertEqual(d[0].cause, "bewegung")
 
     def test_ohne_karte_ignores_win_s(self):
-        # Ruling R16 (--ohne-karte): Basisregel wie ohne Schalter, win_s == 0 macht keinen Bewegungs-Ausfall;
-        # motion_pct > 30 und Zustand 4 zählen weiter
+        # Ruling R16 (--ohne-karte): base rule as without the switch, win_s == 0 does not make a motion dropout;
+        # motion_pct > 30 and state 4 still count
         ok = [1, 0, 0, 0, 1]
         w = np.array([15, 0, 0, 6, 7], float)
         d = re_.dropouts(*_args(ok, br=[0, 1, 1, 1, 0]), win_s=w, ohne_karte=True)
@@ -87,16 +87,16 @@ class DropoutsTest(unittest.TestCase):
     def test_cause_no_breath_peak(self):
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], br=[0, 1, 1, 0, 0]))
         self.assertEqual(d[0].cause, "keine_atemspitze")
-        # Bewegung hat Vorrang
+        # motion takes precedence
         d = re_.dropouts(*_args([1, 0, 0, 0, 1], br=[0, 1, 1, 1, 0], motion=[0, 0, 31, 0, 0]))
         self.assertEqual(d[0].cause, "bewegung")
-        # br_state == 1 nur in der Minderheit → Rest
+        # br_state == 1 only in the minority → rest
         d = re_.dropouts(*_args([1, 0, 0, 0, 0, 1], br=[0, 1, 0, 0, 0, 0]))
         self.assertEqual(d[0].cause, "rest")
 
     def test_no_person_not_counted(self):
         d = re_.dropouts(*_args([1, 0, 0, 0, 1, 0, 0, 1], state=[2, 0, 0, 2, 2, 0, 2, 2]))
-        # erster Lauf (Reports 1..3): 2 von 3 Zustand 0 → keine Person; zweiter (5, 6): 1 von 2 = 50 % → zählt
+        # first run (reports 1..3): 2 of 3 in state 0 → no person; second (5, 6): 1 of 2 = 50 % → counts
         self.assertEqual([x.start_s for x in d], [5.0])
 
     def test_no_person_counted_on_request(self):
@@ -107,7 +107,7 @@ class DropoutsTest(unittest.TestCase):
         d = re_.dropouts(*_args([1, 1, 0, 0]))
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0].start_s, 2.0)
-        self.assertAlmostEqual(d[0].dur_s, 1.0)  # bis zum letzten Report
+        self.assertAlmostEqual(d[0].dur_s, 1.0)  # up to the last report
 
 
 class SummaryTest(unittest.TestCase):
@@ -116,7 +116,7 @@ class SummaryTest(unittest.TestCase):
         state = np.array([2, 2, 2, 0, 0, 0], float)
         t = np.arange(6, dtype=float)
         s = re_.summary(t, ok, np.full(6, 70.0), state, [])
-        # ohne die drei Zustand-0-Reports: 2 von 3 gültig
+        # without the three state-0 reports: 2 of 3 valid
         self.assertAlmostEqual(s["anteil_gueltig_pct"], 100.0 * 2 / 3)
 
     def test_summary_nan_state_counts_as_person(self):
@@ -133,8 +133,8 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(s["ursachen"]["keine_atemspitze"]["n"], 0)
         self.assertTrue(math.isnan(s["ursachen"]["keine_atemspitze"]["median_s"]))
         self.assertEqual(s["ursachen"]["keine_atemspitze"]["summe_s"], 0.0)
-        self.assertEqual(s["spruenge"], 2)  # 71 → 90 und 91 → 60
-        self.assertEqual(s["summe_s"], 44.0)  # Ausfallzeit über alle Ursachen
+        self.assertEqual(s["spruenge"], 2)  # 71 → 90 and 91 → 60
+        self.assertEqual(s["summe_s"], 44.0)  # dropout time over all causes
 
 
 class DefineHeaderTest(unittest.TestCase):

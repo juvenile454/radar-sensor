@@ -1,7 +1,7 @@
-# A5: DSP-Header der Firmware in der App, zum Nachrechnen von iq3-raw-Aufnahmen (gleiche Quelle wie am PC).
-# V5.2: zweite Bibliothek radardsp_live für die Live-DSP am Handy aus @RAW, mit den schwereren Varianten
-# (A121_DSP_HEAVY = Viterbi + Abzug der Atem-Oberwellen). Getrennte Bibliotheken, weil die Schalter das Layout der
-# DSP-Klasse ändern.
+# A5: firmware DSP header in the app, to replay iq3-raw recordings (same source as on the PC).
+# V5.2: second library radardsp_live for the live DSP on the phone from @RAW, with the heavier variants
+# (A121_DSP_HEAVY = Viterbi + subtraction of breathing harmonics). Separate libraries because the compile switches
+# change the layout of the DSP class.
 cmake_minimum_required(VERSION 3.22.1)
 project(radardsp CXX)
 
@@ -15,11 +15,11 @@ foreach(lib radardsp radardsp_live)
         target_compile_definitions(${lib} PRIVATE A121_DSP_HEAVY)
     endif()
     target_include_directories(${lib} PRIVATE
-        ${REPO_ROOT}/host/dsp_replay          # dsp_replay.h, dsp_live.h + Arduino.h-Ersatz
+        ${REPO_ROOT}/host/dsp_replay          # dsp_replay.h, dsp_live.h + Arduino.h replacement
         ${REPO_ROOT}/firmware/esp32s3/src)    # a121_esp_dsp.h
     set_target_properties(${lib} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-    # Auch im Debug-Build optimiert (sonst langsam) und ohne zusammengefasste Multiply-Add-Befehle: Ergebnis soll
-    # bitgleich zur PC-Fassung (g++ -O2 -ffp-contract=off) sein.
+    # Optimized in the debug build too (otherwise slow) and without fused multiply-add instructions: the result should
+    # be bit-identical to the PC version (g++ -O2 -ffp-contract=off).
     target_compile_options(${lib} PRIVATE -O2 -ffp-contract=off -fno-fast-math -Wall)
     target_link_libraries(${lib} PRIVATE m log)
 endforeach()

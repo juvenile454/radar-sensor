@@ -1,548 +1,548 @@
-# Hardware — Boards, Pins, Verdrahtung
+# Hardware — Boards, Pins, Wiring
 
-Stand 2026-10-27. Pins vor dem ersten Einschalten am echten Board prüfen.
+As of 2026-10-27. Check the pins on the real board before the first power-up.
 
-## Vorhandene Teile
+## Parts on hand
 
-| Teil | Details | Zustand |
+| Part | Details | State |
 |---|---|---|
-| ESP32-S3-DevKitC-1 (ggf. Klon), Modul WROOM-1 **N16R8** | 16 MB Flash, 8 MB Octal-PSRAM, 2× USB-C (nativ + USB-UART), RGB-LED, BOOT/RST | Stiftleisten gelötet |
-| Raspberry Pi Pico (RP2040, Version 2020) | Micro-USB, kein Funk | Stiftleisten fehlen; **zurückgestellt** |
-| Galaxy S26 Ultra | USB-C, USB-Host (OTG) | — |
-| Werkzeug | Lötkolben (kein Heißluft/Reflow) | — |
+| ESP32-S3-DevKitC-1 (possibly a clone), module WROOM-1 **N16R8** | 16 MB flash, 8 MB octal PSRAM, 2× USB-C (native + USB-UART), RGB LED, BOOT/RST | Pin headers soldered |
+| Raspberry Pi Pico (RP2040, 2020 version) | Micro-USB, no radio | Pin headers missing; **on hold** |
+| Galaxy S26 Ultra | USB-C, USB host (OTG) | — |
+| Tools | Soldering iron (no hot air/reflow) | — |
 
-Nicht verwenden: ESP32-S3-CAM aus `esp32-laser-triangulation` (gehört dem anderen Projekt).
+Do not use: the ESP32-S3-CAM from `esp32-laser-triangulation` (belongs to the other project).
 
 ## Waveshare A121 Range Sensor
 
-Quelle: Waveshare-Wiki „A121 Range Sensor“, Produktseite, Schaltplan-PDF (gelesen 2026-10-27).
+Sources: Waveshare wiki "A121 Range Sensor", product page, schematic PDF (read 2026-10-27).
 
-- Versorgung 5 V, max. 80 mA; I/O 3,3 V.
+- Supply 5 V, max. 80 mA; I/O 3.3 V.
 - USB-C → CH342 (USB to 2CH TTL):
-  - Kanal A: STM32-Hauptuart — Exploration Tool und Flashen (BOOT-Taste).
-  - Kanal B: Debug-UART — Ausgabe der UART-Firmwares; **dieselben Leitungen liegen am Stecker (TXD/RXD)**.
-  - Folgerung (laut Schaltplan, ungetestet): Exploration-Server-Rohdaten nur über USB; für Rohdaten zum ESP32 braucht es eigene Firmware auf dem Debug-UART.
-- UART-Firmware: 921 600 Baud. I2C-Firmware: Adresse 0x52 (per Lötbrücke 0x51/0x53), 100/400 kHz.
-- SWDIO/SWCLK-Pads, BOOT- und RESET-Taste vorhanden.
+  - Channel A: STM32 main UART — Exploration Tool and flashing (BOOT button).
+  - Channel B: debug UART — output of the UART firmwares; **the same lines are on the connector (TXD/RXD)**.
+  - Consequence (per the schematic, untested): Exploration Server raw data only over USB; raw data to the ESP32 needs its own firmware on the debug UART.
+- UART firmware: 921,600 baud. I2C firmware: address 0x52 (0x51/0x53 via solder bridge), 100/400 kHz.
+- SWDIO/SWCLK pads, BOOT and RESET buttons present.
 
-### Bring-up am Linux-PC (geprüft 2026-10-30)
+### Bring-up on the Linux PC (verified 2026-10-30)
 
-- USB-ID `1a86:55d2` „USB Dual_Serial“, Seriennr. `5C75025105`, Treiber `cdc_acm` (kein Zusatztreiber).
-- `/dev/serial/by-id/usb-1a86_USB_Dual_Serial_5C75025105-if00` (ttyACM0) = Kanal A, Exploration Server
-  antwortet; `-if02` (ttyACM1) = Kanal B (Debug).
-- Werksfirmware: Exploration Server, `rss_version a121-v1.12.0`, `hardware_name xm125`, max. 2 000 000 Baud.
-- Zugriff braucht Gruppe `dialout` (der Benutzer ist Mitglied; greift nach Neuanmeldung, bis dahin `sg dialout -c …`).
-- Python-Umgebung: `.venv` (Python 3.12, `acconeer-exptool[app]` 7.18.2).
-- Sparse IQ (Profil 3, 40 Punkte, 8 Sweeps, HWAAS 16): ~117 Frames/s. Distance-Detektor läuft.
-- **Ursache `LinkError: recv timeout` beim zweiten Verbinden geklärt und behoben (2026-10-31):**
-  `ExplorationClient._update_baudrate` in `acconeer-exptool` schaltet den STM32 nach dem Öffnen von 115 200 auf
-  2 000 000 Baud, setzt ihn beim `close()` aber nicht zurück. Beim nächsten `Client.open()` öffnet `ExploreSerialLink`
-  wieder mit 115 200 Baud und sendet ein UART-`send_break()`, das über den CH342 (`cdc_acm`) beim ersten Versuch ins
-  Timeout läuft. Lösung in `host/a121_vitalaufnahme.py` und `host/a121_livemonitor.py`: `override_baudrate=921600`.
+- USB ID `1a86:55d2` "USB Dual_Serial", serial no. `5C75025105`, driver `cdc_acm` (no extra driver).
+- `/dev/serial/by-id/usb-1a86_USB_Dual_Serial_5C75025105-if00` (ttyACM0) = channel A, Exploration Server
+  responds; `-if02` (ttyACM1) = channel B (debug).
+- Factory firmware: Exploration Server, `rss_version a121-v1.12.0`, `hardware_name xm125`, max. 2,000,000 baud.
+- Access needs the group `dialout` (the user is a member; takes effect after logging in again, until then `sg dialout -c …`).
+- Python environment: `.venv` (Python 3.12, `acconeer-exptool[app]` 7.18.2).
+- Sparse IQ (profile 3, 40 points, 8 sweeps, HWAAS 16): ~117 frames/s. Distance detector runs.
+- **Cause of `LinkError: recv timeout` on the second connect found and fixed (2026-10-31):**
+  `ExplorationClient._update_baudrate` in `acconeer-exptool` switches the STM32 from 115,200 to 2,000,000 baud after
+  opening, but does not reset it on `close()`. On the next `Client.open()`, `ExploreSerialLink` opens at 115,200 baud
+  again and sends a UART `send_break()`, which times out on the first attempt through the CH342 (`cdc_acm`). Fix in
+  `host/a121_vitalaufnahme.py` and `host/a121_livemonitor.py`: `override_baudrate=921600`.
 
-### MX1.25-10-Pin-Stecker (laut Pinout-Grafik, Reihenfolge von oben)
+### MX1.25 10-pin connector (per the pinout graphic, order from the top)
 
-| # | Signal | Funktion |
+| # | Signal | Function |
 |---|---|---|
-| 1 | 5V | Versorgung |
-| 2 | GND | Masse |
-| 3 | RXD | UART RX (in den STM32) |
-| 4 | TXD | UART TX (aus dem STM32) |
-| 5 | SDA | I2C Daten |
-| 6 | SCL | I2C Takt |
-| 7 | MCU_INT | I2C-Busy-Signal |
-| 8 | WAKE_UP | I2C-Wake-up |
-| 9 | GPIO0 | frei |
-| 10 | GPIO1 | frei |
+| 1 | 5V | Supply |
+| 2 | GND | Ground |
+| 3 | RXD | UART RX (into the STM32) |
+| 4 | TXD | UART TX (out of the STM32) |
+| 5 | SDA | I2C data |
+| 6 | SCL | I2C clock |
+| 7 | MCU_INT | I2C busy signal |
+| 8 | WAKE_UP | I2C wake-up |
+| 9 | GPIO0 | free |
+| 10 | GPIO1 | free |
 
-Pin-Nummern sind auf der Grafik nicht aufgedruckt; Schaltplan nummeriert umgekehrt (5V = 10).
-Vor dem Löten mit Multimeter 5V/GND am Kabel bestätigen.
+Pin numbers are not printed on the graphic; the schematic numbers them the other way round (5V = 10).
+Confirm 5V/GND on the cable with a multimeter before soldering.
 
-Aus der Schaltplan-Netzliste (H6, gelesen 2026-10-30, ungeprüft am Board): 1 GPIO1, 2 GPIO0, 3 WAKE_UP,
-4 MCU_INT, 5 SCL, 6 SDA, 7 DEBUG_TX, 8 DEBUG_RX, 9 GND, 10 5V — passt zur Tabelle oben (umgekehrt).
-Weitere Schaltplan-Fakten: I2C-Pull-ups 4,7 kΩ nach 3,3 V auf dem A121-Board (R13/R14);
-USB-VBUS speist das 5V-Netz über Schottky-Diode D3 (MBR230) → 5 V vom Stecker fließt nicht zurück in den PC-USB.
-**WAKE_UP und MCU_INT hängen am CH342** (2026-10-31 aus den Vektorpfaden des Schaltplan-PDFs nachgezogen;
-Platine nicht nachgemessen): Netz WAKE_UP = CH342 DTR0 (Pin 23, Ausgang) + Stecker Pin 3 + STM32 PA11;
-Netz MCU_INT = CH342 DSR0 (Pin 22, Eingang) + Stecker Pin 4 + STM32 PB9. Direkte Leitungen, keine
-Serienwiderstände, keine Pull-ups/-downs. CH342: VIO = 3V3 (Pegel 3,3 V), VDD5 **und** VBUS-Erkennung am 5V-Netz
-→ der CH342 läuft immer mit, auch ohne USB, und treibt WAKE_UP aktiv. Stecker-Pins 1/2 = MISC_GPIO1 (PA4) /
-MISC_GPIO0 (PB1); NRESET und BOOT0 liegen nicht am Stecker. Am Board bestätigt: GPIO17 lässt sich gegen die Leitung
-weder auf HIGH (2026-10-31 früh) noch auf LOW (nach Neustart) ziehen. Folge: Der ESP32 steuert WAKE_UP nicht; die
-Bring-up-Firmware liest GPIO17 nur (`wake` treibt nur auf Befehl und gibt bei Widerstand sofort frei).
-Schaltplan: https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Range_Sensor_schematic.pdf
-(sha256 `38e88c1ef357ba4f1ce77ac87b70f4a609cc197ace7a70b9a56eb02349627440`, nicht im Repo).
+From the schematic netlist (H6, read 2026-10-30, not verified on the board): 1 GPIO1, 2 GPIO0, 3 WAKE_UP,
+4 MCU_INT, 5 SCL, 6 SDA, 7 DEBUG_TX, 8 DEBUG_RX, 9 GND, 10 5V — matches the table above (reversed).
+Further schematic facts: I2C pull-ups 4.7 kΩ to 3.3 V on the A121 board (R13/R14);
+USB VBUS feeds the 5V net through Schottky diode D3 (MBR230) → 5 V from the connector does not flow back into the PC USB.
+**WAKE_UP and MCU_INT are connected to the CH342** (added 2026-10-31 from the vector paths of the schematic PDF;
+board not re-measured): net WAKE_UP = CH342 DTR0 (pin 23, output) + connector pin 3 + STM32 PA11;
+net MCU_INT = CH342 DSR0 (pin 22, input) + connector pin 4 + STM32 PB9. Direct lines, no
+series resistors, no pull-ups/pull-downs. CH342: VIO = 3V3 (3.3 V level), VDD5 **and** VBUS detection on the 5V net
+→ the CH342 always runs, even without USB, and actively drives WAKE_UP. Connector pins 1/2 = MISC_GPIO1 (PA4) /
+MISC_GPIO0 (PB1); NRESET and BOOT0 are not on the connector. Confirmed on the board: GPIO17 cannot be pulled against the line,
+neither to HIGH (early 2026-10-31) nor to LOW (after restart). Consequence: the ESP32 does not control WAKE_UP; the
+bring-up firmware only reads GPIO17 (`wake` drives only on command and releases immediately on resistance).
+Schematic: https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Range_Sensor_schematic.pdf
+(sha256 `38e88c1ef357ba4f1ce77ac87b70f4a609cc197ace7a70b9a56eb02349627440`, not in the repo).
 
-## Verdrahtung ESP32-S3 ↔ A121 (gesteckt und geprüft 2026-10-30)
+## Wiring ESP32-S3 ↔ A121 (plugged in and verified 2026-10-30)
 
-I2C/INT/WAKE wie in den Waveshare-ESP32-S3-Demos (geprüft im Demo-Code 2026-10-30: SDA 15, SCL 16,
-WAKEUP 17, BUSY 18, Adresse 0x52, 400 kHz). MCU_INT high = STM32 bereit.
+I2C/INT/WAKE as in the Waveshare ESP32-S3 demos (verified in the demo code 2026-10-30: SDA 15, SCL 16,
+WAKEUP 17, BUSY 18, address 0x52, 400 kHz). MCU_INT high = STM32 ready.
 
-| A121 | ESP32-S3 | Zweck |
+| A121 | ESP32-S3 | Purpose |
 |---|---|---|
-| 5V | 5Vin | Versorgung aus USB (Nachbau-Board: nur mit geschlossener IN-OUT-Brücke, siehe unten) |
+| 5V | 5Vin | Supply from USB (clone board: only with the IN-OUT bridge closed, see below) |
 | GND | GND | — |
-| RXD | GPIO4 (UART1 TX) | Befehle → STM32 |
-| TXD | GPIO5 (UART1 RX) | Daten ← STM32 |
+| RXD | GPIO4 (UART1 TX) | Commands → STM32 |
+| TXD | GPIO5 (UART1 RX) | Data ← STM32 |
 | SDA | GPIO15 | I2C |
 | SCL | GPIO16 | I2C |
-| WAKE_UP | GPIO17 | Wake-up – vom CH342 (DTR0) getrieben, ESP32 liest nur |
+| WAKE_UP | GPIO17 | Wake-up – driven by the CH342 (DTR0), ESP32 only reads |
 | MCU_INT | GPIO18 | Busy |
-| GPIO0/1 | — | nicht verbunden |
+| GPIO0/1 | — | not connected |
 
-Adernfarben des mitgelieferten MX1.25→Dupont-Kabels (am Board geprüft 2026-10-30; Funktion bestätigt:
-PWR-LED an, alle Leitungen High, I2C antwortet):
+Wire colors of the supplied MX1.25→Dupont cable (verified on the board 2026-10-30; function confirmed:
+PWR LED on, all lines high, I2C responds):
 
-| A121 | Ader | ESP32-S3 (DevKitC-1, linke Leiste J1) |
+| A121 | Wire | ESP32-S3 (DevKitC-1, left header J1) |
 |---|---|---|
-| 5V | rot | 5Vin |
-| GND | schwarz | GND |
-| RXD | blau | GPIO4 |
-| TXD | gelb | GPIO5 |
+| 5V | red | 5Vin |
+| GND | black | GND |
+| RXD | blue | GPIO4 |
+| TXD | yellow | GPIO5 |
 | SDA | orange | GPIO15 |
-| SCL | grün | GPIO16 |
-| MCU_INT | weiß | GPIO18 |
-| WAKE_UP | lila | GPIO17 |
-| GPIO0 | braun | frei, Ende isolieren |
-| GPIO1 | grau | frei, Ende isolieren |
+| SCL | green | GPIO16 |
+| MCU_INT | white | GPIO18 |
+| WAKE_UP | purple | GPIO17 |
+| GPIO0 | brown | free, insulate the end |
+| GPIO1 | gray | free, insulate the end |
 
-### Bring-up-Ablauf (Reihenfolge einhalten)
+### Bring-up procedure (keep this order)
 
-Firmware: `firmware/esp32s3` (PlatformIO, `pio run`), Konsole über nativen USB-Port, Befehle `help`.
-Flashen: `pio run -t upload --upload-port <by-id-Port>` (Standard-Umgebung ohne Schalter; V6 nur mit `-e esp32s3-n16r8-reacq`). Danach bleibt der S3 im Download-Modus
-(PIO-esptool 4.5 kann am USB-JTAG nicht sauber neu starten) → `esptool --chip esp32s3 -p <Port>
---after watchdog-reset read-mac` (esptool ≥ 4.8, `uv tool install esptool`) oder RST drücken.
-Erstes Flashen über der Händler-Demo ging nur per BOOT+RST von Hand (Demo nutzt keinen USB-JTAG-Modus).
-2026-11-02: `pio run -t upload` brach zweimal reproduzierbar beim Umschalten auf 460 800 Baud ab („No serial data
-received“, vor dem Schreiben). Gegangen ist dieselbe Schreibfolge mit esptool 5.6 ohne Umschalten, mit Neustart:
+Firmware: `firmware/esp32s3` (PlatformIO, `pio run`), console over the native USB port, command `help`.
+Flashing: `pio run -t upload --upload-port <by-id-Port>` (default environment without switches; V6 only with `-e esp32s3-n16r8-reacq`). Afterwards the S3 stays in download mode
+(PIO esptool 4.5 cannot restart cleanly over USB-JTAG) → `esptool --chip esp32s3 -p <Port>
+--after watchdog-reset read-mac` (esptool ≥ 4.8, `uv tool install esptool`) or press RST.
+The first flash over the seller's demo only worked by hand with BOOT+RST (the demo does not use USB-JTAG mode).
+2026-11-02: `pio run -t upload` failed twice, reproducibly, when switching to 460,800 baud ("No serial data
+received", before writing). The same write sequence worked with esptool 5.6 without switching, with restart:
 `esptool --chip esp32s3 --port <by-id-Port> --baud 115200 --after watchdog-reset write-flash -z --flash-mode dio
 --flash-freq 80m --flash-size 16MB 0x0 .pio/build/esp32s3-n16r8/bootloader.bin 0x8000 …/partitions.bin 0xe000
 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin 0x10000 …/firmware.bin`
-(im Ordner `firmware/esp32s3`, nach `pio run`). Zugriff auf den Port braucht die Gruppe `dialout` in der laufenden
-Anmeldung; bei aktivem Linger erst nach einem Neustart.
-Konsole mit DTR/RTS unverändert öffnen, sonst Reset in den Download-Modus.
+(in the folder `firmware/esp32s3`, after `pio run`). Access to the port needs the group `dialout` in the running
+login; with linger active, only after a reboot.
+Open the console with DTR/RTS unchanged, otherwise it resets into download mode.
 
-1. **Kabel prüfen:** Liegt der Box ein MX1.25→Dupont-Kabel bei? Dann zuerst ohne Löten auf die
-   ESP32-Stiftleisten stecken. Adernfarben notieren.
-2. **5V/GND messen:** A121 per USB am PC, Multimeter am Kabelende: 5V-Ader gegen GND ≈ 4,5–5 V
-   (nach Diode D3). Danach USB wieder ab. Erst dann Farben → Signale festschreiben.
-3. **ESP32 allein:** nativer USB-Port an den PC, Port identifizieren (`ls -l /dev/serial/by-id`),
-   Bring-up-Firmware flashen, `info` (16 MB Flash, 8 MB PSRAM erwartet), `led 48`/`led 38`.
-4. **5V-Pin des ESP32 messen**, während er nur über den nativen Port versorgt wird (Klon-Boards).
-5. **Verdrahten – alles stromlos:** Tabelle oben. RXD/TXD kreuzen (A121-RXD ← GPIO4, A121-TXD → GPIO5).
-6. **Einschalten nur über den ESP32-USB.** Rote LED am A121 muss leuchten. `scan`: mit Werksfirmware
-   (Exploration Server) wird **nichts** unter 0x52 erwartet.
-7. **STM32 auf I2C-Firmware flashen** (nur mit Freigabe des Projektinhabers; umkehrbar): A121 per USB an den PC,
-   Kanal A, `python -m acconeer.exptool.flash flash XM125 -p /dev/ttyACMx -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
-   (`ttyACMx` = Ziel von `…-if00`, by-id-Pfad wird nicht akzeptiert). Zurück: gleiche Zeile mit `acc_exploration_server_a121.bin`.
-   Solange I2C-Firmware drauf ist, gehen PC-Messungen mit dem Exploration Tool nicht.
-   **Erledigt 2026-10-30:** `i2c_distance_detector.bin` (sha256 `e659242d…44e4f`) mit Freigabe des Projektinhabers geflasht,
-   100 % ohne Fehler. DFU-Modus nur von Hand: BOOT halten, RESET tippen, BOOT loslassen
-   (Tool erwartet Port als `/dev/ttyACMx`, nicht den by-id-Pfad). Danach RESET für Start.
-8. **I2C prüfen:** `scan` → 0x52, `ver` → VERSION/APPLICATION_ID lesbar.
-   **Erledigt 2026-10-30:** A121 nur über ESP32-5Vin versorgt, alle Leitungen High (`probe`),
-   `scan` → genau ein Gerät 0x52; `ver`: VERSION 0x00010C00 (= 1.12.0), APPLICATION_ID 1,
-   DETECTOR_STATUS 0x00000007, PROTOCOL_STATUS 0. Vor dem Flashen war SCL low und MCU_INT low (Werksfirmware,
-   vermutlich Phantomspeisung über GPIO4) – mit I2C-Firmware und TX hochohmig behoben.
-9. **UART (optional):** mit einer `example_*`-UART-Firmware gibt der STM32 Text auf dem Debug-UART aus;
-   `uart` im ESP32 reicht ihn an USB durch. Auch mit `i2c_distance_detector` nutzbar: Kommando 32
-   (`w 0x100 32`) schaltet Logs ein, 34 gibt die Konfiguration aus.
-10. **Distanzmessung über I2C** – siehe nächster Abschnitt. **Erledigt 2026-10-31** (Wand 570 mm erkannt).
+1. **Check the cable:** Is an MX1.25→Dupont cable included in the box? If so, first plug it onto the
+   ESP32 pin headers without soldering. Note the wire colors.
+2. **Measure 5V/GND:** A121 on the PC via USB, multimeter at the cable end: 5V wire against GND ≈ 4.5–5 V
+   (after diode D3). Then unplug USB again. Only then fix colors → signals.
+3. **ESP32 alone:** native USB port to the PC, identify the port (`ls -l /dev/serial/by-id`),
+   flash the bring-up firmware, `info` (16 MB flash, 8 MB PSRAM expected), `led 48`/`led 38`.
+4. **Measure the ESP32 5V pin** while it is powered only through the native port (clone boards).
+5. **Wire it up – everything unpowered:** table above. Cross RXD/TXD (A121 RXD ← GPIO4, A121 TXD → GPIO5).
+6. **Power on only through the ESP32 USB.** The red LED on the A121 must light up. `scan`: with the factory firmware
+   (Exploration Server), **nothing** is expected at 0x52.
+7. **Flash the STM32 with I2C firmware** (only with approval from the project owner; reversible): A121 on the PC via USB,
+   channel A, `python -m acconeer.exptool.flash flash XM125 -p /dev/ttyACMx -i vendor/firmware/A121_Firmware/i2c_distance_detector.bin`
+   (`ttyACMx` = target of `…-if00`, the by-id path is not accepted). Back: the same line with `acc_exploration_server_a121.bin`.
+   While the I2C firmware is on it, PC measurements with the Exploration Tool do not work.
+   **Done 2026-10-30:** `i2c_distance_detector.bin` (sha256 `e659242d…44e4f`) flashed with approval from the project owner,
+   100 % without errors. DFU mode only by hand: hold BOOT, tap RESET, release BOOT
+   (the tool expects the port as `/dev/ttyACMx`, not the by-id path). Then RESET to start.
+8. **Check I2C:** `scan` → 0x52, `ver` → VERSION/APPLICATION_ID readable.
+   **Done 2026-10-30:** A121 powered only through ESP32 5Vin, all lines High (`probe`),
+   `scan` → exactly one device 0x52; `ver`: VERSION 0x00010C00 (= 1.12.0), APPLICATION_ID 1,
+   DETECTOR_STATUS 0x00000007, PROTOCOL_STATUS 0. Before flashing, SCL was low and MCU_INT low (factory firmware,
+   probably phantom powering through GPIO4) – fixed with I2C firmware and TX high-impedance.
+9. **UART (optional):** with an `example_*` UART firmware the STM32 prints text on the debug UART;
+   `uart` on the ESP32 passes it through to USB. Also usable with `i2c_distance_detector`: command 32
+   (`w 0x100 32`) switches logs on, 34 prints the configuration.
+10. **Distance measurement over I2C** – see the next section. **Done 2026-10-31** (wall at 570 mm detected).
 
-### I2C-Distanzdetektor am ESP32 (Stand 2026-10-31)
+### I2C distance detector on the ESP32 (as of 2026-10-31)
 
-Konsole (`help`): `info`, `bus`, `probe`, `scan`, `ver`, `cfg [start end]` (mm), `vital [start end]` (mm, Standard 450–850),
-`zoom a b [p s t]`, `auto [sek]` (vollautomatischer mobiler Modus: `WIDE_SEARCH 150–2500 mm` → `TARGET_LOCK` → `VITAL_ZOOM` mit Auto-Rezoom),
-`dist [n]` (bis 5000), `r <reg>`, `w <reg> <wert>`, `wake 0|1|z`, `uart`, `led 48|38`,
-`link [i2c|srv]` (seit 2026-10-31 abends: I2C-Befehle nur bei `link i2c`, Server-Befehle siehe unten).
-Register/Kommandos wie Waveshare-Demo (`…/ESP32S3/Arduino/A121_Distance_Detector`): START 0x40, END 0x41,
+Console (`help`): `info`, `bus`, `probe`, `scan`, `ver`, `cfg [start end]` (mm), `vital [start end]` (mm, default 450–850),
+`zoom a b [p s t]`, `auto [sek]` (fully automatic mobile mode: `WIDE_SEARCH 150–2500 mm` → `TARGET_LOCK` → `VITAL_ZOOM` with auto rezoom),
+`dist [n]` (up to 5000), `r <reg>`, `w <reg> <wert>`, `wake 0|1|z`, `uart`, `led 48|38`,
+`link [i2c|srv]` (since the evening of 2026-10-31: I2C commands only with `link i2c`, server commands see below).
+Registers/commands as in the Waveshare demo (`…/ESP32S3/Arduino/A121_Distance_Detector`): START 0x40, END 0x41,
 MAX_STEP_LENGTH 0x42, CLOSE_RANGE_LEAKAGE 0x43, SIGNAL_QUALITY 0x44 (×1000), MAX_PROFILE 0x45,
-THRESHOLD_METHOD 0x46 (1 fest/Amplitude, 2 aufgezeichnet, 3 CFAR, 4 fest/Stärke), PEAK_SORTING 0x47 (1 nächstes, 2 stärkstes),
+THRESHOLD_METHOD 0x46 (1 fixed/amplitude, 2 recorded, 3 CFAR, 4 fixed/strength), PEAK_SORTING 0x47 (1 closest, 2 strongest),
 FIXED_AMPLITUDE_THRESHOLD 0x49 (×1000), THRESHOLD_SENSITIVITY 0x4A (×1000), FIXED_STRENGTH_THRESHOLD 0x4C (×1000 dB),
-COMMAND 0x100 (1 Konfig+Kalibrierung, 2 Messen, 32/33 UART-Logs an/aus, 34 Konfig loggen, 1381192737 Modul-Reset).
+COMMAND 0x100 (1 config+calibration, 2 measure, 32/33 UART logs on/off, 34 log config, 1381192737 module reset).
 
-Geprüft und optimiert (2026-10-31):
-- **I2C-Takt & Interrupt-Polling:** Bus in `firmware/esp32s3/src/main.cpp` auf **400 kHz** umgestellt; `waitNotBusy()`
-  pollt den Hardware-Pin `MCU_INT` (`GPIO18`, LOW = beschäftigt, HIGH = bereit) im Mikrosekundenraster statt fester
-  `delay(10)`/`delay(5)`-Wartezeiten. Dadurch sinkt die Messdauer auf ~24,5 ms (**37,1 Hz** Dauer-Abtastrate bei `dist 1800`).
-- **Volle Stärke-Auflösung:** `dist` gibt `REG_PEAKn_STRENGTH` jetzt mit voller **0,001-dB-Auflösung** (`%.3f dB`) aus.
-- **Konfiguration greift nur einmal nach Reset.** Spätere APPLY-Kommandos werden ohne Fehlermeldung ignoriert
-  (Status sofort 0x3FF, Messung unverändert). `vital [start end]` führt den Modul-Reset (`1381192737`) automatisch aus.
-- Nach einem Kommando wartet `waitNotBusy()` kurz auf die fallende Flanke von `MCU_INT` (max. 2 ms) und kehrt sofort
-  zurück, sobald `MCU_INT` wieder HIGH ist.
-- ESP32-Reset setzt den A121 nicht zurück (Register bleiben).
-- Standardwerte nach Modul-Reset: Profil max. 5, CFAR, Sensitivität 0,5, Signalqualität 15, Leckage-Kompensation an,
-  Sortierung „stärkstes“.
+Verified and optimized (2026-10-31):
+- **I2C clock & interrupt polling:** bus in `firmware/esp32s3/src/main.cpp` switched to **400 kHz**; `waitNotBusy()`
+  polls the hardware pin `MCU_INT` (`GPIO18`, LOW = busy, HIGH = ready) at microsecond granularity instead of fixed
+  `delay(10)`/`delay(5)` waits. This reduces the measurement time to ~24.5 ms (**37.1 Hz** continuous sampling rate at `dist 1800`).
+- **Full strength resolution:** `dist` now prints `REG_PEAKn_STRENGTH` with the full **0.001 dB resolution** (`%.3f dB`).
+- **The configuration takes effect only once after reset.** Later APPLY commands are ignored without an error message
+  (status immediately 0x3FF, measurement unchanged). `vital [start end]` runs the module reset (`1381192737`) automatically.
+- After a command, `waitNotBusy()` briefly waits for the falling edge of `MCU_INT` (max. 2 ms) and returns immediately
+  as soon as `MCU_INT` is HIGH again.
+- An ESP32 reset does not reset the A121 (registers are kept).
+- Defaults after module reset: max profile 5, CFAR, sensitivity 0.5, signal quality 15, leakage compensation on,
+  sorting "strongest".
 
-**Wandtest 2026-10-31 (gelöst):** A121 nur über ESP32-5Vin versorgt, Backsteinwand 570 mm (Maßband),
-hyperbolische Linse, Ablauf Modul-Reset → `cfg 300 1000` (CFAR, sonst Standard) → `dist 50`:
-**50/50 Messungen mit genau einem Ziel, Median 575 mm, σ 1,3 mm, Spanne 572–578 mm**, Stärke 2,3–3,1 dB,
-Messung ~18 ms. (+5 mm zum Maßband, +16 mm zur PC-Referenz 0,5585 m – andere Detektor-Konfiguration,
-nicht weiter bewertet.) Log: `~/Data/radar-sensor/2026-10-31_105545_esp_i2c_wand570.log`.
-Detektor-Konfiguration laut Debug-UART (`w 0x100 34`): 2 Subsweeps, Profil 1 (HWAAS 2) + Profil 3 (HWAAS 1),
-Startpunkt 68 bzw. 120. Versorgung über ESP32 und I2C-Kette funktionieren damit für ein starkes Ziel.
+**Wall test 2026-10-31 (solved):** A121 powered only through ESP32 5Vin, brick wall at 570 mm (tape measure),
+hyperbolic lens, sequence module reset → `cfg 300 1000` (CFAR, otherwise default) → `dist 50`:
+**50/50 measurements with exactly one target, median 575 mm, σ 1.3 mm, range 572–578 mm**, strength 2.3–3.1 dB,
+measurement ~18 ms. (+5 mm vs. the tape measure, +16 mm vs. the PC reference 0.5585 m – different detector configuration,
+not evaluated further.) Log: `~/Data/radar-sensor/2026-10-31_105545_esp_i2c_wand570.log`.
+Detector configuration per the debug UART (`w 0x100 34`): 2 subsweeps, profile 1 (HWAAS 2) + profile 3 (HWAAS 1),
+start point 68 and 120 respectively. Power through the ESP32 and the I2C chain therefore work for a strong target.
 
-**Warum die Testperson an Tag 1 nicht erkannt wurde — Ursache geklärt und mit `vital` gelöst (2026-10-31):**
-1. **CFAR-Sensitivitätsformel:** In `acconeer/exptool/a121/algo/distance/_processors.py` lautet die Abbildung
-   `_sensitivity_to_standard_deviations = 8.0 - 7.0 * sensitivity`. Das Absenken von `0.5` auf `0.2` an Tag 1 hat die
-   Schwelle von $4{,}5\,\sigma$ auf $6{,}6\,\sigma$ **erhöht** (unempfindlicher gemacht).
-2. **CFAR-Selbstmaskierung durch `PROFILE_3`:** Mit Standard `max_profile = 5` wählt der Detektor ab 300 mm `PROFILE_3`
-   (140 mm Halbwertsbreite, 280 mm CFAR-Schutzfenster). Ein ausgedehnter menschlicher Oberkörper + Stuhl/Tisch hebt
-   damit seinen eigenen CFAR-Hintergrund an.
-3. **`close_range_leakage_cancellation` (`0x43 = 1`):** Sitzt die Person während `cfg` bereits vor dem Sensor,
-   kalibriert die Nahbereichs-Leckagekompensation Teile des ruhenden Echos weg.
-- **Lösung (`vital [start end]` in `firmware/esp32s3/src/main.cpp`):** Modul-Reset → `0x43 = 0` (Leckage-Kalibrierung aus),
-  `0x42 = 1` (Schrittweite 2,5 mm), `0x44 = 25000` (Signalqualität 25,0 dB → hohe HWAAS), `0x45 = 1` (`PROFILE_1`,
-  40 mm Halbwertsbreite trennt Vorderbrust ~675 mm sauber von Oberkörper/Schulter ~730 mm), `0x46 = 4` (`FIXED_STRENGTH`),
-  `0x47 = 1` (`CLOSEST`), `0x4C = -25000` (−25,0 dB). Kalibrierung dauert nur 102 ms; Trefferquote auf den Brustkorb der Testperson
-  bei ~650–740 mm: **3608/3608 Frames (100,0 %)**. Host-Skript: `host/a121_esp_vital.py`.
+**Why the test subject was not detected on day 1 — cause found and solved with `vital` (2026-10-31):**
+1. **CFAR sensitivity formula:** In `acconeer/exptool/a121/algo/distance/_processors.py` the mapping is
+   `_sensitivity_to_standard_deviations = 8.0 - 7.0 * sensitivity`. Lowering `0.5` to `0.2` on day 1 **raised**
+   the threshold from $4.5\,\sigma$ to $6.6\,\sigma$ (made it less sensitive).
+2. **CFAR self-masking by `PROFILE_3`:** With the default `max_profile = 5`, the detector picks `PROFILE_3` from 300 mm
+   (140 mm half-width, 280 mm CFAR guard window). An extended human torso + chair/table raises
+   its own CFAR background that way.
+3. **`close_range_leakage_cancellation` (`0x43 = 1`):** If the person already sits in front of the sensor during `cfg`,
+   the close-range leakage compensation calibrates away parts of the static echo.
+- **Solution (`vital [start end]` in `firmware/esp32s3/src/main.cpp`):** module reset → `0x43 = 0` (leakage calibration off),
+  `0x42 = 1` (step length 2.5 mm), `0x44 = 25000` (signal quality 25.0 dB → high HWAAS), `0x45 = 1` (`PROFILE_1`,
+  40 mm half-width cleanly separates the front of the chest ~675 mm from torso/shoulder ~730 mm), `0x46 = 4` (`FIXED_STRENGTH`),
+  `0x47 = 1` (`CLOSEST`), `0x4C = -25000` (−25.0 dB). Calibration takes only 102 ms; hit rate on the test subject's chest
+  at ~650–740 mm: **3608/3608 frames (100.0 %)**. Host script: `host/a121_esp_vital.py`.
 
-**Hänger beim Einschalten 2026-10-31:** Nach dem Einstecken des ESP32 antwortete der A121
-nicht: `scan` leer, MCU_INT und WAKE_UP hart LOW (ESP32 treibt GPIO17 HIGH, liest aber 0; ohne lila Ader ist
-GPIO17 einwandfrei), RESET-Taste half nicht. Nach frischem Einschalten (erst per A121-USB, dann wieder über
-ESP32-5Vin) lief alles normal, `probe` → alle sechs Leitungen HIGH.
-Wahrscheinliche Ursache laut Schaltplan (s. o.): Der CH342 hielt WAKE_UP über DTR0 auf LOW → STM32 schläft, RESET
-ändert daran nichts. Passender Mechanismus (Hypothese, nicht reproduziert): Laut CH342-Datenblatt liest der Chip
-DTR0 beim Einschalten als Konfigurationseingang; liegt der Pin dann LOW (Pull-down 3–8 kΩ), schaltet er auf
-TNOW0 um (RS485-Sendeanzeige, LOW solange nichts gesendet wird) – bis zum nächsten Stromlos-Machen. Auslöser
-könnte der ESP32-S3 sein: GPIO17 gibt beim Einschalten ~60 µs aktiv LOW aus (ESP32-S3-Datenblatt v2.2,
-Tabelle 2-2), und ESP32 und A121 bekommen über 5Vin gleichzeitig Strom. Die lockere grüne Ader (SCL) zur selben
-Zeit ist als Ursache weniger wahrscheinlich, aber nicht ausgeschlossen.
-Bis zur Firmware-Änderung am 2026-10-31 trieben `ver`/`cfg` GPIO17 auf HIGH – an diesem Morgen also gegen
-den CH342 (ca. 20 min, beide Seiten 3,3-V-Push-Pull). Seitdem treibt die Firmware WAKE_UP nicht mehr; `ver`/`cfg`
-melden ein LOW nur noch.
-Regel: Nach Umstecken einer Ader oder bei `WAKE_UP ist LOW` den A121 stromlos machen und neu einschalten,
-dann `probe` (alle HIGH) und `ver` prüfen, bevor gemessen wird. Hilft das nicht: A121 kurz per USB an den PC
-(rote Ader vorher ab).
+**Hang at power-up 2026-10-31:** After plugging in the ESP32, the A121 did not
+respond: `scan` empty, MCU_INT and WAKE_UP hard LOW (the ESP32 drives GPIO17 HIGH but reads 0; without the purple wire
+GPIO17 is fine), the RESET button did not help. After a fresh power-up (first via A121 USB, then again through
+ESP32 5Vin) everything ran normally, `probe` → all six lines HIGH.
+Probable cause per the schematic (see above): the CH342 held WAKE_UP LOW through DTR0 → STM32 sleeps, RESET
+changes nothing about that. A matching mechanism (hypothesis, not reproduced): according to the CH342 datasheet the chip
+reads DTR0 at power-up as a configuration input; if the pin is then LOW (pull-down 3–8 kΩ), it switches to
+TNOW0 (RS485 transmit indicator, LOW as long as nothing is being sent) – until the next power cycle. The trigger
+could be the ESP32-S3: GPIO17 outputs active LOW for ~60 µs at power-up (ESP32-S3 datasheet v2.2,
+table 2-2), and the ESP32 and A121 get power at the same time through 5Vin. The loose green wire (SCL) at the same
+time is a less likely cause, but not ruled out.
+Until the firmware change on 2026-10-31, `ver`/`cfg` drove GPIO17 HIGH – so that morning against
+the CH342 (about 20 min, both sides 3.3 V push-pull). Since then the firmware no longer drives WAKE_UP; `ver`/`cfg`
+only report a LOW.
+Rule: after re-plugging a wire or on `WAKE_UP ist LOW`, power the A121 down and switch it on again,
+then check `probe` (all HIGH) and `ver` before measuring. If that does not help: connect the A121 to the PC via USB briefly
+(red wire disconnected beforehand).
 
-### Stromsparmodus über ESP32 (Analyse 2026-10-31)
+### Low-power mode via ESP32 (analysis 2026-10-31)
 
-Quellen: Acconeer „I2C Distance Detector User Guide“ (Stand a121-v1.3.0; unsere Firmware ist 1.12.0 – Ablauf
-dort als gleich angenommen, nicht geprüft), XM125-Datenblatt v1.2, CH342-Datenblatt 1E, Waveshare-Schaltplan.
-- Der Stromsparzustand von `i2c_distance_detector` wird **nur über WAKE_UP** gesteuert, es gibt keinen
-  I2C-Befehl dafür. Schlafen: MCU_INT HIGH abwarten → WAKE_UP LOW → MCU_INT geht LOW. Wecken: WAKE_UP HIGH →
-  MCU_INT HIGH abwarten → I2C. Optional Register 0x80 „Measure On Wakeup“: misst bei jedem Wecken selbst.
-  XM125-Datenblatt (Modul, nicht dieses Board): Ruhestrom Hibernate 17,7 µA, Off 6,9 µA.
-- Auf diesem Board treibt der CH342 WAKE_UP (s. Schaltplan-Fakten). Ohne USB-Host steht DTR0 auf inaktiv = HIGH
-  → **der A121 ist dauerhaft wach; der ESP32 kann ihn heute nicht schlafen legen.** Am Gerät bestätigt: GPIO17
-  lässt sich nicht gegen den CH342 ziehen (`wake 0` → Pegel bleibt 1).
-- Braun/grau (MISC_GPIO0/1) spielen für die Standard-Firmware beim Stromsparen keine Rolle; dass sie nicht am
-  ESP32 hängen, schränkt heute nichts ein. NRESET liegt nicht am Stecker → hängt der A121 (s. o.), hat der ESP32
-  keinen Weg, ihn neu zu starten.
-- Grundverbrauch des Boards ohne A121/STM32 (Schätzung, nicht gemessen): PWR-LED über 2,2 kΩ an 3V3 ≈ 0,6 mA,
-  CH342 im Suspend 0,09–0,16 mA (Datenblatt), dazu Ruhestrom des LDO RT9193 → grob ~1 mA, also weit mehr als
-  der Hibernate-Wert des Moduls.
+Sources: Acconeer "I2C Distance Detector User Guide" (as of a121-v1.3.0; our firmware is 1.12.0 – procedure
+assumed to be the same there, not verified), XM125 datasheet v1.2, CH342 datasheet 1E, Waveshare schematic.
+- The low-power state of `i2c_distance_detector` is controlled **only through WAKE_UP**; there is no
+  I2C command for it. Sleep: wait for MCU_INT HIGH → WAKE_UP LOW → MCU_INT goes LOW. Wake: WAKE_UP HIGH →
+  wait for MCU_INT HIGH → I2C. Optional register 0x80 "Measure On Wakeup": measures by itself on every wake.
+  XM125 datasheet (module, not this board): quiescent current hibernate 17.7 µA, off 6.9 µA.
+- On this board the CH342 drives WAKE_UP (see schematic facts). Without a USB host, DTR0 sits at inactive = HIGH
+  → **the A121 is permanently awake; the ESP32 cannot put it to sleep today.** Confirmed on the device: GPIO17
+  cannot be pulled against the CH342 (`wake 0` → level stays 1).
+- Brown/gray (MISC_GPIO0/1) play no role for the standard firmware in power saving; the fact that they are not connected to the
+  ESP32 does not limit anything today. NRESET is not on the connector → if the A121 hangs (see above), the ESP32
+  has no way to restart it.
+- Baseline consumption of the board without A121/STM32 (estimate, not measured): PWR LED via 2.2 kΩ on 3V3 ≈ 0.6 mA,
+  CH342 in suspend 0.09–0.16 mA (datasheet), plus quiescent current of the LDO RT9193 → roughly ~1 mA, so far more than
+  the hibernate value of the module.
 
-Wege, damit der ESP32 alles steuert (keiner umgesetzt):
+Ways for the ESP32 to control everything (none implemented):
 
-| Weg | Eingriff | Bringt | Nachteile |
+| Option | Intervention | Gains | Drawbacks |
 |---|---|---|---|
-| A Lastschalter im 5V-Draht (P-MOSFET + Transistor, Steuerpin GPIO6/7, LOW = aus – beide Pins geben beim Einschalten ~60 µs LOW aus) | nur ESP32-Seite, A121 unverändert | Board komplett aus (LED/LDO/CH342 auch), Neustart des A121 durch den ESP32, feste Einschaltreihenfolge (ESP32 zuerst) gegen den Hänger | nach jedem Einschalten Boot + `cfg` + Kalibrierung (Dauer ungemessen); vor dem Abschalten alle Leitungen hochohmig (Phantomspeisung) |
-| B Leitung DTR0 → WAKE_UP auf dem A121-Board auftrennen | Leiterbahn schneiden (Lage auf der Platine unbekannt, Foto nötig) | echter Hibernate per GPIO17, Hänger-Ursache weg | schwer rückgängig; PC-Seite verliert DTR-Steuerung (vermutlich egal) |
-| C eigene STM32-Firmware: Wecken über MISC_GPIO0 (braun) statt PA11 | braun an GPIO6/7; Acconeer-SDK + ARM-Toolchain, STM32 flashen | Hibernate ohne Löten am A121, umkehrbar, passt zu Phase 4 | Aufwand, SDK-Download (Konto/Lizenz), PA11 bleibt vom CH342 getrieben (ignoriert) |
-| D ESP32 als USB-Host am A121-USB-C, DTR per CDC-ACM setzen | kein Löten; Konsole wandert auf den UART-Port des ESP32 | WAKE_UP über den CH342 steuerbar | ESP32 muss als Host wach bleiben → fürs Stromsparen sinnlos; zweites Kabel am A121 |
+| A Load switch in the 5V wire (P-MOSFET + transistor, control pin GPIO6/7, LOW = off – both pins output ~60 µs LOW at power-up) | ESP32 side only, A121 unchanged | Board completely off (LED/LDO/CH342 too), A121 restart by the ESP32, fixed power-up order (ESP32 first) against the hang | boot + `cfg` + calibration after every power-up (duration unmeasured); before switching off, all lines high-impedance (phantom powering) |
+| B Cut the DTR0 → WAKE_UP line on the A121 board | Cut a trace (location on the board unknown, photo needed) | real hibernate via GPIO17, cause of the hang gone | hard to undo; PC side loses DTR control (probably irrelevant) |
+| C Own STM32 firmware: wake via MISC_GPIO0 (brown) instead of PA11 | brown to GPIO6/7; Acconeer SDK + ARM toolchain, flash the STM32 | Hibernate without soldering on the A121, reversible, fits phase 4 | Effort, SDK download (account/license), PA11 stays driven by the CH342 (ignored) |
+| D ESP32 as USB host on the A121 USB-C, set DTR via CDC-ACM | no soldering; console moves to the UART port of the ESP32 | WAKE_UP controllable through the CH342 | ESP32 must stay awake as host → pointless for power saving; second cable on the A121 |
 
-Nächste Prüfungen (offen): Strom im roten Draht mit dem Multimeter messen (heute: dauerhaft wach). Schlaf/Wecken
-mit 1.12.0 nachweisen: A121 per USB am PC (rote Ader ab), DTR auf Kanal A (`…-if00`) per pyserial schalten,
-der ESP32 liest WAKE_UP/MCU_INT und spricht I2C. Hänger nachstellen: ESP32 hält GPIO17 mit kleinster
-Treiberstärke LOW, rote Ader wird eingesteckt → bleibt WAKE_UP nach dem Freigeben LOW, ist die TNOW0-Hypothese
-bestätigt.
+Next checks (open): measure the current in the red wire with the multimeter (today: permanently awake). Prove sleep/wake
+with 1.12.0: A121 on the PC via USB (red wire disconnected), switch DTR on channel A (`…-if00`) with pyserial,
+the ESP32 reads WAKE_UP/MCU_INT and talks I2C. Reproduce the hang: the ESP32 holds GPIO17 LOW with the lowest
+drive strength, the red wire is plugged in → if WAKE_UP stays LOW after releasing, the TNOW0 hypothesis
+is confirmed.
 
-Tag 1 (2026-10-30): Sensor auf die Testperson gerichtet (Abstand nicht gemessen), Bereich 100–1500 mm:
-- CFAR (Standard, auch Sensitivität 0,2): über ~30 Messungen **0 Ziele** (Ursache am 2026-10-31 geklärt, siehe oben).
-- Feste Amplitudenschwelle 1,0 / 3,0 / 10,0: 5–10 „Ziele“ pro Messung an wechselnden Abständen (Skalierung ×1000 war
-  deutlich unter dem Rauschboden von ~25–80 Einheiten).
-- Mit `vital 450 850` (`FIXED_STRENGTH = -25 dB`, `PROFILE_1`, `step_length = 1`, `leakage_cancel = 0`) am 2026-10-31
-  vollständig gelöst: 100 % Trefferquote auf der Brust bei 37,1 Hz über ESP32-I2C (`host/a121_esp_vital.py`).
+Day 1 (2026-10-30): sensor pointed at the test subject (distance not measured), range 100–1500 mm:
+- CFAR (default, also sensitivity 0.2): over ~30 measurements **0 targets** (cause found on 2026-10-31, see above).
+- Fixed amplitude threshold 1.0 / 3.0 / 10.0: 5–10 "targets" per measurement at changing distances (the ×1000 scaling was
+  well below the noise floor of ~25–80 units).
+- With `vital 450 850` (`FIXED_STRENGTH = -25 dB`, `PROFILE_1`, `step_length = 1`, `leakage_cancel = 0`) on 2026-10-31
+  fully solved: 100 % hit rate on the chest at 37.1 Hz over ESP32 I2C (`host/a121_esp_vital.py`).
 
-**Aktuelle Firmware auf dem A121 (Stand 2026-11-01, ~08:40):** **`acc_exploration_server_a121-v1.13.0_lpuart1.bin`**, gehärtet (SHA256 `b29e328d…1757`, Neustart bei jedem Server-UART-Fehler, s. „Härtung 2026-11-01“), ersetzt den Stand vom 2026-10-31 (`5dfefa8f…3827`, aufbewahrt als `…_lpuart1_2026-10-31.bin`). Eigener Build aus dem Acconeer-SDK, s. u., mit Freigabe des Projektinhabers über Kanal A geflasht (100 %). Server nur auf LPUART1 = SDA/SCL-Adern; **USB Kanal A und B antworten nicht als Server** (geprüft). Nach RESET kommt auf Kanal B (921 600 Baud, PA9) „Acconeer Exploration Server“ → Firmware startet, Break-Warteschleife wird verlassen. Der LPUART1-Weg zum ESP32 ist seit 2026-11-01 am Gerät geprüft (s. „ESP32-Test am Gerät 2026-11-01“). Vorher: `acc_exploration_server_a121_usart1_esp32.bin` (bis 23:50). Für `vital`/`auto`/`zoom` (I2C) muss wieder `i2c_distance_detector.bin` (`a121-v1.12.0`, 109 816 Bytes) geflasht werden. Hinweis zum USB-Flashen bei gestecktem (stromlosem) ESP32-Kabel ohne rote Ader: Durch die ESD-Schutzdioden des stromlosen ESP32-S3 an den Signalleitungen verschluckt der CH342 beim Richtungswechsel (`STM32 TX → CH342 RX`) deterministisch das allererste Startbit (`8,68 µs` bei 115 200 8E1), sodass `ACK 0x79` als `0xDE`, `NACK 0x1F` als `0xFC` und `GET_ID 79 01 04 35 79` als `de c0 b0 a3 ff` dekodiert werden, während der Hinweg (`CH342 TX → STM32 RX`) inkl. Hardware-Paritäts- und XOR-Prüfsummen zu 100 % bitexakt bleibt.
+**Current firmware on the A121 (as of 2026-11-01, ~08:40):** **`acc_exploration_server_a121-v1.13.0_lpuart1.bin`**, hardened (SHA256 `b29e328d…1757`, restart on every server UART error, see "Hardening 2026-11-01"), replaces the version of 2026-10-31 (`5dfefa8f…3827`, kept as `…_lpuart1_2026-10-31.bin`). Own build from the Acconeer SDK, see below, flashed over channel A with approval from the project owner (100 %). Server only on LPUART1 = SDA/SCL wires; **USB channels A and B do not respond as a server** (verified). After RESET, "Acconeer Exploration Server" appears on channel B (921,600 baud, PA9) → firmware starts, the break wait loop is left. The LPUART1 path to the ESP32 has been verified on the device since 2026-11-01 (see "ESP32 test on the device 2026-11-01"). Before that: `acc_exploration_server_a121_usart1_esp32.bin` (until 23:50). For `vital`/`auto`/`zoom` (I2C), `i2c_distance_detector.bin` (`a121-v1.12.0`, 109,816 bytes) has to be flashed again. Note on USB flashing with the (unpowered) ESP32 cable plugged in but without the red wire: because of the ESD protection diodes of the unpowered ESP32-S3 on the signal lines, the CH342 deterministically swallows the very first start bit when the direction changes (`STM32 TX → CH342 RX`) (`8,68 µs` at 115,200 8E1), so that `ACK 0x79` is decoded as `0xDE`, `NACK 0x1F` as `0xFC` and `GET_ID 79 01 04 35 79` as `de c0 b0 a3 ff`, while the forward direction (`CH342 TX → STM32 RX`), including hardware parity and XOR checksums, stays 100 % bit-exact.
 
-### Voller A121 Sparse-IQ & 3-Subsweep Zugriff über ESP32-S3 (`USART1`, 2026-10-31)
+### Full A121 sparse IQ & 3-subsweep access via ESP32-S3 (`USART1`, 2026-10-31)
 
-In der Werks-Server-Firmware (`acc_exploration_server_a121.bin`) läuft der Exploration Server nur auf `USART2` (`PA2`/`PA3` → ausschließlich CH342 Kanal A USB), während `USART1` (`PA9`/`PA10` → 10-Pin MX1.25-Stecker `TXD`/`RXD` ↔ ESP32-S3 `GPIO5`/`GPIO4`) nur als ungenutzter Debug-Port ohne DMA initialisiert wird.
+In the factory server firmware (`acc_exploration_server_a121.bin`) the Exploration Server runs only on `USART2` (`PA2`/`PA3` → exclusively CH342 channel A USB), while `USART1` (`PA9`/`PA10` → 10-pin MX1.25 connector `TXD`/`RXD` ↔ ESP32-S3 `GPIO5`/`GPIO4`) is initialized only as an unused debug port without DMA.
 
-Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-Hardwarefunktionen** (rohe komplexe 16-Bit Sparse-IQ-Daten, bis zu 4 Subsweeps pro Frame, On-Chip Loopback, Profile 1–5, PRF 19,5–5,2 MHz, HWAAS 1–511, Phase Enhancement, IQ Imbalance Compensation, Continuous Sweep Mode & Double Buffering, Idle-States) zu geben, stehen ab sofort bereit:
+To give the ESP32-S3 **100 % access to all A121 hardware functions** over the existing 10-pin cable (raw complex 16-bit sparse IQ data, up to 4 subsweeps per frame, on-chip loopback, profiles 1–5, PRF 19.5–5.2 MHz, HWAAS 1–511, phase enhancement, IQ imbalance compensation, continuous sweep mode & double buffering, idle states), the following are available as of now:
 
-1. **STM32L431 `USART1`-Exploration-Server-Firmware (historisch, abgelöst durch den SDK-Neubau in `firmware/stm32l431/`):**
-   - Entstand anfangs über einen Binär-Patcher; der ist aus dem Repo entfernt, der Weg ist `build_server.py` mit dem
-     offiziellen SDK.
-   - Legte den Exploration Server mit voller DMA-Unterstützung (`DMA1_Channel5` RX / `DMA1_Channel4` TX, `IRQ 14/15/37`, `GPIO_PULLUP` auf `PA9`/`PA10`, `UART_HWCONTROL_NONE`) direkt auf `USART1` (`GPIO5`/`GPIO4` am ESP32-S3) und unterstützte Baudraten von `115 200` bis `2 000 000` Baud sowie Soft-Reset per UART-Break.
-2. **ESP32-S3 Dual-Stack-Firmware (`firmware/esp32s3/src/main.cpp`, `a121_server_client.h`, `a121_esp_dsp.h`):**
-   - **Umgestellt am 2026-10-31 (Abend), am Gerät geprüft am 2026-11-01:** Der Server-Link läuft über `Serial2` auf den
-     SDA/SCL-Adern (`GPIO15` RX ← PB11, `GPIO16` TX → PB10) und braucht die geplante LPUART1-Server-Firmware aus dem SDK
-     (`firmware/stm32l431/README.md`). Mit der USART1-Variante spricht der ESP32 nicht mehr.
-     Nach dem Start sind GPIO15/16 hochohmig (`link` = frei). `link i2c|srv` legt fest, wer GPIO15/16 nutzt; Server-Befehle schalten selbst auf `srv`, I2C-Befehle sind im `srv`-Modus gesperrt
-     (der Server treibt die SDA-Ader push-pull). `uart` empfängt die Debug-Logs nur noch auf GPIO5, GPIO4 bleibt hochohmig.
-   - Behält alle bestehenden I2C-Befehle (`vital`, `zoom`, `auto`, `dist`, `cfg`, `ver`, `scan`) bei und ergänzt den Sparse-IQ-Stack:
-     - `srv_info`: Verbindet sich auf `GPIO15`/`GPIO16` (schaltet von 115 200 auf 921 600 Baud hoch) und liest `get_system_info` & `get_sensor_info`.
-     - `stm_reset`: Sendet ein 15-ms UART-Break auf `GPIO16` (`PB10`). Der Framing-Error setzt den STM32 zurück (USART1-Variante und SDK-Neubau, beide über Kanal B bestätigt). Jeder Server-Connect des ESP32 beginnt seit 2026-11-01 mit diesem Break.
-     - `iq3 [sek] [start_mm] [raw]`: Startet die **3-Subsweep Sparse-IQ Session @ 60 Hz** (Subsweep 0 On-Chip-Loopback + Subsweep 1 2,5-mm-Vital-Zoom mit 24 Punkten (Übersetzungsschalter `A121_ZOOM_POINTS=48` für 120 mm vorbereitet, Spektren dann nur für die 16 Punkte mit der stärksten Atmung; Wahl nach Messung V4.4) + Subsweep 2 Raum-Scan 0,30–2,67 m, 80 × 30 mm) (Preset Zoom Profil 1 / HWAAS 32 / 15,6 MHz, Loopback Profil 1 / HWAAS 8 / Gain 16 / 19,5 MHz, als Übersetzungsschalter `A121_IQ3_ZOOM_PROFILE`, `A121_IQ3_ZOOM_HWAAS`, `A121_IQ3_LOOP_PROFILE`, `A121_IQ3_LOOP_GAIN`, `A121_IQ3_LOOP_PRF` für die Messung V4.2, gemeldet in `@HELLO` als `iq3=…`) und rechnet auf dem ESP32-S3 (PSRAM, `a121_esp_dsp.h`; Reports seit V2.1 im eigenen Task auf Kern 0 aus einem Schnappschuss je 60 Frames, das Lesen auf Kern 1 läuft weiter): Loopback-Phasenderotation je Frame; je Zoom-Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Kreisfit) abgewickelt, Bandpass 0,6–5 Hz, Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) über alle Zoom-Punkte gewichtet; Puls-Kandidaten 40–180 /min mit Abschlag auf Atem-Oberwellen und Oktav-Prüfung, Verfolgung mit Haltezeit (Variante Viterbi über 20 Reports hinter `A121_DSP_VITERBI`, V3.2, Standard aus; Variante „Atem-Oberwellen geführt von der Atemphase entfernen" hinter `A121_DSP_HARM_REMOVE`, V3.3, Standard aus; Variante „Zoom-Punkte vor der Demodulation zu einem Kanal kombinieren" hinter `A121_DSP_COMBINE`, V3.1, Standard aus, dann mit effektiver Punktzahl als 15. Feld in `@DSP`; Variante „Einzelschläge mit Vorlage im Band 0,6–8 Hz" hinter `A121_DSP_IBI_TEMPLATE`, V3.6, Standard aus; `A121_DSP_HEAVY` schaltet Viterbi und Oberwellen-Abzug zusammen ein, nur für die Handy-DSP in der App, V5.2; Schalter `A121_DSP_REACQ`, V6 „Puls nach Bewegung wiederfinden“, Standard aus: Bewegungskarte, Puls nur auf dem ruhigen Endstück ab 6 s, Gedächtnis des letzten sicheren Werts für 60 s; PlatformIO-Umgebung `esp32s3-n16r8-reacq` (`pio run -e esp32s3-n16r8-reacq`), `@HELLO` meldet die Firmware dann mit Anhang `-reacq`; nur mit dem Schalter hängen zwei Felder hinten an `@DSP` (16. und 17. Feld wie bei `n_eff` gezählt, nach `n_eff`, das ohne `A121_DSP_COMBINE` leer bleibt): `win_s` (genutztes Pulsfenster in s, 0 = keins) und `reacq` (0 normal, 1 kurzes Fenster nach Bewegung, 2 über das Gedächtnis wiedergefunden); ohne Schalter fehlen sie. Die Varianten `A121_DSP_REACQ_PERIOD` und `A121_DSP_PHASE_SLOPE` sind verworfen und bleiben aus, Zahlen in `docs/EXPERIMENTS.md`); Autokorrelation und Einzelschläge (IBI, RMSSD experimentell) nach Abzug der Atem-Oberwellen; Konfidenz aus Spitzenhöhe, Oberwelle, Einigkeit der drei Schätzer, Bewegung und Sättigung; Atemfrequenz, Atemzustand (normal / keine Atemspitze / angehalten / Bewegung / flach), Lebenszeichen-Test; Sensor-Flags (verspätete und gesättigte Frames, tick-Lücken), Neu-Kalibrierung bei `calibration_needed` (`@RECAL`) und Rezoom (`@REZOOM`; seit V2.3 bleibt dabei die Puls-Verfolgung, wenn der letzte gültige Wert jünger als 30 s ist). Ausgabe: `@IQ3` je Frame (mit `raw` zusätzlich `@RAW`), `@ROOMPROF` 5/s (Raumprofil), `@DSP`/`@ROOM`/`@VITAL`/`@STATE` 1/s (`@STATE`: Zustand der Messung, V3.5), `@BREATH` je Atemzug (Spitzen des Wegs
-0,05–0,8 Hz mit Hysterese, V3.4); Formate im Kopf und am Ende von `a121_esp_dsp.h`, Stand und Plan in `docs/VITAL_AUDIT.md`, Auswertung mit `host/vital_eval.py` und `host/a121_esp_ultimate.py`. (Bis 2026-11-01 stand hier eine Kette mit DACM und Hilbert-Projektion; die gehört zu den PC-Skripten, nicht zur Firmware.)
-     - `doppler [sek] [mm] [hz]`: Aktiviert `continuous_sweep_mode=true` + `double_buffering=true` (64 Sweeps/Frame @ bis zu 4 000 Hz) für kohärente Mikro-Doppler-/Vibrationsmessungen.
-     - `bridge`: Transparente USB-CDC ↔ Server-UART Bridge (inkl. automatischer Baudraten-Synchronisation), sodass PC-Skripte wie `host/a121_ultimate_vital.py` auch direkt durch den ESP32-S3 streamen können.
-     - `sess …` (seit 2026-11-01, `a121_session_console.h`): beliebige Sparse-IQ-Session ohne PC. Die Konfiguration liegt im RAM
-       und wird feldweise gesetzt: `fr`, `sr`, `spf`, `csm`, `dbuf`, `fidle`/`sidle`, `subs 1..4`, je Subsweep `range a b` (mm),
+1. **STM32L431 `USART1` Exploration Server firmware (historical, superseded by the SDK rebuild in `firmware/stm32l431/`):**
+   - Originally created with a binary patcher; that was removed from the repo, the way now is `build_server.py` with the
+     official SDK.
+   - Put the Exploration Server with full DMA support (`DMA1_Channel5` RX / `DMA1_Channel4` TX, `IRQ 14/15/37`, `GPIO_PULLUP` on `PA9`/`PA10`, `UART_HWCONTROL_NONE`) directly on `USART1` (`GPIO5`/`GPIO4` on the ESP32-S3) and supported baud rates from `115 200` to `2 000 000` baud as well as soft reset via UART break.
+2. **ESP32-S3 dual-stack firmware (`firmware/esp32s3/src/main.cpp`, `a121_server_client.h`, `a121_esp_dsp.h`):**
+   - **Switched on the evening of 2026-10-31, verified on the device on 2026-11-01:** The server link runs over `Serial2` on the
+     SDA/SCL wires (`GPIO15` RX ← PB11, `GPIO16` TX → PB10) and needs the planned LPUART1 server firmware from the SDK
+     (`firmware/stm32l431/README.md`). With the USART1 variant the ESP32 no longer talks.
+     After startup, GPIO15/16 are high-impedance (`link` = free). `link i2c|srv` decides who uses GPIO15/16; server commands switch to `srv` themselves, I2C commands are blocked in `srv` mode
+     (the server drives the SDA wire push-pull). `uart` receives the debug logs only on GPIO5 now; GPIO4 stays high-impedance.
+   - Keeps all existing I2C commands (`vital`, `zoom`, `auto`, `dist`, `cfg`, `ver`, `scan`) and adds the sparse IQ stack:
+     - `srv_info`: Connects on `GPIO15`/`GPIO16` (switches up from 115,200 to 921,600 baud) and reads `get_system_info` & `get_sensor_info`.
+     - `stm_reset`: Sends a 15 ms UART break on `GPIO16` (`PB10`). The framing error resets the STM32 (USART1 variant and SDK rebuild, both confirmed over channel B). Every server connect of the ESP32 has started with this break since 2026-11-01.
+     - `iq3 [sek] [start_mm] [raw]`: Starts the **3-subsweep sparse IQ session @ 60 Hz** (subsweep 0 on-chip loopback + subsweep 1 2.5 mm vital zoom with 24 points (compile switch `A121_ZOOM_POINTS=48` prepared for 120 mm, spectra then only for the 16 points with the strongest breathing; choice after measurement V4.4) + subsweep 2 room scan 0.30–2.67 m, 80 × 30 mm) (preset zoom profile 1 / HWAAS 32 / 15.6 MHz, loopback profile 1 / HWAAS 8 / gain 16 / 19.5 MHz, as compile switches `A121_IQ3_ZOOM_PROFILE`, `A121_IQ3_ZOOM_HWAAS`, `A121_IQ3_LOOP_PROFILE`, `A121_IQ3_LOOP_GAIN`, `A121_IQ3_LOOP_PRF` for measurement V4.2, reported in `@HELLO` as `iq3=…`) and computes on the ESP32-S3 (PSRAM, `a121_esp_dsp.h`; since V2.1 reports run in their own task on core 0 from a snapshot of 60 frames each, reading on core 1 continues): loopback phase rotation per frame; per zoom point, phase unwrapped around the circle center of the IQ values (Kåsa circle fit), bandpass 0.6–5 Hz, harmonic sum S(f) = P(f) + 0.5 · P(2f) weighted over all zoom points; pulse candidates 40–180 /min with a penalty for breathing harmonics and octave check, tracking with hold time (variant Viterbi over 20 reports behind `A121_DSP_VITERBI`, V3.2, default off; variant "remove breathing harmonics guided by the breathing phase" behind `A121_DSP_HARM_REMOVE`, V3.3, default off; variant "combine zoom points into one channel before demodulation" behind `A121_DSP_COMBINE`, V3.1, default off, then with the effective point count as the 15th field in `@DSP`; variant "single beats with template in the 0.6–8 Hz band" behind `A121_DSP_IBI_TEMPLATE`, V3.6, default off; `A121_DSP_HEAVY` switches Viterbi and harmonic subtraction on together, only for the phone DSP in the app, V5.2; switch `A121_DSP_REACQ`, V6 "reacquire pulse after motion", default off: motion map, pulse only on the quiet final segment from 6 s, memory of the last confident value for 60 s; PlatformIO environment `esp32s3-n16r8-reacq` (`pio run -e esp32s3-n16r8-reacq`), `@HELLO` then reports the firmware with the suffix `-reacq`; only with the switch two fields are appended to `@DSP` (16th and 17th field, counted as for `n_eff`, after `n_eff`, which stays empty without `A121_DSP_COMBINE`): `win_s` (pulse window used in s, 0 = none) and `reacq` (0 normal, 1 short window after motion, 2 reacquired via the memory); without the switch they are absent. The variants `A121_DSP_REACQ_PERIOD` and `A121_DSP_PHASE_SLOPE` are rejected and stay off, numbers in `docs/EXPERIMENTS.md`); autocorrelation and single beats (IBI, RMSSD experimental) after subtracting the breathing harmonics; confidence from peak height, harmonic, agreement of the three estimators, motion and saturation; breathing rate, breathing state (normal / no breathing peak / held / motion / shallow), signs-of-life test; sensor flags (late and saturated frames, tick gaps), recalibration on `calibration_needed` (`@RECAL`) and rezoom (`@REZOOM`; since V2.3 pulse tracking is kept in this case if the last valid value is younger than 30 s). Output: `@IQ3` per frame (with `raw` additionally `@RAW`), `@ROOMPROF` 5/s (room profile), `@DSP`/`@ROOM`/`@VITAL`/`@STATE` 1/s (`@STATE`: state of the measurement, V3.5), `@BREATH` per breath (peaks of the displacement
+0.05–0.8 Hz with hysteresis, V3.4); formats at the top and end of `a121_esp_dsp.h`, status and plan in `docs/VITAL_AUDIT.md`, evaluation with `host/vital_eval.py` and `host/a121_esp_ultimate.py`. (Until 2026-11-01 this held a chain with DACM and Hilbert projection; that belongs to the PC scripts, not the firmware.)
+     - `doppler [sek] [mm] [hz]`: Enables `continuous_sweep_mode=true` + `double_buffering=true` (64 sweeps/frame @ up to 4,000 Hz) for coherent micro-Doppler/vibration measurements.
+     - `bridge`: Transparent USB-CDC ↔ server UART bridge (incl. automatic baud rate synchronization), so that PC scripts such as `host/a121_ultimate_vital.py` can also stream directly through the ESP32-S3.
+     - `sess …` (since 2026-11-01, `a121_session_console.h`): any sparse IQ session without a PC. The configuration lives in RAM
+       and is set field by field: `fr`, `sr`, `spf`, `csm`, `dbuf`, `fidle`/`sidle`, `subs 1..4`, per subsweep `range a b` (mm),
        `start`, `n`, `step`, `profile`, `hwaas`, `gain`, `prf`, `tx`, `loop`, `phase`, `iqimb`.
-       `sess` zeigt die Konfiguration mit mm-Bereich und erwarteter Datenrate (inkl. ~150 B Kopfzeile pro Frame) und warnt über der
-       Link-Grenze. `sess check` schickt sie nur an den Server und zeigt Metadaten bzw. den Fehlergrund aus dem Server-Log.
-       `sess run [s] [stat|peak|amp]` streamt und wertet aus: Amplitude über alle Sweeps gemittelt, stärkster Punkt je Subsweep.
-       Jede Sekunde `@SESS_STAT`, am Ende `@SESS_END` mit UART-Fehlern und Rückstau. Die Ausgabe ist gedrosselt
-       (`peak` ≤ 100/s, `amp` ≤ 10/s), damit der ESP32 nie hinter den Datenstrom fällt. Höchstens 4096 Punkte pro Frame.
-     - `gpio [0|1|z] [0|1|z]`: Liest oder schaltet `MISC_GPIO0` (`GPIO6` ↔ `PB1`, braun) und `MISC_GPIO1` (`GPIO7` ↔ `PA4`, grau).
-     - **App-Protokoll `proto=1` (seit 2026-11-01, Firmware `2026-11-01-app1`, nur ergänzt, PC-Skripte laufen unverändert):**
-       `hello` → `@HELLO,proto=1,fw=…,build=…,link=…,server=…,mac=…,up_ms=…,modes=…` (`up_ms` zeigt, ob der ESP32 neu
-       gestartet ist). `@IQ3` und `@DOPPLER` haben hinten Frame-Zähler und Sensor-`tick`. `iq3 [sek] [start_mm] raw`
-       schickt je Frame zusätzlich `@RAW,frame,tick,n,<Base64>` (105 komplexe int16, ≈ 35 kB/s statt ≈ 5 kB/s).
-       Nach 3 Frame-Timeouts verbindet der ESP32 den Server neu (`@RECONNECT,t_ms,versuch,ok`, danach beginnt `tick`
-       von vorn). Strg+R (0x12) während eines Streams startet den Server zum Test absichtlich neu.
-     - Port-Öffnen setzt den ESP32 nicht zurück; nur DTR = 0 bei RTS = 1 löst einen Reset aus (am PC geprüft). PC-Skripte
-       öffnen deshalb mit den Standardwerten, die App setzt nur DTR und fasst RTS nie an.
+       `sess` shows the configuration with mm range and expected data rate (incl. ~150 B header per frame) and warns above the
+       link limit. `sess check` only sends it to the server and shows metadata or the reason for the error from the server log.
+       `sess run [s] [stat|peak|amp]` streams and evaluates: amplitude averaged over all sweeps, strongest point per subsweep.
+       Every second `@SESS_STAT`, at the end `@SESS_END` with UART errors and backlog. The output is throttled
+       (`peak` ≤ 100/s, `amp` ≤ 10/s) so that the ESP32 never falls behind the data stream. At most 4096 points per frame.
+     - `gpio [0|1|z] [0|1|z]`: Reads or switches `MISC_GPIO0` (`GPIO6` ↔ `PB1`, brown) and `MISC_GPIO1` (`GPIO7` ↔ `PA4`, gray).
+     - **App protocol `proto=1` (since 2026-11-01, firmware `2026-11-01-app1`, additions only, PC scripts run unchanged):**
+       `hello` → `@HELLO,proto=1,fw=…,build=…,link=…,server=…,mac=…,up_ms=…,modes=…` (`up_ms` shows whether the ESP32 has
+       restarted). `@IQ3` and `@DOPPLER` have a frame counter and the sensor `tick` at the end. `iq3 [sek] [start_mm] raw`
+       additionally sends `@RAW,frame,tick,n,<Base64>` per frame (105 complex int16, ≈ 35 kB/s instead of ≈ 5 kB/s).
+       After 3 frame timeouts the ESP32 reconnects to the server (`@RECONNECT,t_ms,versuch,ok`, after which `tick`
+       starts from the beginning). Ctrl+R (0x12) during a stream deliberately restarts the server for testing.
+     - Opening the port does not reset the ESP32; only DTR = 0 with RTS = 1 triggers a reset (verified on the PC). PC scripts
+       therefore open with the default values; the app sets only DTR and never touches RTS.
 
-**Am Gerät geprüft (2026-10-31, nur PC über CH342 Kanal B, ESP32 nicht angeschlossen):**
-- Server `a121-v1.12.0`, `max_baudrate` 2 000 000. exptool mit 921 600 Baud: 16/16 Sessions nach Reset ok, je 100 Frames @ 100 Hz.
-- **Jeder Framing-Error auf PA10 setzt den STM32 zurück** (Server danach auf 115 200 Baud, antwortet nach ≲ 1 s).
-  Das gilt für einen Break genauso wie für Bytes mit falscher Baudrate. Eine Baudsuche löst also selbst einen Reset aus.
-  Ohne Reset bleibt der Server auf der zuletzt gesetzten Baudrate.
-- Vor fast jeder Antwort schickt der Server eine Logzeile `{"status":"log",...}`. Clients müssen sie überspringen.
-- Die Enums kodiert der Server wie exptool: `"profile":1`, `"prf":"15_6_MHz"`, `"ready"`, freie Rate `0.0`.
-  `step_length` muss ein Teiler oder ein Vielfaches von 24 sein, `16` lehnt der Server mit „invalid config“ ab.
-- Ein Python-Nachbau der ESP32-Client-Logik (gleiches JSON und Ablauf, inkl. Reset-Pfad) lief am echten Server:
-  `iq3`-Preset 300 Frames @ 60,0 Hz, 420 B/Frame. `doppler`-Preset (CSM + Double Buffering, 64×4 @ 2000 Hz)
-  60 Frames @ 31 Hz, 1024 B/Frame. Keine Flags (saturated/delayed/calibration_needed).
-- Ein früherer Hänger (keine Antwort auf allen Baudraten, kein Reset per Framing-Error) ließ sich nur mit der RESET-Taste
-  lösen und trat danach nicht wieder auf. Wahrscheinliche Ursache: s. „Bug 1“ beim ESP32-Test 2026-11-01.
+**Verified on the device (2026-10-31, PC only via CH342 channel B, ESP32 not connected):**
+- Server `a121-v1.12.0`, `max_baudrate` 2,000,000. exptool at 921,600 baud: 16/16 sessions OK after reset, 100 frames each @ 100 Hz.
+- **Every framing error on PA10 resets the STM32** (server then at 115,200 baud, responds after ≲ 1 s).
+  This holds for a break as well as for bytes with the wrong baud rate. A baud search therefore triggers a reset itself.
+  Without a reset, the server stays at the last baud rate set.
+- Before almost every response the server sends a log line `{"status":"log",...}`. Clients must skip it.
+- The server encodes the enums like exptool: `"profile":1`, `"prf":"15_6_MHz"`, `"ready"`, free rate `0.0`.
+  `step_length` must be a divisor or a multiple of 24; the server rejects `16` with "invalid config".
+- A Python replica of the ESP32 client logic (same JSON and sequence, incl. the reset path) ran against the real server:
+  `iq3` preset 300 frames @ 60.0 Hz, 420 B/frame. `doppler` preset (CSM + double buffering, 64×4 @ 2000 Hz)
+  60 frames @ 31 Hz, 1024 B/frame. No flags (saturated/delayed/calibration_needed).
+- An earlier hang (no response at any baud rate, no reset via framing error) could only be solved with the RESET button
+  and did not occur again afterwards. Probable cause: see "Bug 1" in the ESP32 test 2026-11-01.
 
-**Offenes Hardware-Risiko vor dem ESP32-Betrieb über USART1:** Laut Schaltplan hängt PA10 (`DEBUG_RX`, Stecker Pin 8)
-nicht nur an ESP32 GPIO4, sondern über **R9 = 22 Ω direkt am CH342 TXD1**. Der CH342 läuft immer mit (5V-Netz) und
-treibt TXD1 im Ruhezustand HIGH. Dann arbeiten ESP32-TX und CH342-TX gegeneinander (Push-Pull über nur 22 Ω). Der
-LOW-Pegel an PA10 wird damit unsicher, und beide Treiber werden stark belastet. Das ist derselbe Mechanismus wie bei
-WAKE_UP/DTR0. Nicht nachgemessen. Vor dem Dauerbetrieb klären: R9 auslöten (Kanal B kann dann nur noch mitlesen), oder
-den Server statt auf USART1 auf die I2C-Leitungen legen.
+**Open hardware risk before ESP32 operation over USART1:** Per the schematic, PA10 (`DEBUG_RX`, connector pin 8)
+is connected not only to ESP32 GPIO4 but also, through **R9 = 22 Ω, directly to CH342 TXD1**. The CH342 always runs (5V net) and
+drives TXD1 HIGH when idle. Then ESP32 TX and CH342 TX work against each other (push-pull across only 22 Ω). The
+LOW level at PA10 thus becomes unreliable, and both drivers are heavily loaded. This is the same mechanism as with
+WAKE_UP/DTR0. Not re-measured. To clarify before continuous operation: desolder R9 (channel B can then only listen), or
+put the server on the I2C lines instead of USART1.
 
-**Entscheidung 2026-10-31 (Abend): Server auf die I2C-Adern, neu gebaut aus dem Acconeer XM125 SDK.**
-- Pins geprüft: SDA/SCL am Stecker = **PB11/PB10** (Schaltplan-Netze `I2C2_SDA`/`I2C2_SCL`; `i2c_distance_detector.bin`
-  stellt GPIOB-Maske 0x0C00 auf AF4). Die frühere Angabe PB13/PB14 in `firmware/stm32l431/xm125_waveshare_bsp.h` war falsch.
-  An den Leitungen hängen nur R13/R14, kein CH342.
-- Peripherie: **LPUART1** (AF8: PB11 TX → ESP32 GPIO15, PB10 RX ← GPIO16) mit DMA2 Kanal 6/7. USART3 scheidet praktisch aus:
-  Er bräuchte DMA1 Kanal 2/3, und die belegt der Exploration Server schon für SPI1 zum A121.
-- Weg: offizielles XM125 SDK **a121-v1.13.0** (vom Projektinhaber geladen) + `firmware/stm32l431/build_server.py`. Das SDK selbst bestätigt
-  die Pins (`main.h`: `I2C_SCL` = PB10, `I2C_SDA` = PB11); die LPUART1-Zuordnung (AF8, PB10 RX/PB11 TX) laut ST
-  `STM32_open_pin_data`, DMA2 Kanal 6 TX / Kanal 7 RX mit Request 4 laut CubeMX-generiertem L4-Code.
-- **Gebaut 2026-10-31 23:40, geflasht ~23:50 (Start per Debug-Log bestätigt, LPUART1-Weg zum ESP32 noch ungetestet):**
-  - Kontrolle: SDK unverändert gebaut (`--variant original`) ist **bitgleich** zum vorgebauten `out/acc_exploration_server_a121.bin`
-    des SDK (109 168 Bytes) → Compiler, ST-Treiber und SDK passen exakt zu Acconeers eigenem Build.
-  - `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin`, 109 760 Bytes,
-    SHA256 `5dfefa8f5c9e8666bbda2b394705ec0352861a4b1344ef56dcfd891502ea3827`. Gebaut mit `-Werror` ohne Warnungen.
-  - Am ELF geprüft: Vektoren IRQ 68/69/70 → `DMA2_Channel6/7_IRQHandler`, `LPUART1_IRQHandler`; Server-Sende-/Empfangspfade,
-    Baudraten-Umschaltung und Break-Reset (`HAL_UART_ErrorCallback`) nutzen `hlpuart1`; die Break-Abfrage beim Start liest GPIOB Bit 10.
-  - In diesem Build: Server nur auf LPUART1 (USB Kanal A antwortet nicht mehr), `printf`-Logs weiter auf USART1/PA9
-    (CH342 Kanal B und ESP32 GPIO5 lesen mit), I2C2 wird nach dem SDK-Init wieder abgeschaltet.
-- ESP32-Seite umgestellt; am Gerät geprüft am 2026-11-01 (s. u.).
-- Zustand am Gerät 2026-10-31, ~23 Uhr: Die geflashte USART1-Variante antwortet auf keiner Baudrate (Kanal A und B), also derselbe
-  Hänger wie oben. Vor weiteren Tests RESET-Taste am A121.
+**Decision 2026-10-31 (evening): server on the I2C wires, rebuilt from the Acconeer XM125 SDK.**
+- Pins verified: SDA/SCL on the connector = **PB11/PB10** (schematic nets `I2C2_SDA`/`I2C2_SCL`; `i2c_distance_detector.bin`
+  sets the GPIOB mask 0x0C00 to AF4). The earlier statement PB13/PB14 in `firmware/stm32l431/xm125_waveshare_bsp.h` was wrong.
+  Only R13/R14 are on the lines, no CH342.
+- Peripheral: **LPUART1** (AF8: PB11 TX → ESP32 GPIO15, PB10 RX ← GPIO16) with DMA2 channel 6/7. USART3 is practically ruled out:
+  it would need DMA1 channel 2/3, and the Exploration Server already uses those for SPI1 to the A121.
+- Way: official XM125 SDK **a121-v1.13.0** (downloaded by the project owner) + `firmware/stm32l431/build_server.py`. The SDK itself confirms
+  the pins (`main.h`: `I2C_SCL` = PB10, `I2C_SDA` = PB11); the LPUART1 assignment (AF8, PB10 RX/PB11 TX) per ST
+  `STM32_open_pin_data`, DMA2 channel 6 TX / channel 7 RX with request 4 per CubeMX-generated L4 code.
+- **Built 2026-10-31 23:40, flashed ~23:50 (start confirmed via debug log, LPUART1 path to the ESP32 still untested):**
+  - Check: the SDK built unchanged (`--variant original`) is **bit-identical** to the prebuilt `out/acc_exploration_server_a121.bin`
+    of the SDK (109,168 bytes) → compiler, ST drivers and SDK match Acconeer's own build exactly.
+  - `~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin`, 109,760 bytes,
+    SHA256 `5dfefa8f5c9e8666bbda2b394705ec0352861a4b1344ef56dcfd891502ea3827`. Built with `-Werror` without warnings.
+  - Verified on the ELF: vectors IRQ 68/69/70 → `DMA2_Channel6/7_IRQHandler`, `LPUART1_IRQHandler`; server send/receive paths,
+    baud rate switching and break reset (`HAL_UART_ErrorCallback`) use `hlpuart1`; the break check at startup reads GPIOB bit 10.
+  - In this build: server only on LPUART1 (USB channel A no longer responds), `printf` logs still on USART1/PA9
+    (CH342 channel B and ESP32 GPIO5 read along), I2C2 is switched off again after the SDK init.
+- ESP32 side switched; verified on the device on 2026-11-01 (see below).
+- State on the device 2026-10-31, ~23:00: The flashed USART1 variant responds at no baud rate (channels A and B), so the same
+  hang as above. Before further tests: RESET button on the A121.
 
-**ESP32-Test am Gerät 2026-11-01 (A121 am PC-USB, rote Ader ab, ESP32 am nativen USB `…12:34:56:78:9A:BC`):**
-- Ergebnis: Der LPUART1-Server läuft über die SDA/SCL-Adern. Geprüft mit der ESP32-Firmware vom 2026-11-01 (mit den Fixes unten):
-  - `srv_info`: `a121-v1.13.0`, `hw` xm125, `max_baudrate` 2 000 000, Sensor verbunden; der ESP32 schaltet selbst auf 921 600 Baud.
-  - `stm_reset`: Der Break auf GPIO16 setzt den STM32 zurück (Kanal B: „Acconeer Exploration Server“ + „Waiting for host line
-    break“), danach verbindet der ESP32 neu. Ein Connect dauert ≈ 0,4 s.
-  - `iq3 10`: 583 Frames in 10 s (58 Hz, Soll 60), keine Sättigung, keine `frame_timeout`, `@REZOOM` läuft.
-    In jeder Sekunde, in der `computeVitalReport()` rechnet, entsteht eine Lücke von 190–320 ms zwischen zwei Frames.
-    Die Frames gehen dabei nicht verloren, sie stauen sich im 32-KB-UART-Puffer. Das sollte man noch optimieren.
-    Die `@VITAL`-Werte sind **nicht bewertet**: Es gab keine Referenzmessung, und es saß niemand gezielt vor dem Sensor.
-  - `doppler 5`: 156 Frames in 5 s (31 Hz, 64 Sweeps @ 2000 Hz), keine Warnungen.
-  - `bridge` + exptool 7.18.2 am PC (`a121.Client.open(serial_port=…)`, Standard: Umschaltung auf 2 000 000 Baud):
-    Setup mit Kalibrierung ok, 90 Frames 16 × 60 @ 30,09 Hz, keine Flags. `+++EXIT` beendet die Bridge.
-  - Zwei ESP32-Neustarts hintereinander (esptool-Hard-Reset wie beim Flashen) bei laufendem Server auf 921 600 Baud
-    → `srv_info` ging jedes Mal ohne RESET-Taste.
-- **Bug 1, behoben (ESP32): Server nach ESP32-Neustart taub.** Der Client versuchte den ersten Handshake auf der zuletzt
-  gemerkten Baudrate (nach dem Start 921 600), der frisch gestartete Server hört aber auf 115 200. Die falschen Bytes erzeugen am
-  STM32 Noise- bzw. Overrun-Fehler. Im DMA-Modus bricht die ST-HAL dann bei **jedem** UART-Fehler den Empfang ab und schaltet
-  die Fehler-Interrupts ab. `HAL_UART_ErrorCallback` des SDK startet aber nur bei einem Framing-Error neu. Folge: Der Server
-  bleibt taub, auch ein Break hilft nicht mehr, nur die RESET-Taste. Am Gerät dreimal gesehen (Einstecken am Morgen, zweimal
-  nach dem ESP32-Flashen). Die USB-Variante merkt davon nichts, weil exptool immer auf 115 200 beginnt. Wahrscheinlich war das
-  auch der frühere Hänger der USART1-Variante, nachgewiesen ist das nicht.
-  Fix: `connectAndNegotiateBaud()` schickt jetzt immer zuerst den Break (der Framing-Error löst sicher einen Neustart aus)
-  und spricht dann nur 115 200. Dazu stehen GPIO15/16 nach dem Start hochohmig (Link „frei“). I2C startet erst beim ersten
-  I2C-Befehl, damit `Wire.begin()` beim Booten keine Flanken auf PB10 legt.
-  Die eigentliche Schwachstelle im STM32 ist inzwischen ebenfalls behoben, s. „Härtung 2026-11-01“.
-- **Bug 2, behoben (ESP32): exptool-`setup_session` lief in der Bridge in einen Timeout.** HWCDC (USB des ESP32, Arduino 2.0.17)
-  hat einen 256-Byte-Empfangspuffer und verwirft alles darüber ohne Meldung. Die Bridge schrieb byteweise auf eine UART ohne
-  Sendepuffer (nur das 128-Byte-FIFO). Der exptool-Setup-Befehl ist 464 Bytes lang, mehr als 384, und so ging das Zeilenende
-  verloren. Nachweis: In 64-Byte-Stücken gesendet, nahm der Server denselben Befehl an. Fix: `Serial.setRxBufferSize(4096)`,
-  `setTxBufferSize(4096)` für die Server-UART, und die Bridge reicht blockweise weiter.
+**ESP32 test on the device 2026-11-01 (A121 on PC USB, red wire disconnected, ESP32 on native USB `…12:34:56:78:9A:BC`):**
+- Result: The LPUART1 server runs over the SDA/SCL wires. Verified with the ESP32 firmware of 2026-11-01 (with the fixes below):
+  - `srv_info`: `a121-v1.13.0`, `hw` xm125, `max_baudrate` 2,000,000, sensor connected; the ESP32 switches to 921,600 baud by itself.
+  - `stm_reset`: The break on GPIO16 resets the STM32 (channel B: "Acconeer Exploration Server" + "Waiting for host line
+    break"), after which the ESP32 reconnects. A connect takes ≈ 0.4 s.
+  - `iq3 10`: 583 frames in 10 s (58 Hz, target 60), no saturation, no `frame_timeout`, `@REZOOM` works.
+    In every second in which `computeVitalReport()` computes, a gap of 190–320 ms appears between two frames.
+    The frames are not lost in the process, they back up in the 32 KB UART buffer. This should still be optimized.
+    The `@VITAL` values are **not evaluated**: there was no reference measurement, and nobody sat in front of the sensor on purpose.
+  - `doppler 5`: 156 frames in 5 s (31 Hz, 64 sweeps @ 2000 Hz), no warnings.
+  - `bridge` + exptool 7.18.2 on the PC (`a121.Client.open(serial_port=…)`, default: switch to 2,000,000 baud):
+    setup with calibration OK, 90 frames 16 × 60 @ 30.09 Hz, no flags. `+++EXIT` ends the bridge.
+  - Two ESP32 restarts in a row (esptool hard reset as when flashing) with the server running at 921,600 baud
+    → `srv_info` worked each time without the RESET button.
+- **Bug 1, fixed (ESP32): server deaf after an ESP32 restart.** The client tried the first handshake at the last
+  remembered baud rate (921,600 after startup), but the freshly started server listens at 115,200. The wrong bytes cause
+  noise or overrun errors on the STM32. In DMA mode the ST HAL then aborts reception on **every** UART error and turns
+  the error interrupts off. The SDK's `HAL_UART_ErrorCallback`, however, restarts only on a framing error. Consequence: the server
+  stays deaf, even a break no longer helps, only the RESET button. Seen three times on the device (plugging in in the morning, twice
+  after flashing the ESP32). The USB variant does not notice any of this, because exptool always starts at 115,200. This was probably
+  also the earlier hang of the USART1 variant; that is not proven.
+  Fix: `connectAndNegotiateBaud()` now always sends the break first (the framing error reliably triggers a restart)
+  and then talks only at 115,200. In addition, GPIO15/16 are high-impedance after startup (link "free"). I2C starts only on the first
+  I2C command, so that `Wire.begin()` puts no edges on PB10 during boot.
+  The actual weak point in the STM32 has since been fixed as well, see "Hardening 2026-11-01".
+- **Bug 2, fixed (ESP32): exptool `setup_session` timed out in the bridge.** HWCDC (USB of the ESP32, Arduino 2.0.17)
+  has a 256-byte receive buffer and silently discards everything above that. The bridge wrote byte by byte to a UART without
+  a transmit buffer (only the 128-byte FIFO). The exptool setup command is 464 bytes long, more than 384, and so the line ending
+  was lost. Proof: sent in 64-byte chunks, the server accepted the same command. Fix: `Serial.setRxBufferSize(4096)`,
+  `setTxBufferSize(4096)` for the server UART, and the bridge forwards block by block.
 
-**Härtung 2026-11-01 (STM32, mit Freigabe des Projektinhabers geflasht ~08:40):** 7. Edit in `build_server.py`. `HAL_UART_ErrorCallback`
-startet jetzt bei **jedem** Fehler der Server-UART neu (`ErrorCode != HAL_UART_ERROR_NONE` statt nur Framing-Error).
-- Image `acc_exploration_server_a121-v1.13.0_lpuart1.bin`, 109 760 Bytes, SHA256
-  `b29e328d52eeeafc97e28e89051cb8ee74d527fb6a17a706b39ef1488cbc1757`. Die Linker-Warnung „LOAD segment with RWX permissions“
-  kommt auch beim bitgleichen `original`-Build, ist also nicht neu.
-- Am ELF geprüft: LTO hat den Callback an allen drei Aufrufstellen eingebettet (`UART_DMAAbortOnError`, `UART_DMAError`,
-  `HAL_UART_IRQHandler`). Überall steht jetzt `huart == &hlpuart1` und `ErrorCode (+0x88) != 0`, danach folgt `NVIC_SystemReset`.
-- Am Gerät geprüft:
-  - Normalbetrieb wie vorher: `srv_info`; `iq3 10` mit 575 Frames (57 Hz, ohne Sättigung); `doppler 5` mit 31 Hz; exptool über
-    `bridge` mit 90 Frames bei 30,03 Hz. Auf Kanal B kamen nur die erwarteten Neustarts, je einer pro Connect durch den Break.
-    Während der Messungen startete der STM32 kein einziges Mal neu.
-  - Absichtlicher Baudfehler: Über die Bridge wurde der Server auf 115 200 gestellt, die Bridge blieb auf 921 600 (Trick:
-    `"baudrate" : 115200` mit Leerzeichen erkennt die Bridge nicht). Danach kamen dreimal `get_system_info` mit der falschen Rate.
-    Ergebnis: Der STM32 startete nach 0,1 s neu (Kanal B: „Acconeer Exploration Server“ ohne „Waiting for host line break“, also
-    durch den Fehler und nicht durch einen Break) und war danach wieder erreichbar. Mit der alten Firmware blieb er in genau
-    diesem Fall dreimal taub.
-  - Von außen nicht zu sehen ist, welcher Fehler den Neustart ausgelöst hat (Framing oder Noise).
-- Nebenwirkung: Eine echte Störung mitten in einer Messung startet den STM32 jetzt neu, statt ihn taub zu machen. Die laufende
-  Session ist dann weg. Der ESP32-Client merkt das an `frame_timeout` und muss neu verbinden; ein automatisches Neuverbinden
-  während `iq3`/`doppler` gibt es noch nicht.
+**Hardening 2026-11-01 (STM32, flashed ~08:40 with approval from the project owner):** 7th edit in `build_server.py`. `HAL_UART_ErrorCallback`
+now restarts on **every** error of the server UART (`ErrorCode != HAL_UART_ERROR_NONE` instead of only a framing error).
+- Image `acc_exploration_server_a121-v1.13.0_lpuart1.bin`, 109,760 bytes, SHA256
+  `b29e328d52eeeafc97e28e89051cb8ee74d527fb6a17a706b39ef1488cbc1757`. The linker warning "LOAD segment with RWX permissions"
+  also appears in the bit-identical `original` build, so it is not new.
+- Verified on the ELF: LTO inlined the callback at all three call sites (`UART_DMAAbortOnError`, `UART_DMAError`,
+  `HAL_UART_IRQHandler`). Everywhere it now reads `huart == &hlpuart1` and `ErrorCode (+0x88) != 0`, followed by `NVIC_SystemReset`.
+- Verified on the device:
+  - Normal operation as before: `srv_info`; `iq3 10` with 575 frames (57 Hz, without saturation); `doppler 5` with 31 Hz; exptool via
+    `bridge` with 90 frames at 30.03 Hz. On channel B only the expected restarts appeared, one per connect due to the break.
+    During the measurements the STM32 did not restart a single time.
+  - Deliberate baud error: Through the bridge the server was set to 115,200, while the bridge stayed at 921,600 (trick:
+    `"baudrate" : 115200` with spaces is not recognized by the bridge). Then `get_system_info` was sent three times at the wrong rate.
+    Result: the STM32 restarted after 0.1 s (channel B: "Acconeer Exploration Server" without "Waiting for host line break", so
+    caused by the error and not by a break) and was reachable again afterwards. With the old firmware it stayed deaf in exactly
+    this case, three times.
+  - What cannot be seen from outside is which error triggered the restart (framing or noise).
+- Side effect: A real disturbance in the middle of a measurement now restarts the STM32 instead of making it deaf. The running
+  session is then gone. The ESP32 client notices this from `frame_timeout` and has to reconnect; automatic reconnecting
+  during `iq3`/`doppler` does not exist yet.
 
-**Mobiler Aufbau am Gerät 2026-11-01 (~09 Uhr): A121 nur über die rote Ader vom ESP32-5Vin, kein A121-USB**
-(am PC nur `…12:34:56:78:9A:BC` sichtbar, der CH342 meldet sich ohne USB nicht an). STM32-Debug-Log über die gelbe Ader (`uart`, GPIO5).
-- `probe`/`bus`: alle Leitungen HIGH, MCU_INT LOW (Server-Firmware nutzt ihn nicht). `srv_info` und `stm_reset` funktionieren.
-  Das Debug-Log zeigt den Neustart („Acconeer Exploration Server“, „Waiting for host line break“).
-- ESP32-eigene Server-UART seit 2026-11-01 auf **2 Mbaud** (`SRV_BAUD`, vorher 921 600; die Debug-UART bleibt bei 921 600):
-  - `iq3 30`: 1783 Frames in 30 s (59,4 Hz), ohne Sättigung. Weiter 24 Lücken von bis zu 354 ms, je eine pro DSP-Report
-    (Rechenzeit auf dem ESP32, nicht der Link). Sensortemperatur stieg von 14 auf 19 °C.
-  - `doppler 10`: 31,2 Hz (64 Sweeps @ 2 kHz). `doppler 10 500 4000`: 62,3 Hz (64 Sweeps @ 4 kHz = 16 ms pro Frame, also lückenlos).
-- **Durchsatz über die Bridge** (exptool 7.18.2, 2 Mbaud; Sparse IQ, Profil 3, HWAAS 1, je 4 s pro Stufe; Skript lag im Scratchpad, nicht im Repo):
-  | angefordert | erreicht | `frame_delayed` |
+**Mobile setup on the device 2026-11-01 (~09:00): A121 powered only through the red wire from ESP32 5Vin, no A121 USB**
+(only `…12:34:56:78:9A:BC` visible on the PC, the CH342 does not enumerate without USB). STM32 debug log via the yellow wire (`uart`, GPIO5).
+- `probe`/`bus`: all lines HIGH, MCU_INT LOW (server firmware does not use it). `srv_info` and `stm_reset` work.
+  The debug log shows the restart ("Acconeer Exploration Server", "Waiting for host line break").
+- ESP32's own server UART at **2 Mbaud** since 2026-11-01 (`SRV_BAUD`, previously 921,600; the debug UART stays at 921,600):
+  - `iq3 30`: 1783 frames in 30 s (59.4 Hz), without saturation. Still 24 gaps of up to 354 ms, one per DSP report
+    (compute time on the ESP32, not the link). Sensor temperature rose from 14 to 19 °C.
+  - `doppler 10`: 31.2 Hz (64 sweeps @ 2 kHz). `doppler 10 500 4000`: 62.3 Hz (64 sweeps @ 4 kHz = 16 ms per frame, so gapless).
+- **Throughput through the bridge** (exptool 7.18.2, 2 Mbaud; sparse IQ, profile 3, HWAAS 1, 4 s per step each; script was in the scratchpad, not in the repo):
+  | requested | achieved | `frame_delayed` |
   |---|---|---|
-  | 16×60 @ 30 Hz = 115 kB/s | 30,0 Hz = 115 kB/s | 0/121 |
-  | 32×100 @ 10 Hz = 128 kB/s | 10,0 Hz = 128 kB/s | 0/41 |
-  | 32×100 @ 20–60 Hz = 256–768 kB/s | 15,2 Hz ≈ 194–195 kB/s | 60/61 |
-  Die Grenze ist die 2-Mbaud-UART (200 kB/s brutto). Darüber bremst der Server und kennzeichnet die Frames als `frame_delayed`,
-  wie vorgesehen. Zwei Läufe hintereinander mit je 5 061 804 Bytes zum PC: kein UART-Fehler (Overflow, Puffer, Framing,
-  Parity), kein unvollständiger USB-Write, höchstens 129 Bytes standen im ESP32-Puffer an.
-- **Bug 3, behoben (ESP32): Bei Überlast gingen in der Bridge Daten verloren** (exptool brach mit „Cannot decode header“ ab).
-  Die Zähler (`@BRIDGE_STATS` nach `+++EXIT`) zeigten einen unvollständigen USB-Write und keine UART-Fehler. HWCDC hat
-  standardmäßig nur einen 256-Byte-Sendepuffer und verwirft Daten, wenn der PC 100 ms lang nicht abholt.
-  Fix: `Serial.setTxBufferSize(16384)`, `setTxTimeoutMs(500)`, und die Bridge sendet den Rest nach einem unvollständigen Write erneut.
-- Nicht geprüft: Stromaufnahme im roten Draht, Dauerbetrieb über Stunden, Betrieb am Handy statt am PC.
+  | 16×60 @ 30 Hz = 115 kB/s | 30.0 Hz = 115 kB/s | 0/121 |
+  | 32×100 @ 10 Hz = 128 kB/s | 10.0 Hz = 128 kB/s | 0/41 |
+  | 32×100 @ 20–60 Hz = 256–768 kB/s | 15.2 Hz ≈ 194–195 kB/s | 60/61 |
+  The limit is the 2 Mbaud UART (200 kB/s gross). Above that the server throttles and marks the frames as `frame_delayed`,
+  as intended. Two runs in a row with 5,061,804 bytes each to the PC: no UART error (overflow, buffer, framing,
+  parity), no incomplete USB write, at most 129 bytes were pending in the ESP32 buffer.
+- **Bug 3, fixed (ESP32): Under overload, data was lost in the bridge** (exptool aborted with "Cannot decode header").
+  The counters (`@BRIDGE_STATS` after `+++EXIT`) showed an incomplete USB write and no UART errors. HWCDC by default has
+  only a 256-byte transmit buffer and discards data if the PC does not pick up for 100 ms.
+  Fix: `Serial.setTxBufferSize(16384)`, `setTxTimeoutMs(500)`, and the bridge resends the remainder after an incomplete write.
+- Not verified: current draw in the red wire, continuous operation over hours, operation on the phone instead of the PC.
 
-**`sess` am Gerät 2026-11-01 (mobiler Aufbau):**
-- Standard (40 Punkte, 10 Hz): 10,00 Hz. Zwei Subsweeps 0,3–1,5 m (Profil 2, 10 mm) + 1,5–7,0 m (Profil 5, 30 mm, PRF 6,5 MHz):
-  20,00 Hz, stabile Reflexion bei ≈ 650 mm. Großer Frame 4 × 1000 Punkte (16 kB) bei 5 Hz: sauber.
-- Überlast 32 × 100 bei 30 Hz (384 kB/s): Der ESP32 nimmt 15,2 Hz auf (≈ 195 kB/s, Link-Grenze), der Server meldet `frame_delayed`.
-  Kein UART-Fehler, kein Rückstau.
-- Fehlerfälle: `step 16` → „Invalid step_length“, Start 12,5 m → „Start point or range too far“. Mehr als 4096 Punkte
-  lehnt der ESP32 vor dem Setup ab. CSM ohne `sr` → „Invalid settings for continuous_sweep_mode“.
-- **Continuous Sweep Mode, 1 Punkt, Profil 1, HWAAS 1** (`max_sweep_rate` laut Metadaten 24 673 Hz):
-  | sweep_rate | spf | erreicht | delayed |
+**`sess` on the device 2026-11-01 (mobile setup):**
+- Default (40 points, 10 Hz): 10.00 Hz. Two subsweeps 0.3–1.5 m (profile 2, 10 mm) + 1.5–7.0 m (profile 5, 30 mm, PRF 6.5 MHz):
+  20.00 Hz, stable reflection at ≈ 650 mm. Large frame 4 × 1000 points (16 kB) at 5 Hz: clean.
+- Overload 32 × 100 at 30 Hz (384 kB/s): the ESP32 takes in 15.2 Hz (≈ 195 kB/s, link limit), the server reports `frame_delayed`.
+  No UART error, no backlog.
+- Error cases: `step 16` → "Invalid step_length", start 12.5 m → "Start point or range too far". More than 4096 points
+  are rejected by the ESP32 before the setup. CSM without `sr` → "Invalid settings for continuous_sweep_mode".
+- **Continuous sweep mode, 1 point, profile 1, HWAAS 1** (`max_sweep_rate` per metadata 24,673 Hz):
+  | sweep_rate | spf | achieved | delayed |
   |---|---|---|---|
-  | 2 000 Hz, ohne `dbuf` | 64 | 30,36 Hz | alle |
-  | 2 000–21 000 Hz, mit `dbuf` | 64 | 31,2 … 323,8 Hz (Soll −0,1 … −1,4 %) | 0 |
-  | 22 000–24 000 Hz, mit `dbuf` | 64 / 256 | effektiv ≈ 21,7–23,6 kHz Sweeps | alle |
-  Folgen: CSM braucht Double Buffering, und lückenlos geht es bis **21 kHz Sweep-Rate**, unabhängig von der Frame-Größe.
-  Der Engpass liegt im Sensor/STM32-Pfad, nicht im Link (≈ 150 kB/s) und nicht im ESP32 (Rückstau 0). Bei 5 Punkten
-  begrenzt der Link: 137 Hz × (1280 B + ~150 B Kopfzeile) ≈ 196 kB/s.
-- **Bug 4, behoben (ESP32): Der Client las jedes Byte der Frame-Kopfzeile einzeln aus dem UART-Treiber.** Bei 375 Frames/s
-  lief der 32-KB-Puffer über (4873 FIFO-Overflows, Rate brach auf 12 Hz ein). Fix: 1-KB-Zwischenpuffer im Client, gefüllt in
-  Blöcken. Danach 369 Frames/s mit Rückstau 0. `iq3` (58,5 Hz), `doppler` (31,2 Hz) und Bridge (≈ 195 kB/s) danach erneut geprüft.
+  | 2,000 Hz, without `dbuf` | 64 | 30.36 Hz | all |
+  | 2,000–21,000 Hz, with `dbuf` | 64 | 31.2 … 323.8 Hz (target −0.1 … −1.4 %) | 0 |
+  | 22,000–24,000 Hz, with `dbuf` | 64 / 256 | effectively ≈ 21.7–23.6 kHz sweeps | all |
+  Consequences: CSM needs double buffering, and gapless operation works up to **21 kHz sweep rate**, independent of the frame size.
+  The bottleneck is in the sensor/STM32 path, not in the link (≈ 150 kB/s) and not in the ESP32 (backlog 0). With 5 points
+  the link limits: 137 Hz × (1280 B + ~150 B header) ≈ 196 kB/s.
+- **Bug 4, fixed (ESP32): The client read every byte of the frame header individually from the UART driver.** At 375 frames/s
+  the 32 KB buffer overflowed (4873 FIFO overflows, rate collapsed to 12 Hz). Fix: 1 KB intermediate buffer in the client, filled in
+  blocks. Afterwards 369 frames/s with backlog 0. `iq3` (58.5 Hz), `doppler` (31.2 Hz) and bridge (≈ 195 kB/s) checked again afterwards.
 
-**`iq3` gibt den Raum aus, Zielsuche korrigiert (2026-11-01, mobiler Aufbau):**
-- Neue Zeilen: `@ROOMPROF` alle 12 Frames (5/s) mit geglätteter Amplitude und Bewegung aller 80 Raum-Punkte (0,30–2,67 m,
-  30 mm) und `@ROOM` je Report (1/s) mit Rauschpegel und bis zu 8 Zielen (Entfernung, Amplitude, Bewegung, bewegt ja/nein).
-  Zeitachse ist der Sensor-`tick` (ms), der auch über Rechenpausen lückenlos läuft. Vorher wurde nur die Anzahl der Ziele ausgegeben.
-- **Bug 5, behoben (ESP32-DSP): Die Zielsuche im Raum-Scan sah fast nur Rauschen.** Die festen Schwellen (Wert > 120, Bewegung > 12)
-  lagen unter dem Rauschen (Amplitude ≈ 55, Bewegung ≈ 55), und es zählten nur die 4 nächsten Spitzen. Die Liste war deshalb immer
-  mit Rausch-Spitzen bis ≈ 1,2 m gefüllt, und eine Rausch-Spitze im Zoom-Fenster galt als „bewegtes Ziel in der Nähe“ und
-  verhinderte den Rezoom. Jetzt: Rauschpegel = unteres Viertel der 80 Punkte, Ziel ab 2 × Rauschen, „bewegt“ ab 3 ×, die 8 stärksten,
-  Entfernung parabolisch verfeinert, Rezoom auf das stärkste bewegte Ziel.
-- PC-Prüfung (`host/a121_esp_ultimate.py --mode verify-cpp`, derselbe Header für den PC übersetzt, `iq3raw_normal_120s` und
-  `iq3raw_motion_120s`): verfolgter Puls in allen 242 Reports wie vorher (der Puls-/Atemteil ist nicht geändert). Zoom-Fenster
-  richtig (570–630 mm): alt und neu kein Rezoom. Fenster absichtlich falsch gesetzt: alt bei 400 mm (beide Aufnahmen) und 1000 mm
-  (`motion`) nie ein Rezoom; neu bei 400, 750, 1000, 1500 und 2250 mm nach 3–4 s eine Empfehlung auf die Person
-  (Fensterstart 562–688 mm, Person bei 0,60–0,67 m).
-- Am Gerät (`iq3 30 500`, Person sitzend bei ≈ 0,7 m, `2026-11-01_iq3_raum_live1.log/.png`): 1794 Frames in 30 s (59,8 Hz), keine
-  Sättigung; 149 Raumprofile im 200-ms-Takt, eine Lücke von 307 ms beim Rezoom. Rezoom nach 3 s von 500–560 auf 632–692 mm,
-  danach keiner mehr. Rechenzeit je Report weiter ≈ 306 ms.
-- Grenzen: Schwellen an zwei Aufnahmen und einem Live-Lauf derselben Person im selben Raum gesehen. Schwache feste Echos
-  (2–2,6 × Rauschen, z. B. bei 0,42 m und 1,0–1,3 m) erscheinen und verschwinden an der Schwelle.
+**`iq3` outputs the room, target search corrected (2026-11-01, mobile setup):**
+- New lines: `@ROOMPROF` every 12 frames (5/s) with smoothed amplitude and motion of all 80 room points (0.30–2.67 m,
+  30 mm) and `@ROOM` per report (1/s) with noise level and up to 8 targets (distance, amplitude, motion, moving yes/no).
+  The time axis is the sensor `tick` (ms), which runs gaplessly even across compute pauses. Before, only the number of targets was printed.
+- **Bug 5, fixed (ESP32 DSP): The target search in the room scan saw almost only noise.** The fixed thresholds (value > 120, motion > 12)
+  were below the noise (amplitude ≈ 55, motion ≈ 55), and only the 4 nearest peaks counted. The list was therefore always
+  filled with noise peaks up to ≈ 1.2 m, and a noise peak in the zoom window counted as a "moving target nearby" and
+  prevented the rezoom. Now: noise level = lower quarter of the 80 points, target from 2 × noise, "moving" from 3 ×, the 8 strongest,
+  distance refined parabolically, rezoom onto the strongest moving target.
+- PC verification (`host/a121_esp_ultimate.py --mode verify-cpp`, the same header compiled for the PC, `iq3raw_normal_120s` and
+  `iq3raw_motion_120s`): tracked pulse in all 242 reports as before (the pulse/breathing part is unchanged). Zoom window
+  correct (570–630 mm): old and new no rezoom. Window deliberately set wrong: old at 400 mm (both recordings) and 1000 mm
+  (`motion`) never a rezoom; new at 400, 750, 1000, 1500 and 2250 mm after 3–4 s a recommendation onto the person
+  (window start 562–688 mm, person at 0.60–0.67 m).
+- On the device (`iq3 30 500`, person seated at ≈ 0.7 m, `2026-11-01_iq3_raum_live1.log/.png`): 1794 frames in 30 s (59.8 Hz), no
+  saturation; 149 room profiles at 200 ms intervals, one gap of 307 ms at the rezoom. Rezoom after 3 s from 500–560 to 632–692 mm,
+  none afterwards. Compute time per report still ≈ 306 ms.
+- Limits: thresholds seen on two recordings and one live run of the same person in the same room. Weak static echoes
+  (2–2.6 × noise, e.g. at 0.42 m and 1.0–1.3 m) appear and disappear at the threshold.
 
-**Bug 6, behoben (ESP32-DSP): Die Atemfrequenz klebte oft am unteren Rand des Suchbands (6,9 /min)**, in `iq3raw_normal` bei
-30 von 113 Reports, in `iq3raw_motion` bei 35 von 115, live bei 10 von 18. Zwei Ursachen, an den Aufnahmen einzeln belegt
-(Python-Nachbau, der bis auf 0,1 /min mit dem C++-Code übereinstimmt):
-- Die Spektren der 24 Zoom-Punkte wurden ungewichtet summiert. Schwache Punkte (|z| 120–300) hatten 140–240 Phasensprünge in
-  15 s und ein Schein-Wegsignal von 8–11 mm Spitze-Spitze (Abwickel-Fehler). Ihr Tieftonanteil überdeckte die Atmung der
-  starken Punkte, die z. B. bei t = 75 s sauber 17 /min zeigten.
-- Gesucht wurde das größte Bin im Bereich. Bei Lagewechseln (Stufen von 2–5 mm im Wegsignal) steigt die Leistung zu tiefen
-  Frequenzen weiter an, das größte Bin ist dann der Rand, obwohl dort keine Spitze liegt.
-- Fix: Gewicht Amplitude² je Punkt (umgekehrtes Phasenrauschen) und nur echte lokale Maxima; ohne Spitze `br` = 0.
-  Einzeln getestet: nur Gewicht 30→15 bzw. 35→34 Randwerte, nur lokale Maxima 0/0 (2 Reports ohne Wert); beides 0/0.
-- PC-Prüfung: Randwerte 30→0 und 35→0, keine Reports ohne Wert. Verfolgter Puls in allen 228 Reports unverändert, nur `hr_harm`
-  ist öfter gesetzt (30→40, 41→43), weil die Oberwellen-Prüfung jetzt die richtige Atemfrequenz bekommt. Gegen die gezählten
-  Atemzyklen der starken Punkte: `normal` 60–75 s 17,6 gezählt / 17 /min, 80–95 s 19,8 / 21; `motion` 0–20 s 20,7 / 20–21.
-- Am Gerät (`iq3 60 500`, Person sitzend, `2026-11-01_iq3_atmung_live1.log/.png`): 40 Atemwerte, keiner am Rand, 9,7–24,3 /min.
-  Vergleich mit den Nulldurchgängen des `@IQ3`-Wegsignals im selben 15-s-Fenster: 29 von 40 innerhalb ±3 /min, bei 31–56 s
-  (Zoom 650–710 mm, auf der Brust) alle 26 innerhalb ±2 /min. Abweichungen bei 12–22 s (7 Reports; dort schwanken auch die
-  gezählten Zyklen zwischen 11 und 19 /min) und bei 56,5 s. Rechenzeit je Report Median 291 ms (vorher ≈ 306 ms).
-- Grenzen: keine Referenz, die Zyklenzählung stammt aus demselben Radarsignal (nur Plausibilität). Bei deutlicher Bewegung
-  (`motion` 46–58 s) gibt es trotzdem einen Atemwert (23–26 /min), der dort nicht belastbar ist.
+**Bug 6, fixed (ESP32 DSP): The breathing rate often stuck at the lower edge of the search band (6.9 /min)**, in `iq3raw_normal` in
+30 of 113 reports, in `iq3raw_motion` in 35 of 115, live in 10 of 18. Two causes, each proven on the recordings
+(Python replica that matches the C++ code to within 0.1 /min):
+- The spectra of the 24 zoom points were summed unweighted. Weak points (|z| 120–300) had 140–240 phase jumps in
+  15 s and an apparent displacement signal of 8–11 mm peak-to-peak (unwrapping error). Their low-frequency content masked the breathing of the
+  strong points, which e.g. at t = 75 s cleanly showed 17 /min.
+- The largest bin in the range was searched. With posture changes (steps of 2–5 mm in the displacement signal) the power keeps rising toward low
+  frequencies, so the largest bin is then the edge although there is no peak there.
+- Fix: weight amplitude² per point (inverse phase noise) and only true local maxima; without a peak `br` = 0.
+  Tested individually: weight alone 30→15 and 35→34 edge values, local maxima alone 0/0 (2 reports without a value); both together 0/0.
+- PC verification: edge values 30→0 and 35→0, no reports without a value. Tracked pulse unchanged in all 228 reports, only `hr_harm`
+  is set more often (30→40, 41→43), because the harmonic check now gets the correct breathing rate. Against the counted
+  breathing cycles of the strong points: `normal` 60–75 s 17.6 counted / 17 /min, 80–95 s 19.8 / 21; `motion` 0–20 s 20.7 / 20–21.
+- On the device (`iq3 60 500`, person seated, `2026-11-01_iq3_atmung_live1.log/.png`): 40 breathing values, none at the edge, 9.7–24.3 /min.
+  Comparison with the zero crossings of the `@IQ3` displacement signal in the same 15 s window: 29 of 40 within ±3 /min, at 31–56 s
+  (zoom 650–710 mm, on the chest) all 26 within ±2 /min. Deviations at 12–22 s (7 reports; there the
+  counted cycles also fluctuate between 11 and 19 /min) and at 56.5 s. Compute time per report median 291 ms (before ≈ 306 ms).
+- Limits: no reference, the cycle counting comes from the same radar signal (plausibility only). With clear motion
+  (`motion` 46–58 s) there is still a breathing value (23–26 /min) that is not reliable there.
 
-**Bug 7, behoben (ESP32-DSP): Der Rezoom wählte bei zwei nahen Echos das falsche und blieb dort hängen.** Im Lauf
-`2026-11-01_iq3_atmung_live1` ging der erste Rezoom auf 745–805 mm, die Brust lag bei ≈ 0,66 m; das Fenster blieb 19 s dort.
-- Ursache 1, Momentaufnahme: Es gab zwei bewegte Echos, die Brust bei 0,66 m (Amplitude schwankend 440–1220, Bewegung 600–960)
-  und ein zweites bei 0,78 m (Amplitude gleichmäßig ≈ 950, Bewegung 200–570). Entschieden wurde in einem einzigen Report:
-  0,774 m mit 1096 + 8 × 596 = 5864 gegen 0,656 m mit 529 + 8 × 660 = 5809, weil die Brust gerade einen Amplitudeneinbruch hatte.
-- Ursache 2, Nähe-Regel: Jedes bewegte Echo am Fenster verhinderte den Rezoom, also hielt das zweite Echo das Fenster fest.
-- Das falsche Fenster war schlechter: Pulskonfidenz Median 78 % gegen 99 % auf der Brust, Puls-Spitze/Median 9,2 gegen 15,8 dB
-  (verschiedene Zeitabschnitte desselben Laufs).
-- Kriterien an den 5-Hz-Raumprofilen von vier Logs verglichen (Brust gewählt / Wahl bei t = 3 s im Fehlerlauf): Momentaufnahme
-  heute 92 % / falsch; über 3 s geglättet „Amplitude + 8 × Bewegung“ 99–100 % / richtig; geglättet nur Bewegung ebenso; stärkstes
-  Echo 85–88 % / falsch (das zweite Echo war im Mittel stärker, bewegte sich aber weniger). Glättung 1–8 s: überall richtig.
-- Fix: Das Zoom-Ziel kommt aus einem zusätzlich geglätteten Raumprofil (τ ≈ 3 s), und nur dieses Ziel hält das Fenster (±60 mm).
-  Simulation auf den Logs: Start auf dem zweiten Echo (745 mm) heute bis 26 s gefangen, neu nach 3 s auf der Brust; in allen
-  anderen Fällen gleiche Rezooms wie vorher, kein Hin- und Herspringen.
-- PC-Prüfung (`iq3raw_normal`/`motion`): Vitalwerte bitgleich. Fenster richtig: kein Rezoom. Fenster bei 400–2250 mm: Brust nach 3 s
-  gefunden, Fensterstart 580–635 mm (vorher 562–688 mm).
-- Am Gerät (`iq3 45 745`, Person sitzend, `2026-11-01_iq3_rezoom_live1.log/.png`): ein Rezoom nach 3 s auf 635–695 mm, danach keiner,
-  obwohl bei 16, 25 und 43 s bewegte Echos bei 0,74–0,79 m auftauchten. 59,9 Hz, Atmung 11,5–24,8 /min ohne Randwert,
-  Pulskonfidenz Median 94 %, Rechenzeit Median 319 ms. Das zweite Echo war diesmal schwächer als im Fehlerlauf; der harte Fall
-  ist nur durch die Simulation auf dem Log belegt.
+**Bug 7, fixed (ESP32 DSP): With two nearby echoes the rezoom chose the wrong one and got stuck there.** In the run
+`2026-11-01_iq3_atmung_live1` the first rezoom went to 745–805 mm, the chest was at ≈ 0.66 m; the window stayed there for 19 s.
+- Cause 1, snapshot: There were two moving echoes, the chest at 0.66 m (amplitude fluctuating 440–1220, motion 600–960)
+  and a second at 0.78 m (amplitude steady ≈ 950, motion 200–570). The decision was made in a single report:
+  0.774 m with 1096 + 8 × 596 = 5864 against 0.656 m with 529 + 8 × 660 = 5809, because the chest happened to have an amplitude dip.
+- Cause 2, proximity rule: Every moving echo at the window prevented the rezoom, so the second echo held the window in place.
+- The wrong window was worse: pulse confidence median 78 % against 99 % on the chest, pulse peak/median 9.2 against 15.8 dB
+  (different time segments of the same run).
+- Criteria compared on the 5 Hz room profiles of four logs (chest chosen / choice at t = 3 s in the failing run): snapshot
+  today 92 % / wrong; smoothed over 3 s "amplitude + 8 × motion" 99–100 % / right; smoothed motion only likewise; strongest
+  echo 85–88 % / wrong (the second echo was stronger on average, but moved less). Smoothing 1–8 s: right everywhere.
+- Fix: The zoom target comes from an additionally smoothed room profile (τ ≈ 3 s), and only this target holds the window (±60 mm).
+  Simulation on the logs: start on the second echo (745 mm) trapped until 26 s today, new after 3 s on the chest; in all
+  other cases the same rezooms as before, no jumping back and forth.
+- PC verification (`iq3raw_normal`/`motion`): vital values bit-identical. Window correct: no rezoom. Window at 400–2250 mm: chest
+  found after 3 s, window start 580–635 mm (before 562–688 mm).
+- On the device (`iq3 45 745`, person seated, `2026-11-01_iq3_rezoom_live1.log/.png`): one rezoom after 3 s to 635–695 mm, none afterwards,
+  although moving echoes appeared at 0.74–0.79 m at 16, 25 and 43 s. 59.9 Hz, breathing 11.5–24.8 /min without an edge value,
+  pulse confidence median 94 %, compute time median 319 ms. The second echo was weaker this time than in the failing run; the hard case
+  is proven only by the simulation on the log.
 
-Downloads (nicht im Repo, liegen in `vendor/`, gitignored), geholt 2026-10-30:
+Downloads (not in the repo, located in `vendor/`, gitignored), fetched 2026-10-30:
 - `A121_Firmware.zip` sha256 `fea5bcd0b7d39149c0cc02bf82303abd5cd6d92f209643ba426b18db58da356a`
   (https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Firmware.zip)
 - `A121_Range_Sensor_Demo.zip` sha256 `481b587bf8e388d36846ab44a4603a2a2cd60a3a35245d674eaaaf5b1f66e144`
   (https://files.waveshare.com/wiki/A121_Range_Sensor/A121_Range_Sensor_Demo.zip)
 
-Für den eigenen Server-Build, geholt 2026-10-31 (Versionen laut `doc/XM125 Software User Guide.pdf` des SDK):
+For the own server build, fetched 2026-10-31 (versions per `doc/XM125 Software User Guide.pdf` of the SDK):
 - `acconeer_xm125_a121-v1_13_0.zip` sha256 `0f4e74b1d3af18583b650c9f27865838a8bf11e93387889775689940664aa3f4`
-  (Acconeer Developer Site, mit dem Konto des Projektinhabers geladen) → `vendor/acconeer_xm125_a121-v1_13_0.zip`, entpackt nach
-  `vendor/acconeer_sdk/a121-v1.13.0/xm125/`. Lizenz der Acconeer-Teile: BSD-3-Clause (`LICENSES/license_acconeer.txt`).
-- STM32CubeL4 v1.18.1, nur `Drivers/` → `vendor/stm32cube/STM32Cube_FW_L4_V1.18.1/Drivers/`, per Git auf die Commits des
-  Tags v1.18.1: `STMicroelectronics/stm32l4xx-hal-driver` @ `41027c61f69401afe4937db0ebd5d0cdbffbea0d` (BSD-3),
+  (Acconeer Developer Site, downloaded with the project owner's account) → `vendor/acconeer_xm125_a121-v1_13_0.zip`, unpacked to
+  `vendor/acconeer_sdk/a121-v1.13.0/xm125/`. License of the Acconeer parts: BSD-3-Clause (`LICENSES/license_acconeer.txt`).
+- STM32CubeL4 v1.18.1, only `Drivers/` → `vendor/stm32cube/STM32Cube_FW_L4_V1.18.1/Drivers/`, via Git at the commits of
+  tag v1.18.1: `STMicroelectronics/stm32l4xx-hal-driver` @ `41027c61f69401afe4937db0ebd5d0cdbffbea0d` (BSD-3),
   `STMicroelectronics/cmsis-device-l4` @ `a2530753e86dd326a75467d28feb92e2ba7d0df2` (Apache-2.0),
-  `Drivers/CMSIS/Include` aus `STMicroelectronics/STM32CubeL4` @ `d4c40b36185bd0d75e33c94ebc8337b634bbcc94` (Tag v1.18.1).
+  `Drivers/CMSIS/Include` from `STMicroelectronics/STM32CubeL4` @ `d4c40b36185bd0d75e33c94ebc8337b634bbcc94` (tag v1.18.1).
 - Arm GNU Toolchain 13.3.Rel1 `arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz`
-  sha256 `95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4` (stimmt mit ARMs `.sha256asc` überein,
+  sha256 `95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4` (matches ARM's `.sha256asc`,
   https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/) → `~/.local/opt/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/`.
 
-ESP32-S3-Pins meiden: GPIO19/20 (nativer USB), GPIO35–37 (Octal-PSRAM), GPIO43/44 (UART0 zur
-USB-UART-Bridge), Strapping-Pins 0/3/45/46. RGB-LED je nach Board-Revision GPIO48 oder 38.
+ESP32-S3 pins to avoid: GPIO19/20 (native USB), GPIO35–37 (octal PSRAM), GPIO43/44 (UART0 to the
+USB-UART bridge), strapping pins 0/3/45/46. RGB LED on GPIO48 or 38 depending on the board revision.
 
-## Stromversorgung am Handy
+## Power supply from the phone
 
-- Handy → nativer USB-C-Port des ESP32-S3 → 5V-Pin → A121-Board.
-- Bedarf grob: A121 ≤ 80 mA + ESP32-S3 ~100–250 mA (ohne Funk weniger) — für Handy-OTG unkritisch.
-- Bei Klon-Boards prüfen, ob der 5V-Pin auch bei Versorgung über den nativen Port Spannung führt (Multimeter).
-- **Geprüft 2026-10-30 (Board des Projektinhabers):** Pin beschriftet „5Vin“; an beiden USB-Ports nur 1,2–1,3 V
-  (Leckspannung) statt 5 V → reiner Eingang, vermutlich über Diode. A121 bleibt so ohne Strom (PWR-LED aus).
-  Board ist ein DevKitC-1-Nachbau (kein Espressif-Logo, Modul „S3-N16R8“, Foto 2026-10-30) mit **offener
-  Lötbrücke „IN-OUT“** unten links neben der RGB-LED. Geschlossen überbrückt sie laut Community-Quellen
-  (YD-ESP32-S3-Doku) eine Diode, dann liegt USB-VBUS auf 5Vin – danach nie gleichzeitig externe 5 V und USB.
-  Alternative: Original Espressif ESP32-S3-DevKitC-1-N16R8 (5V0 = USB-VBUS über Diode, ~4,7 V).
-  **IN-OUT am 2026-10-30 geschlossen (selbst gelötet):** 5Vin–GND = 4,74 V bei USB-Versorgung.
-  Regeln seitdem: nie USB + externe 5 V gleichzeitig; bei gesteckter roter Ader A121 nicht zusätzlich per USB-C.
-  Übergangsweise am PC: A121 per eigenem USB-C versorgen, rote Ader ab, Signale + GND bleiben.
-- **Geprüft 2026-11-01 am Galaxy S26 Ultra:** nativer USB-Port des ESP32 per C-auf-C-Kabel am Handy → Handy ist
-  Stromquelle + Host, alle Power-LEDs (ESP32 und A121) an, ESP32 als `303a:1001` (CDC-ACM + JTAG) erkannt. Die
-  USB-C-Buchse des Nachbaus braucht also keinen OTG-Adapter. Datenfluss mit der App geprüft: 31,7 min `iq3 … raw`
-  über USB ohne Frameverlust (`docs/ANDROID_APP.md`). Abziehen startet den ESP32 neu (er hängt am Handy-Strom); das
-  Handy lädt währenddessen nicht, Verbrauch nicht gemessen.
-- Nie beide USB-Ports des ESP32 gleichzeitig anschließen (z. B. Handy + PC): Mit geschlossener IN-OUT-Brücke könnten
-  zwei 5-V-Quellen verbunden sein (nicht gemessen).
-- Motoren (späterer Scanner) immer separat versorgen; nur GND gemeinsam.
+- Phone → native USB-C port of the ESP32-S3 → 5V pin → A121 board.
+- Rough demand: A121 ≤ 80 mA + ESP32-S3 ~100–250 mA (less without radio) — uncritical for phone OTG.
+- On clone boards, check whether the 5V pin also carries voltage when powered through the native port (multimeter).
+- **Verified 2026-10-30 (the project owner's board):** Pin labeled "5Vin"; on both USB ports only 1.2–1.3 V
+  (leakage voltage) instead of 5 V → pure input, probably via a diode. The A121 stays unpowered that way (PWR LED off).
+  The board is a DevKitC-1 clone (no Espressif logo, module "S3-N16R8", photo 2026-10-30) with an **open
+  solder bridge "IN-OUT"** at the bottom left next to the RGB LED. Closed, it bridges a diode according to community sources
+  (YD-ESP32-S3 docs), then USB VBUS is on 5Vin – after that never external 5 V and USB at the same time.
+  Alternative: original Espressif ESP32-S3-DevKitC-1-N16R8 (5V0 = USB VBUS via diode, ~4.7 V).
+  **IN-OUT closed on 2026-10-30 (self-soldered):** 5Vin–GND = 4.74 V with USB power.
+  Rules since then: never USB + external 5 V at the same time; with the red wire plugged in, do not additionally power the A121 via USB-C.
+  Temporarily on the PC: power the A121 through its own USB-C, red wire disconnected, signals + GND stay.
+- **Verified 2026-11-01 on the Galaxy S26 Ultra:** native USB port of the ESP32 connected to the phone with a C-to-C cable → phone is
+  power source + host, all power LEDs (ESP32 and A121) on, ESP32 detected as `303a:1001` (CDC-ACM + JTAG). The
+  USB-C socket of the clone therefore needs no OTG adapter. Data flow with the app verified: 31.7 min of `iq3 … raw`
+  over USB without frame loss (`docs/ANDROID_APP.md`). Unplugging restarts the ESP32 (it runs on the phone's power); the
+  phone does not charge in the meantime, consumption not measured.
+- Never connect both USB ports of the ESP32 at the same time (e.g. phone + PC): with the IN-OUT bridge closed,
+  two 5 V sources could be connected (not measured).
+- Always power motors (later scanner) separately; only GND in common.
 
-## Pico (zurückgestellt)
+## Pico (on hold)
 
-Nicht Teil des aktuellen A121-Fokus. Mögliche spätere Rollen: SWD-Debug-Probe für den STM32
-(„debugprobe“-Firmware an SWDIO/SWCLK/GND-Pads) oder Schrittmotorsteuerung für den SAR-Scanner.
-Flashen des STM32 geht ohne Pico über USB (BOOT-Taste, Kanal A).
+Not part of the current A121 focus. Possible later roles: SWD debug probe for the STM32
+("debugprobe" firmware on the SWDIO/SWCLK/GND pads) or stepper motor control for the SAR scanner.
+Flashing the STM32 works without the Pico over USB (BOOT button, channel A).

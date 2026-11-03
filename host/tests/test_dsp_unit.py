@@ -1,4 +1,4 @@
-"""Einzeltests für Funktionen im Firmware-DSP-Header (am PC übersetzt; nur Logik, keine Laufzeitprüfung am Gerät).
+"""Unit tests for functions in the firmware DSP header (compiled on the PC; logic only, no runtime check on the device).
 
   .venv/bin/python -m unittest host/tests/test_dsp_unit.py
 """
@@ -16,7 +16,7 @@ SHIM = HOST / "dsp_replay"
 
 
 def run_cpp(body: str, flags: tuple[str, ...] = ()) -> str:
-    """Übersetzt ein kleines Programm gegen a121_esp_dsp.h und gibt seine Ausgabe zurück (flags: z. B. -D…)."""
+    """Compiles a small program against a121_esp_dsp.h and returns its output (flags: e.g. -D…)."""
     src = ('#include <Arduino.h>\n#include <vector>\n#include <random>\n#include "a121_esp_dsp.h"\nusing namespace a121_dsp;\nint main() {\n'
            + body + "\nreturn 0; }\n")
     with tempfile.TemporaryDirectory() as d:
@@ -32,7 +32,7 @@ def run_cpp(body: str, flags: tuple[str, ...] = ()) -> str:
 
 
 def ring_code(points: str, n: int) -> str:
-    """C++: Ring mit kHistoryLen Einträgen [I,Q], die ersten n aus dem Ausdruck points(k) → (i, q) gefüllt."""
+    """C++: ring with kHistoryLen entries [I,Q], the first n filled from the expression points(k) → (i, q)."""
     return f"""
     static float ring[kHistoryLen * 2];
     const uint16_t N = {n};
@@ -53,17 +53,17 @@ class CircleCenterTest(unittest.TestCase):
         self.assertAlmostEqual(float(cq), -200.0, delta=1.0)
 
     def test_short_arc_with_noise(self):
-        # Bogen 2,5 rad Spitze-Spitze (≈ 1 mm Atemhub), Rauschen 1 % des Radius: Mittelpunkt auf 5 % des Radius genau
+        # arc 2.5 rad peak-to-peak (≈ 1 mm breathing stroke), noise 1 % of the radius: center accurate to 5 % of the radius
         body = ring_code("float a = 1.27f * sinf(6.2832f * k / 240.0f); float e1 = 10.0f * sinf(k * 12.9898f), "
                          "e2 = 10.0f * cosf(k * 78.233f); float pi = 1000 * cosf(a) + e1 + 500, pq = 1000 * sinf(a) + e2", 900)
         out = run_cpp(body + 'bool ok = circleCenter(ring, 0, N, mi, mq, ci, cq); printf("%d %.2f %.2f %.2f %.2f", ok, ci, cq, mi, mq);')
         ok, ci, cq, mi, mq = (float(x) for x in out.split())
         self.assertEqual(ok, 1)
         self.assertLess(((ci - 500) ** 2 + cq ** 2) ** 0.5, 50.0)
-        self.assertGreater(((mi - 500) ** 2 + mq ** 2) ** 0.5, 100.0)  # der Mittelwert liegt deutlich daneben
+        self.assertGreater(((mi - 500) ** 2 + mq ** 2) ** 0.5, 100.0)  # the mean is clearly off
 
     def test_ring_wraps_around(self):
-        # Fenster läuft über das Ringende: Start bei kHistoryLen − 100
+        # window wraps past the ring end: start at kHistoryLen − 100
         body = """
         static float ring[kHistoryLen * 2];
         const uint16_t N = 600, start = kHistoryLen - 100;
@@ -81,7 +81,7 @@ class CircleCenterTest(unittest.TestCase):
         self.assertAlmostEqual(float(cq), 100.0, delta=1.0)
 
     def test_degenerate_falls_back_to_mean(self):
-        # alle Punkte auf einer Geraden: kein Kreis bestimmbar → false, Mittelwert zurück
+        # all points on a line: no circle determinable → false, mean returned
         out = run_cpp(ring_code("float pi = 100 + k, pq = 50 + 2 * k", 300)
                       + 'bool ok = circleCenter(ring, 0, N, mi, mq, ci, cq); printf("%d %.3f %.3f %.3f %.3f", ok, ci, cq, mi, mq);')
         ok, ci, cq, mi, mq = (float(x) for x in out.split())
@@ -100,7 +100,7 @@ class CircleCenterTest(unittest.TestCase):
 
 class BandpassTest(unittest.TestCase):
     def test_coefficients_match_scipy(self):
-        """kBpSos = scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') (V1.2, Pulsband 40–180 /min)."""
+        """kBpSos = scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') (V1.2, pulse band 40–180 /min)."""
         import re
         import numpy as np
         from scipy import signal
@@ -120,7 +120,7 @@ class BandpassTest(unittest.TestCase):
 
 
 class SignalQualityTest(unittest.TestCase):
-    """Konfidenz aus Spitzenhöhe, Oberwelle, Einigkeit Spektrum/AKF/IBI, Bewegung und Sprung (V1.3)."""
+    """Confidence from peak height, harmonic, agreement of spectrum/ACF/IBI, motion and jump (V1.3)."""
 
     def quality(self, **kw) -> float:
         q = dict(peak_db=15.0, on_harmonic="false", hr_spec=72.0, hr_acf=72.0, hr_ibi=72.0, hr_fused=72.0,
@@ -147,12 +147,12 @@ class SignalQualityTest(unittest.TestCase):
         self.assertAlmostEqual(self.quality(hr_ibi=90.0, hr_acf=50.0), 50.0, places=2)
 
     def test_saturation_halves_from_one_percent(self):
-        """V1.5: gesättigte Frames im Fenster ab 1 % → × 0,5"""
+        """V1.5: saturated frames in the window from 1 % → × 0.5"""
         self.assertAlmostEqual(self.quality(sat_pct=0.5), 100.0, places=2)
         self.assertAlmostEqual(self.quality(sat_pct=2.0), 50.0, places=2)
 
     def test_short_window_scales(self):
-        """V2.4: wachsendes Fenster ab 6 s, Konfidenz × N/900"""
+        """V2.4: growing window from 6 s, confidence × N/900"""
         self.assertAlmostEqual(self.quality(win_frac=0.4), 40.0, places=2)
 
     def test_motion_and_jump(self):
@@ -161,7 +161,7 @@ class SignalQualityTest(unittest.TestCase):
 
 
 class CardiacAcfTest(unittest.TestCase):
-    """Autokorrelation des Herzsignals: nur echte lokale Maxima im Bereich 40–180 /min (V1.2)."""
+    """Autocorrelation of the heart signal: only true local maxima in the range 40–180 /min (V1.2)."""
 
     def acf(self, expr: str) -> tuple[float, float]:
         out = run_cpp(f"""
@@ -174,7 +174,7 @@ class CardiacAcfTest(unittest.TestCase):
         return bpm, peak
 
     def test_no_peak_at_lower_lag_edge(self):
-        # 37 /min liegt unter dem Suchbereich: Die AKF fällt am kleinsten Abstand nur ab, das ist keine Spitze
+        # 37 /min is below the search range: the ACF only falls at the smallest lag, that is not a peak
         _, peak = self.acf("cosf(6.2832f * 0.62f * t)")
         self.assertEqual(peak, 0.0)
 
@@ -185,8 +185,8 @@ class CardiacAcfTest(unittest.TestCase):
 
 
 class RemoveBreathHarmonicsTest(unittest.TestCase):
-    """Atem-Oberwellen m · f_Atem (m = 1..8) aus dem Herzsignal abziehen, bevor AKF und Einzelschläge rechnen; m nahe
-    am Puls (und an 2 × Puls) bleiben (wie V3.3, ±0,1 Hz)."""
+    """Subtract breathing harmonics m · f_breath (m = 1..8) from the heart signal before the ACF and individual beats are computed; m near
+    the pulse (and at 2 × pulse) are kept (as in V3.3, ±0.1 Hz)."""
 
     def run_case(self, expr: str, fb: float, keep: float, ref: str) -> float:
         out = run_cpp(f"""
@@ -201,10 +201,10 @@ class RemoveBreathHarmonicsTest(unittest.TestCase):
     def test_removes_breath_harmonics_keeps_pulse(self):
         rms = self.run_case("700 * cosf(6.2832f * 0.75f * t + 0.3f) + 300 * cosf(6.2832f * 1.0f * t - 1.0f) "
                             "+ 30 * cosf(6.2832f * 1.2f * t)", 0.25, 1.2, "30 * cosf(6.2832f * 1.2f * t)")
-        self.assertLess(rms, 1.5)  # < 5 % der Puls-Amplitude, Atem-Oberwellen 10–20 × größer
+        self.assertLess(rms, 1.5)  # < 5 % of the pulse amplitude, breathing harmonics 10–20 × larger
 
     def test_harmonic_on_pulse_stays(self):
-        # m = 4 liegt auf dem Puls und bleibt; die übrigen m nehmen ihm höchstens 2 % (Rest-Leckage über das Fenster)
+        # m = 4 lies on the pulse and is kept; the other m take at most 2 % from it (residual leakage across the window)
         rms = self.run_case("30 * cosf(6.2832f * 1.0f * t)", 0.25, 1.0, "30 * cosf(6.2832f * 1.0f * t)")
         self.assertLess(rms, 0.6)
 
@@ -214,7 +214,7 @@ class RemoveBreathHarmonicsTest(unittest.TestCase):
 
 
 class BreathAmplitudeTest(unittest.TestCase):
-    """Atem-Amplitude je Report: Spitze-Spitze des 1-s-Mittels über die letzten 10 s, Trend entfernt (V1.4)."""
+    """Breathing amplitude per report: peak-to-peak of the 1 s mean over the last 10 s, trend removed (V1.4)."""
 
     def amp(self, expr: str) -> float:
         return float(run_cpp(f"""
@@ -229,17 +229,17 @@ class BreathAmplitudeTest(unittest.TestCase):
             self.assertLess(a, 2000.0, rate)
 
     def test_held_breath_with_heartbeat_and_drift(self):
-        # angehalten: Lage driftet 40 µm/s, Herzschlag 100 µm Spitze-Spitze bei 76 /min
+        # held: position drifts 40 µm/s, heartbeat 100 µm peak-to-peak at 76 /min
         a = self.amp("40.0f * t + 50 * sinf(6.2832f * 1.267f * t)")
         self.assertLess(a, 40.0)
 
 
 class BreathStateTest(unittest.TestCase):
-    """Atemzustand (V1.4): 0 normal, 1 keine Atemspitze, 2 angehalten (< 10 % des 60-s-Medians, 10 s lang),
-    3 Bewegung (> 50 %), 4 flach (< 70 % des Medians, 10 s lang)."""
+    """Breathing state (V1.4): 0 normal, 1 no breathing peak, 2 held (< 10 % of the 60 s median, for 10 s),
+    3 motion (> 50 %), 4 shallow (< 70 % of the median, for 10 s)."""
 
     def states(self, steps: str) -> list[int]:
-        """steps: C++-Ausdrücke für (amp, peak, motion) je Sekunde k; Ausgabe Zustand je Sekunde."""
+        """steps: C++ expressions for (amp, peak, motion) per second k; output: state per second."""
         out = run_cpp(f"""
         BreathStateTracker bs; bs.reset();
         for (int k = 0; k < 120; k++) {{
@@ -249,11 +249,11 @@ class BreathStateTest(unittest.TestCase):
         return [int(v) for v in out.split()]
 
     def test_apnea_after_ten_seconds_without_breath(self):
-        # 40 s Atmung, ab k = 40 nichts mehr; das 10-s-Fenster ist ab k = 50 frei von Atmung (Amplitude 30)
+        # 40 s of breathing, nothing from k = 40 on; the 10 s window is free of breathing from k = 50 (amplitude 30)
         st = self.states("amp = (k < 50) ? 2000.0f : 30.0f; peak = true; motion = 0")
         self.assertNotIn(2, st[:50])
-        self.assertEqual(st[50], 2)   # 10 s nach dem letzten Atemzug
-        self.assertEqual(set(st[50:]), {2})   # bleibt, auch wenn das Anhalten länger als 30 s dauert
+        self.assertEqual(st[50], 2)   # 10 s after the last breath
+        self.assertEqual(set(st[50:]), {2})   # stays, even if the breath hold lasts longer than 30 s
 
     def test_breath_returns(self):
         st = self.states("amp = (k >= 50 && k < 65) ? 30.0f : 2000.0f; peak = true; motion = 0")
@@ -272,11 +272,11 @@ class BreathStateTest(unittest.TestCase):
         self.assertEqual(st[70], 3)
 
     def test_reference_forgotten_after_echo_lost(self):
-        """Abschluss-Review C1: Person geht (kein sauberes Echo, amp < 0), danach ein Rausch-Report mit „Echo" — das ist
-        kein Atemanhalten; die Referenz der gegangenen Person gilt nach 3 Reports ohne Echo nicht mehr."""
+        """Final review C1: person leaves (no clean echo, amp < 0), then a noise report with an "echo" — that is
+        not a breath hold; the reference of the person who left no longer applies after 3 reports without an echo."""
         st = self.states("amp = (k < 40) ? 2000.0f : (k < 43) ? -1.0f : 30.0f; peak = (k < 40); motion = 0")
         self.assertNotIn(2, st[43:])
-        # kurzer Echo-Ausfall (2 Reports) beim Anhalten: Referenz bleibt, Apnoe wird erkannt
+        # short echo dropout (2 reports) during the hold: reference stays, apnea is detected
         st = self.states("amp = (k < 40) ? 2000.0f : (k < 42) ? -1.0f : 30.0f; peak = (k < 40); motion = 0")
         self.assertEqual(st[42], 2)
 
@@ -304,13 +304,13 @@ class DspLineTest(unittest.TestCase):
         self.assertEqual(out.split(",")[10:13], ["3", "2", "1"])
 
     def test_snap_frame_last(self):
-        """Feld 13 = frame_count des Schnappschusses (V2.1): dort rechnet die Nachrechnung den Report."""
+        """Field 13 = frame_count of the snapshot (V2.1): that is where the replay computes the report."""
         out = run_cpp('VitalReport r = {}; r.frame_count = 1234; char b[256];'
                       'formatDspLine(b, sizeof(b), 1000, true, r, 5); printf("%s", b);')
         self.assertEqual(out.split(",")[13], "1234")
 
     def test_reacq_fields_at_end(self):
-        """V6: win_s und reacq hinten (Feld 15, 16); Feld 14 (n_eff) ist ohne A121_DSP_COMBINE leer."""
+        """V6: win_s and reacq at the end (fields 15, 16); field 14 (n_eff) is empty without A121_DSP_COMBINE."""
         out = run_cpp('VitalReport r{}; r.win_s = 7; r.reacq = 2; char b[256]; '
                       'formatDspLine(b, sizeof b, 1000, true, r, 5); puts(b);', ("-DA121_DSP_REACQ",))
         p = out.strip().split(",")
@@ -336,7 +336,7 @@ class DspLineTest(unittest.TestCase):
 
 
 class FrameFlagsTest(unittest.TestCase):
-    """V1.5 (B15, B16): Sensor-Flags je Frame, Zähler je Report (seit dem letzten), tick-Lücken > 25 ms ohne Rezoom."""
+    """V1.5 (B15, B16): sensor flags per frame, counters per report (since the last one), tick gaps > 25 ms without rezoom."""
 
     PUSH = """
     static Complex16 pts[kTotal3SubPts];
@@ -371,8 +371,8 @@ class FrameFlagsTest(unittest.TestCase):
 
 
 class TimeDomainIbiTest(unittest.TestCase):
-    """Einzelschläge (V1.6, B7): Spitzen parabolisch verfeinert, Sperrzeit 0,6 × 60 / Puls, IBI 40–180 /min, IBI
-    > 20 % vom Median der 5 vorigen verworfen, RMSSD nur bei ≥ 90 % gültigen erwarteten Schlägen."""
+    """Individual beats (V1.6, B7): peaks refined parabolically, lockout 0.6 × 60 / pulse, IBI 40–180 /min, IBI
+    > 20 % from the median of the 5 previous ones rejected, RMSSD only with ≥ 90 % valid expected beats."""
 
     def ibi(self, beats: str, hr_bpm: float, extra: str = "0.0f") -> dict:
         out = run_cpp(f"""
@@ -391,20 +391,20 @@ class TimeDomainIbiTest(unittest.TestCase):
         return dict(zip(k, (float(v) for v in out.split())))
 
     def test_rmssd_from_refined_peaks(self):
-        # IBI abwechselnd 800 / 850 ms, Schlagzeiten zwischen den Abtastwerten: RMSSD genau 50 ms
+        # IBI alternating 800 / 850 ms, beat times between the samples: RMSSD exactly 50 ms
         r = self.ibi("float t = 0.31f; for (int k = 0; t < 15.0f; k++) { tb.push_back(t); t += (k % 2) ? 0.85f : 0.80f; }",
                      72.7)
         self.assertAlmostEqual(r["rmssd_ms"], 50.0, delta=4.0)
-        self.assertTrue(70.0 <= r["bpm"] <= 75.5, r["bpm"])  # Median der IBI: 800 oder 850 ms
+        self.assertTrue(70.0 <= r["bpm"] <= 75.5, r["bpm"])  # median of the IBI: 800 or 850 ms
 
     def test_refractory_follows_pulse(self):
-        # Puls 60 mit Nebenspitze 400 ms nach jedem Schlag (70 % Höhe): Sperrzeit 600 ms lässt sie aus
+        # pulse 60 with a side peak 400 ms after each beat (70 % height): the 600 ms lockout skips it
         r = self.ibi("for (float t = 0.4f; t < 15.0f; t += 1.0f) tb.push_back(t);", 60.0,
                      extra="0.0f; for (float b : tb) { const float u = (t - b - 0.4f) / 0.05f; x[n] += 0.7f * expf(-0.5f * u * u); }")
         self.assertAlmostEqual(r["bpm"], 60.0, delta=1.0)
 
     def test_artifact_rejected_and_no_rmssd(self):
-        # ein Schlag 250 ms zu spät: beide IBI (1250, 750) > 20 % daneben; 12 von 14 gültig < 90 % → kein RMSSD
+        # one beat 250 ms late: both IBIs (1250, 750) > 20 % off; 12 of 14 valid < 90 % → no RMSSD
         r = self.ibi("for (int k = 0; k < 15; k++) tb.push_back(0.4f + k + (k == 7 ? 0.25f : 0.0f));", 60.0)
         self.assertEqual(r["n_valid"], 12)
         self.assertEqual(r["rmssd_ms"], 0.0)
@@ -416,8 +416,8 @@ class TimeDomainIbiTest(unittest.TestCase):
 
 
 class SnapshotTest(unittest.TestCase):
-    """V2.1 (B12): Report aus einem Schnappschuss, während weiter Frames ankommen. Bis zu kSnapMaxLag = 180 Frames (3 s) später
-    gerechnet muss er gleich sein wie sofort gerechnet (kHistoryLen 1080 = 15-s-Fenster + 3 s)."""
+    """V2.1 (B12): report from a snapshot while frames keep arriving. Computed up to kSnapMaxLag = 180 frames (3 s) later,
+    it must equal the one computed immediately (kHistoryLen 1080 = 15 s window + 3 s)."""
 
     BODY = """
     static Complex16 pts[kTotal3SubPts];
@@ -460,8 +460,8 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(la.split(",")[13], "960")
 
     def test_counter_deltas_with_snapshot_every_frame(self):
-        """Nachrechnung: Schnappschuss nach jedem Frame, gerechnet wird nur jeder 60.; die Zähler sind Differenzen
-        zwischen zwei gerechneten Schnappschüssen."""
+        """Replay: snapshot after every frame, only every 60th is computed; the counters are differences
+        between two computed snapshots."""
         out = run_cpp("""
         static Complex16 pts[kTotal3SubPts];
         static UltimateEspDsp d; d.begin(244, 120, kRoomStep);
@@ -476,7 +476,7 @@ class SnapshotTest(unittest.TestCase):
 
 
 class FastAtan2Test(unittest.TestCase):
-    """V2.2 (B13): Polynom statt atan2f beim Abwickeln (21 600 Aufrufe je Report); Fehler ≤ 1 · 10⁻⁴ rad."""
+    """V2.2 (B13): polynomial instead of atan2f when unwrapping (21,600 calls per report); error ≤ 1 · 10⁻⁴ rad."""
 
     def test_grid_against_atan2(self):
         out = run_cpp("""
@@ -499,7 +499,7 @@ class FastAtan2Test(unittest.TestCase):
 
 
 class RealFftTest(unittest.TestCase):
-    """V2.2: reelle FFT (1024 Punkte, nullaufgefüllt) in a121_fft.h; Leistung je Bin wie numpy."""
+    """V2.2: real FFT (1024 points, zero-padded) in a121_fft.h; power per bin like numpy."""
 
     def test_power_matches_numpy(self):
         import numpy as np
@@ -525,7 +525,7 @@ class RealFftTest(unittest.TestCase):
         self.assertEqual(out.split(), ["1.000000", "1.000000", "1.000000", "-1.0"])
 
     def test_complex_fft_matches_numpy(self):
-        """V3.3: komplexe FFT in place (vorwärts e^{-j}, rückwärts e^{+j} mit 1/N) für das analytische Signal."""
+        """V3.3: complex FFT in place (forward e^{-j}, backward e^{+j} with 1/N) for the analytic signal."""
         import numpy as np
         out = run_cpp("""
         static a121_fft::ComplexFft<256> f;
@@ -546,7 +546,7 @@ class RealFftTest(unittest.TestCase):
 
 
 class LinearTrendTest(unittest.TestCase):
-    """V2.2: Trend in float mit geschlossenem Σt² (vorher double, auf dem ESP32-S3 in Software)."""
+    """V2.2: trend in float with closed-form Σt² (previously double, in software on the ESP32-S3)."""
 
     def test_large_offset_ramp(self):
         import numpy as np
@@ -563,8 +563,8 @@ class LinearTrendTest(unittest.TestCase):
 
 
 class RefinedPeakTest(unittest.TestCase):
-    """V2.2: Spektrum im FFT-Raster (0,0146 Hz), Spitze parabolisch verfeinert: ein Puls zwischen zwei Rasterpunkten
-    wird auf ±0,1 /min getroffen (vorher Raster 0,6 /min ohne Verfeinerung)."""
+    """V2.2: spectrum on the FFT grid (0.0146 Hz), peak refined parabolically: a pulse between two grid points
+    is hit to within ±0.1 /min (previously grid 0.6 /min without refinement)."""
 
     def test_pulse_between_bins(self):
         out = run_cpp("""
@@ -594,9 +594,9 @@ class RefinedPeakTest(unittest.TestCase):
 
 
 class RezoomTrackingTest(unittest.TestCase):
-    """V2.3 Schritt 2 (B11): Ein Rezoom beginnt nur die Historie neu; die Puls-Verfolgung bleibt, wenn der letzte
-    gültige Report weniger als 30 s zurückliegt. Erster Report danach: naher Kandidat geglättet (0,7 · alt + 0,3 · neu)
-    statt Neustart auf dem rohen Wert."""
+    """V2.3 step 2 (B11): A rezoom only restarts the history; the pulse tracking stays if the last
+    valid report is less than 30 s ago. First report afterwards: nearby candidate smoothed (0.7 · old + 0.3 · new)
+    instead of restarting on the raw value."""
 
     GEN = """
     static Complex16 pts[kTotal3SubPts];
@@ -640,14 +640,14 @@ class RezoomTrackingTest(unittest.TestCase):
         self.assertAlmostEqual(hr1, 0.7 * hr0 + 0.3 * 80.0, delta=0.6)
 
     def test_old_valid_restarts_tracking(self):
-        v0, hr0, v1, hr1 = self.run_gap(1860)   # 31 s ohne Report
+        v0, hr0, v1, hr1 = self.run_gap(1860)   # 31 s without a report
         self.assertEqual((v0, v1), (1, 1))
         self.assertAlmostEqual(hr1, 80.0, delta=0.6)
 
 
 class ZoomWidthTest(unittest.TestCase):
-    """V2.3 Schritt 3: Zoom-Breite per A121_ZOOM_POINTS (24 Standard, 48 vorbereitet bis Messung V4.4); bei mehr als
-    24 Punkten Spektren nur für die kSpecPoints = 16 Punkte mit der stärksten Atmung."""
+    """V2.3 step 3: zoom width via A121_ZOOM_POINTS (24 default, 48 prepared until measurement V4.4); with more than
+    24 points, spectra only for the kSpecPoints = 16 points with the strongest breathing."""
 
     def test_default_24(self):
         self.assertEqual(run_cpp('printf("%u %u %u", kZoomPoints, kTotal3SubPts, kSpecPoints);').split(),
@@ -666,12 +666,12 @@ class ZoomWidthTest(unittest.TestCase):
         selectStrongest(v, 8, 8, sel);
         printf(" ");
         for (bool b : sel) printf("%d", b);""")
-        self.assertEqual(out, "00101010 11111111")   # 9, 9, 7; bei k = n alle
+        self.assertEqual(out, "00101010 11111111")   # 9, 9, 7; all at k = n
 
 
 class FastStartTest(unittest.TestCase):
-    """V2.4 (B14): erster Report mit Vitalwerten ab 6 s (wachsendes Fenster); beim Start nach 2 s auf ein Ziel außerhalb
-    des Zoom-Fensters zoomen (vorher 3 Reports), nach einem Rezoom weiter erst nach 3 Reports."""
+    """V2.4 (B14): first report with vital values from 6 s (growing window); at start, zoom to a target outside
+    the zoom window after 2 s (previously 3 reports), after a rezoom still only after 3 reports."""
 
     GEN = RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0]
 
@@ -685,7 +685,7 @@ class FastStartTest(unittest.TestCase):
         self.assertLessEqual(float(conf), 40.0 + 1e-6)
 
     def test_start_rezoom_after_2_s(self):
-        # Person im Raum-Profil bei 0,9 m (Punkt 20), Zoom-Fenster 610–670 mm
+        # person in the room profile at 0.9 m (point 20), zoom window 610–670 mm
         out = run_cpp(self.GEN + """
         uint32_t first = 0;
         for (int i = 0; i < 6 && !first; i++) { push(60, 1.2f); d.computeVitalReport(r); if (r.needs_rezoom) first = d.frameCount(); }
@@ -696,9 +696,9 @@ class FastStartTest(unittest.TestCase):
         self.assertEqual(out.split(), ["120", "180"])
 
     def test_provisional_not_on_low_breath_harmonic(self):
-        # Atmung 15 /min mit kräftiger 3. Oberwelle (45 /min), Puls 96 schwach: Im 6-s-Fenster ist 3 × Atmung die
-        # stärkste Spitze, und AKF/Einzelschläge desselben Signals bestätigen sie. Vorläufig darf ein Wert auf einer
-        # Atem-Oberwelle m ≤ 3 nicht gelten (V3.1, Prüfstand base mit A121_DSP_COMBINE: 46 statt 71 /min gültig).
+        # breathing 15 /min with a strong 3rd harmonic (45 /min), pulse 96 weak: in the 6 s window 3 × breathing is the
+        # strongest peak, and ACF/individual beats of the same signal confirm it. Provisionally, a value on a
+        # breathing harmonic m ≤ 3 must not count (V3.1, test bench base with A121_DSP_COMBINE: 46 instead of 71 /min valid).
         gen = self.GEN.replace("const float ph = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * f_hr * t);",
                                "const float ph = 2.0f * sinf(6.2832f * 0.25f * t) + 0.3f * sinf(6.2832f * 0.75f * t + 0.5f)"
                                " + 0.02f * sinf(6.2832f * f_hr * t);")
@@ -707,14 +707,14 @@ class FastStartTest(unittest.TestCase):
         push(360, 1.6f); d.computeVitalReport(r);
         printf("%d %.1f %d", r.valid, r.hr_spec_bpm, (int)r.hr_harm);""")
         valid, spec, harm = out.split()
-        self.assertAlmostEqual(float(spec), 45.0, delta=2.0)   # die Oberwelle ist die stärkste Spitze …
+        self.assertAlmostEqual(float(spec), 45.0, delta=2.0)   # the harmonic is the strongest peak …
         self.assertEqual(harm, "1")
-        self.assertEqual(valid, "0")                            # … und gilt vorläufig nicht
+        self.assertEqual(valid, "0")                            # … and provisionally does not count
 
 
 class WindowLengthTest(unittest.TestCase):
-    """V2.5: Pulsfenster per A121_HR_WIN (Frames, Standard 900 = 15 s) für den Vergleich 10 / 12 / 15 s an Tag A;
-    die Historie wächst mit (Fenster + kSnapMaxLag)."""
+    """V2.5: Pulse window via A121_HR_WIN (frames, default 900 = 15 s) for the 10 / 12 / 15 s comparison on day A;
+    the history grows with (window + kSnapMaxLag)."""
 
     def test_default_15_s(self):
         self.assertEqual(run_cpp('printf("%u %u %u", kHrWin, kHistoryLen, kSnapMaxLag);').split(), ["900", "1080", "180"])
@@ -725,7 +725,7 @@ class WindowLengthTest(unittest.TestCase):
 
 
 class MeasurementStateTest(unittest.TestCase):
-    """V3.5: Zustand der Messung (0 KEINE_PERSON, 1 SUCHE, 2 ERFASSUNG, 3 GÜLTIG, 4 BEWEGUNG, 5 APNOE) und Zeile
+    """V3.5: measurement state (0 KEINE_PERSON, 1 SUCHE, 2 ERFASSUNG, 3 GÜLTIG, 4 BEWEGUNG, 5 APNOE) and line
     @STATE,t_ms,zustand,seit_ms."""
 
     def state(self, person=1, echo=1, breath=1, valid=0, motion=0.0, br_state=0) -> int:
@@ -733,17 +733,17 @@ class MeasurementStateTest(unittest.TestCase):
 
     def test_priorities(self):
         self.assertEqual(self.state(person=0, echo=0, breath=0), 0)
-        self.assertEqual(self.state(person=0, echo=1, breath=0), 0)   # ruhendes Echo ohne Atmung
-        self.assertEqual(self.state(person=1, echo=0, breath=0), 1)   # Person im Raum, kein Echo im Zoom
-        self.assertEqual(self.state(person=1, echo=1, breath=0), 2)   # Echo im Zoom, gerade keine Atemspitze
-        self.assertEqual(self.state(), 2)                              # Echo und Atmung, noch kein gültiger Wert
+        self.assertEqual(self.state(person=0, echo=1, breath=0), 0)   # resting echo without breathing
+        self.assertEqual(self.state(person=1, echo=0, breath=0), 1)   # person in the room, no echo in the zoom
+        self.assertEqual(self.state(person=1, echo=1, breath=0), 2)   # echo in the zoom, no breathing peak at the moment
+        self.assertEqual(self.state(), 2)                              # echo and breathing, no valid value yet
         self.assertEqual(self.state(valid=1), 3)
         self.assertEqual(self.state(valid=1, motion=40.0), 4)
         self.assertEqual(self.state(valid=0, br_state=3), 4)
-        self.assertEqual(self.state(person=1, echo=0, breath=0, motion=60.0), 1)   # Bewegung nur mit Echo im Zoom
+        self.assertEqual(self.state(person=1, echo=0, breath=0, motion=60.0), 1)   # motion only with an echo in the zoom
         self.assertEqual(self.state(valid=1, br_state=2), 5)
-        self.assertEqual(self.state(person=0, echo=1, breath=0, br_state=2), 5)   # angehalten: keine Atemspitze
-        self.assertEqual(self.state(person=0, echo=1, breath=0, motion=60.0), 0)   # ruhendes Echo, Rauschen im Herzband
+        self.assertEqual(self.state(person=0, echo=1, breath=0, br_state=2), 5)   # held: no breathing peak
+        self.assertEqual(self.state(person=0, echo=1, breath=0, motion=60.0), 0)   # resting echo, noise in the heart band
 
     def test_state_line(self):
         out = run_cpp('VitalReport r = {}; r.state = 3; r.state_since_ms = 4500; char b[64];'
@@ -751,8 +751,8 @@ class MeasurementStateTest(unittest.TestCase):
         self.assertEqual(out, "@STATE,12000,3,4500")
 
     def test_report_sequence(self):
-        """Ziel im Raum außerhalb des Zoom-Fensters: nach 2 Reports mit Ziel SUCHE (davor KEINE_PERSON); mit sauberem,
-        atmendem Echo im Zoom ab 6 s ERFASSUNG bzw. GÜLTIG; seit_ms zählt ab dem Wechsel."""
+        """Target in the room outside the zoom window: after 2 reports with a target SUCHE (before that KEINE_PERSON); with a clean,
+        breathing echo in the zoom from 6 s ERFASSUNG or GÜLTIG; seit_ms counts from the change."""
         out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0] + """
         for (int i = 0; i < 12; i++) { push(60, 1.2f); d.computeVitalReport(r); printf("%u:%lu ", r.state, (unsigned long)r.state_since_ms); }""")
         seq = [tuple(int(v) for v in x.split(":")) for x in out.split()]
@@ -764,13 +764,13 @@ class MeasurementStateTest(unittest.TestCase):
 
 
 class BreathDetectorTest(unittest.TestCase):
-    """V3.4: Atmung Atemzug für Atemzug. Bandpass 0,05–0,8 Hz auf dem Weg (µm), Spitzen und Täler mit Hysterese; je
-    Spitze ein Ereignis mit Abstand zur vorigen Spitze (ms) und Tiefe (Spitze − voriges Tal, µm); Rate = 60 / Median
-    der letzten 4 Abstände; nur Abstände im Band 4–42 /min."""
+    """V3.4: breathing breath by breath. Bandpass 0.05–0.8 Hz on the displacement (µm), peaks and troughs with hysteresis; per
+    peak one event with the interval to the previous peak (ms) and depth (peak − previous trough, µm); rate = 60 / median
+    of the last 4 intervals; only intervals in the 4–42 /min band."""
 
     @staticmethod
     def events(signal: str, seconds: float) -> list[tuple[float, ...]]:
-        """signal: C-Ausdruck in t (s, double) für den Weg in µm. Rückgabe je Ereignis (Frame, Abstand_ms, Tiefe_um, Rate)."""
+        """signal: C expression in t (s, double) for the displacement in µm. Returns per event (frame, interval_ms, depth_um, rate)."""
         out = run_cpp(f"""
         BreathDetector bd; BreathEvent ev;
         for (uint32_t k = 0; k < (uint32_t)({seconds} * 60); k++) {{
@@ -782,11 +782,11 @@ class BreathDetectorTest(unittest.TestCase):
 
     @staticmethod
     def hp_gain(f_hz: float) -> float:
-        """Verstärkung des Hochpasses 1. Ordnung bei 0,05 Hz (die Tiefe ist bei langsamer Atmung entsprechend kleiner)."""
+        """Gain of the 1st-order highpass at 0.05 Hz (the depth is correspondingly smaller with slow breathing)."""
         return f_hz / math.hypot(f_hz, 0.05)
 
     def assert_steady(self, ev, period_s: float, per_min: float, start_tol: float = 0.02, iv_tol_ms: float = 17.0):
-        """Die ersten zwei Ereignisse (Filter schwingt ein) auf start_tol genau, danach Abstand ±iv_tol_ms, Rate ±0,1."""
+        """The first two events (filter settling) accurate to start_tol, afterwards interval ±iv_tol_ms, rate ±0.1."""
         for i, (_, iv, _, rate) in enumerate(ev):
             if i < 2:
                 self.assertAlmostEqual(iv, period_s * 1000.0, delta=start_tol * period_s * 1000.0)
@@ -802,7 +802,7 @@ class BreathDetectorTest(unittest.TestCase):
         self.assert_steady(ev, period, per_min)
         for _, _, depth, _ in ev[2:]:
             self.assertAlmostEqual(depth, 2500.0 * self.hp_gain(per_min / 60.0), delta=0.03 * 2500.0)
-        # erster Wert nach 2 Atemzügen: nicht vor der 2. Spitze, spätestens 2,5 s nach ihr
+        # first value after 2 breaths: not before the 2nd peak, at the latest 2.5 s after it
         self.assertGreater(ev[0][0] / 60.0, 1.25 * period)
         self.assertLess(ev[0][0] / 60.0, 1.25 * period + 2.5)
 
@@ -813,21 +813,21 @@ class BreathDetectorTest(unittest.TestCase):
         self.check_rhythm(6.0, 120.0)
 
     def test_non_sinusoidal_breath(self):
-        # Form wie im Prüfstand (2./3. Oberwelle), 15 /min, 2,5 mm
+        # shape as in the test bench (2nd/3rd harmonic), 15 /min, 2.5 mm
         ph = "(6.283185307 * 0.25 * t)"
         ev = self.events(f"2500.0 / 2.3 * (sin({ph}) + 0.15 * sin(2 * {ph} + 0.5) + 0.05 * sin(3 * {ph} + 1.0))", 60.0)
         self.assertGreaterEqual(len(ev), 12)
         self.assert_steady(ev, 4.0, 15.0)
 
     def test_band_limits(self):
-        self.assertEqual(self.events("1000.0 * sin(6.283185307 * 0.75 * t)", 60.0), [])    # 45 /min: zu schnell
-        self.assertEqual(self.events("1250.0 * sin(6.283185307 * 0.05 * t)", 120.0), [])   # 3 /min: zu langsam
+        self.assertEqual(self.events("1000.0 * sin(6.283185307 * 0.75 * t)", 60.0), [])    # 45 /min: too fast
+        self.assertEqual(self.events("1250.0 * sin(6.283185307 * 0.05 * t)", 120.0), [])   # 3 /min: too slow
 
     def test_pulse_ripple_alone_no_breath(self):
-        self.assertEqual(self.events("50.0 * sin(6.283185307 * 1.2 * t)", 60.0), [])        # Puls 100 µm, keine Atmung
+        self.assertEqual(self.events("50.0 * sin(6.283185307 * 1.2 * t)", 60.0), [])        # pulse 100 µm, no breathing
 
     def test_shallow_after_deep(self):
-        """Die Schwelle folgt der Tiefe: Nach 30 s mit 4 mm gehen 0,6-mm-Atemzüge nach höchstens 15 s wieder durch."""
+        """The threshold follows the depth: after 30 s with 4 mm, 0.6 mm breaths pass again after at most 15 s."""
         ev = self.events("(t < 30 ? 2000.0 : 300.0) * sin(6.283185307 * 0.25 * t)", 90.0)
         late = [e for e in ev if e[0] > 45 * 60]
         self.assertGreaterEqual(len(late), 10)
@@ -836,11 +836,11 @@ class BreathDetectorTest(unittest.TestCase):
             self.assertAlmostEqual(depth, 600.0 * self.hp_gain(0.25), delta=30.0)
 
     def test_pause_restarts_rate(self):
-        """20 s ohne Atmung: kein Abstand über 15 s, danach neuer Wert nach 2 Atemzügen aus den neuen Abständen."""
+        """20 s without breathing: no interval over 15 s, afterwards a new value after 2 breaths from the new intervals."""
         ev = self.events("(t > 30 && t < 50 ? 0.0 : 1250.0) * sin(6.283185307 * 0.25 * t)", 90.0)
         self.assert_steady(ev, 4.0, 15.0)
         self.assertTrue(any(e[0] > 55 * 60 for e in ev))
-        # angehalten nach dem Einatmen (Weg bleibt oben): ebenso kein Atemzug in der Pause
+        # held after inhaling (displacement stays up): likewise no breath during the pause
         w = "6.283185307 * 0.25"
         ev = self.events(f"(t < 29 ? 1250.0 * sin({w} * t) : t < 49 ? 1250.0 : 1250.0 * sin({w} * (t - 20)))", 90.0)
         self.assert_steady(ev, 4.0, 15.0)
@@ -853,7 +853,7 @@ class BreathDetectorTest(unittest.TestCase):
         self.assertEqual(out, "@BREATH,1234,5678,5000,2500,12.0")
 
     def test_push_side_of_dsp(self):
-        """Im DSP: Weg des Telemetrie-Strahls, Ereignis nach pushFrame() abholen; Neubeginn (Rezoom) startet neu."""
+        """In the DSP: displacement of the telemetry beam, fetch the event after pushFrame(); a restart (rezoom) starts over."""
         out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
             "d.pushFrame(pts, kTotal3SubPts, 20, 0, um);",
             "d.pushFrame(pts, kTotal3SubPts, 20, 0, um); BreathEvent ev; "
@@ -864,7 +864,7 @@ class BreathDetectorTest(unittest.TestCase):
         d.setZoomStartPoint(244);
         push(1800, 1.2f);""")
         before, after = out.split("R\n")
-        # Puls-Restwelligkeit auf der flachen Atemspitze: Abstände ±100 ms, Rate (Median aus 4) ±0,2 /min
+        # residual pulse ripple on the flat breathing peak: intervals ±100 ms, rate (median of 4) ±0.2 /min
         ev = [[float(x) for x in ln.split()] for ln in before.splitlines()]
         self.assertGreaterEqual(len(ev), 4)
         for i, (_, iv, rate) in enumerate(ev):
@@ -873,16 +873,16 @@ class BreathDetectorTest(unittest.TestCase):
                 self.assertAlmostEqual(rate, 0.23 * 60.0, delta=0.2)
         ev2 = [[float(x) for x in ln.split()] for ln in after.splitlines()]
         self.assertGreaterEqual(len(ev2), 4)
-        self.assertGreater(ev2[0][0] - 1800, 1.0 / 0.23 * 60)   # nicht vor dem 2. Atemzug nach dem Neubeginn
+        self.assertGreater(ev2[0][0] - 1800, 1.0 / 0.23 * 60)   # not before the 2nd breath after the restart
 
 
     def test_gate_from_state(self):
-        """Ausgabe nur in ERFASSUNG, GÜLTIG und APNOE (ohne Person ist der Weg Rauschen, in BEWEGUNG Körperbewegung)."""
+        """Output only in ERFASSUNG, GÜLTIG and APNOE (without a person the displacement is noise, in BEWEGUNG body motion)."""
         out = run_cpp('for (uint8_t st = 0; st <= 5; st++) printf("%d", breathGateOpen(st));')
         self.assertEqual(out, "001101")
 
     def test_gate_closed_drops_events(self):
-        """Tor zu (Start): erkannt wird weiter, aber kein Ereignis; nach dem Öffnen gleich mit dem bisherigen Verlauf."""
+        """Gate closed (start): detection continues, but no event; after opening, immediately with the history so far."""
         out = run_cpp(RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
             "d.pushFrame(pts, kTotal3SubPts, 20, 0, um);",
             "d.pushFrame(pts, kTotal3SubPts, 20, 0, um); BreathEvent ev; "
@@ -895,13 +895,13 @@ class BreathDetectorTest(unittest.TestCase):
         self.assertEqual(closed, "")
         ev = [[float(x) for x in ln.split()] for ln in opened.splitlines()]
         self.assertGreaterEqual(len(ev), 2)
-        self.assertLess(ev[0][0] - 1800, 1.0 / 0.23 * 60 + 60)   # spätestens ein Atemzug nach dem Öffnen
+        self.assertLess(ev[0][0] - 1800, 1.0 / 0.23 * 60 + 60)   # at the latest one breath after opening
 
 
 class ViterbiTest(unittest.TestCase):
-    """V3.2 (Schalter A121_DSP_VITERBI): Verfolgung als Viterbi über die letzten 20 Reports. Zustände 40–180 /min
-    (1 /min), Übergang Gauß σ = 3 /min je Report plus kleiner Anteil „Sprung irgendwohin"; Emission aus den
-    Kandidaten des Reports (Gauß je Kandidat, Gewicht = Kandidatenwert, mit Grundpegel); Konfidenz = Masse ±5 /min."""
+    """V3.2 (switch A121_DSP_VITERBI): tracking as Viterbi over the last 20 reports. States 40–180 /min
+    (1 /min), transition Gaussian σ = 3 /min per report plus a small share "jump anywhere"; emission from the
+    report's candidates (Gaussian per candidate, weight = candidate value, with a floor); confidence = mass ±5 /min."""
 
     FLAGS = ("-DA121_DSP_VITERBI",)
 
@@ -910,7 +910,7 @@ class ViterbiTest(unittest.TestCase):
         return [[float(x) for x in ln.split()] for ln in out.splitlines()]
 
     def test_follows_slow_change_against_strong_distractor(self):
-        # Puls 70 → 85 in 30 Reports; eine Fremdspitze springt zwischen 110 und 150 und ist jedes 2. Mal stärker
+        # pulse 70 → 85 over 30 reports; a foreign peak jumps between 110 and 150 and is stronger every 2nd time
         rows = self.run_vit("""
         for (int t = 0; t < 30; t++) {
             b[0] = 70.0f + 0.5f * t; c[0] = 1.0f;
@@ -927,8 +927,8 @@ class ViterbiTest(unittest.TestCase):
             b[0] = (out1 || moved) ? 110.0f : 72.0f; c[0] = 1.0f;
             printf("%.2f %.3f\\n", v.update(b, c, 1, mass), mass);
         }""")
-        self.assertAlmostEqual(rows[10][0], 72.0, delta=1.5)    # ein Report mit nur 110: Verfolgung bleibt
-        self.assertAlmostEqual(rows[24][0], 110.0, delta=1.5)   # dauerhaft 110: nach wenigen Reports gewechselt
+        self.assertAlmostEqual(rows[10][0], 72.0, delta=1.5)    # a single report with only 110: tracking stays
+        self.assertAlmostEqual(rows[24][0], 110.0, delta=1.5)   # permanently 110: switched after a few reports
         switch = next(t for t in range(15, 25) if abs(rows[t][0] - 110.0) < 1.5)
         self.assertLessEqual(switch - 15, 4)
 
@@ -943,7 +943,7 @@ class ViterbiTest(unittest.TestCase):
         self.assertLess(rows[1][0], 0.65)
 
     def test_window_forgets_after_20_reports(self):
-        """Nach einem Neubeginn (reset) zählt nur, was danach kam; ohne reset höchstens die letzten 20 Reports."""
+        """After a restart (reset) only what came afterwards counts; without reset at most the last 20 reports."""
         rows = self.run_vit("""
         for (int t = 0; t < 60; t++) { b[0] = 72.0f; c[0] = 1.0f; v.update(b, c, 1, mass); }
         for (int t = 0; t < 25; t++) { b[0] = 72.0f; c[0] = 0.5f; b[1] = 130.0f; c[1] = 1.0f;
@@ -961,18 +961,18 @@ class ViterbiTest(unittest.TestCase):
 
 
 class GuidedHarmonicsTest(unittest.TestCase):
-    """V3.3 (Schalter A121_DSP_HARM_REMOVE): Atem-Oberwellen geführt von der Atemphase entfernen. Phase = Winkel des
-    analytischen Signals der Atem-Grundwelle im Weg, dann Fit von cos(mφ), sin(mφ) für m = 1..8 und abziehen. m bleibt,
-    wenn Puls oder 2 × Puls in m × [kleinste, größte Atemfrequenz im Fenster] ± 0,1 Hz liegt: Bei schwankender Rate
-    verschmiert die m-te Oberwelle um m × die Schwankung und nähme sonst dem Puls einen Teil weg."""
+    """V3.3 (switch A121_DSP_HARM_REMOVE): remove breathing harmonics guided by the breathing phase. Phase = angle of the
+    analytic signal of the fundamental breathing wave in the displacement, then fit cos(mφ), sin(mφ) for m = 1..8 and subtract. m is kept
+    if pulse or 2 × pulse lies in m × [smallest, largest breathing rate in the window] ± 0.1 Hz: with a fluctuating rate
+    the m-th harmonic smears by m × the fluctuation and would otherwise take part of the pulse away."""
 
     FLAGS = ("-DA121_DSP_HARM_REMOVE",)
     HARM = "300.0f * cosf(3.0f * phi + 0.4f) + 150.0f * cosf(4.0f * phi - 1.1f) + 80.0f * cosf(5.0f * phi + 2.0f)"
 
     def residual(self, fn: str, keep: float, harm: str, pulse: str, beta: float = 0.9) -> float:
-        """Atmung 0,27 Hz, Phase mit beta · sin(2π · 0,07 Hz · t) moduliert (0,9 rad: Rate ±23 %), Oberwellen harm(phi),
-        Puls pulse(t); 15 Hz, 15 s; f_Atem des vorigen Reports = 0,27 Hz. fn = guided | fixed. Rückgabe:
-        Effektivwert(Ergebnis − Puls), Hann-gewichtet."""
+        """Breathing 0.27 Hz, phase modulated with beta · sin(2π · 0.07 Hz · t) (0.9 rad: rate ±23 %), harmonics harm(phi),
+        pulse pulse(t); 15 Hz, 15 s; f_breath of the previous report = 0.27 Hz. fn = guided | fixed. Returns:
+        RMS(result − pulse), Hann-weighted."""
         call = ("removeBreathHarmonicsGuided(x, d, N, 15.0f, 0.27f, KEEP, cf, wk);" if fn == "guided"
                 else "removeBreathHarmonics(x, N, 15.0f, 0.27f, KEEP);").replace("KEEP", f"{keep}f")
         out = run_cpp(f"""
@@ -992,21 +992,21 @@ class GuidedHarmonicsTest(unittest.TestCase):
         return float(out)
 
     def test_varying_rate_guided_beats_fixed(self):
-        # Rate ±23 %, Oberwellen m = 3..5 (10 / 5 / 2,7 × Puls), Puls 1,9 Hz abseits ihrer Streuung
+        # rate ±23 %, harmonics m = 3..5 (10 / 5 / 2.7 × pulse), pulse 1.9 Hz away from their spread
         pulse = "30.0f * cosf(6.2832f * 1.9f * t)"
         g = self.residual("guided", 1.9, self.HARM, pulse)
         f = self.residual("fixed", 1.9, self.HARM, pulse)
         self.assertLess(g, 0.3 * f)
 
     def test_varying_rate_keeps_pulse(self):
-        # nur Puls: Die Basen, deren Streuung den Puls überdeckt, bleiben weg (1,25 Hz liegt in 4 × und 5 × Atmung);
-        # der Rest-Fit nimmt dem Puls (30 µm) weniger als 13 %. Ohne diese Regel: 12 µm (40 %).
+        # pulse only: the bases whose spread covers the pulse are left out (1.25 Hz lies in 4 × and 5 × breathing);
+        # the remaining fit takes less than 13 % from the pulse (30 µm). Without this rule: 12 µm (40 %).
         for hz in (1.25, 1.9):
             self.assertLess(self.residual("guided", hz, "0.0f", f"30.0f * cosf(6.2832f * {hz}f * t)"), 4.0)
 
     def test_steady_rate_removes_harmonics(self):
-        # Metronom (Rate ±3 %): Oberwellen m = 3..5 (zusammen 243 µm effektiv) um ≥ 88 % kleiner, besser als mit fester
-        # Frequenz (die Phasengenauigkeit aus 15 s, ≈ 0,03 rad, begrenzt); Puls 1,6 Hz bleibt (m = 6 liegt am Puls)
+        # metronome (rate ±3 %): harmonics m = 3..5 (243 µm RMS together) smaller by ≥ 88 %, better than with a fixed
+        # frequency (limited by the phase accuracy from 15 s, ≈ 0.03 rad); pulse 1.6 Hz stays (m = 6 lies on the pulse)
         pulse = "30.0f * cosf(6.2832f * 1.6f * t)"
         g = self.residual("guided", 1.6, self.HARM, pulse, beta=0.1)
         self.assertLess(g, 0.12 * 243.0)
@@ -1034,18 +1034,18 @@ class GuidedHarmonicsTest(unittest.TestCase):
 
 
 class CombinePointsTest(unittest.TestCase):
-    """V3.1 (Schalter A121_DSP_COMBINE): Zoom-Punkte vor der Demodulation kombinieren. Je Punkt die IQ-Werte um den
-    Kreismittelpunkt verschieben (u = z − c), dann 1. Hauptkomponente der K × K-Kovarianz C = Σ u uᴴ: Sie richtet die
-    Punkte phasengleich aus und gewichtet sie mit der Amplitude (bei gleichem Rauschen je Punkt = Maximum Ratio
-    Combining). Ein Kanal y = Σ conj(v) u wird demoduliert. N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²: ≈ 1, wenn alle Punkte
-    dieselbe Bewegung sehen, ≈ K bei reinem Rauschen."""
+    """V3.1 (switch A121_DSP_COMBINE): combine zoom points before demodulation. Per point, shift the IQ values by the
+    circle center (u = z − c), then take the 1st principal component of the K × K covariance C = Σ u uᴴ: it aligns the
+    points in phase and weights them by amplitude (with equal noise per point = maximum ratio
+    combining). One channel y = Σ conj(v) u is demodulated. N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²: ≈ 1 if all points
+    see the same motion, ≈ K for pure noise."""
 
     FLAGS = ("-DA121_DSP_COMBINE",)
 
     def combine(self, sig: str, K: int = 8, noise: float = 40.0) -> dict:
-        """K Ringe: Punkt j = Mittelpunkt (300 j, −200 j) + r_j · e^{i(phi_j(t) + 0,7 j)} + Rauschen (σ je Komponente);
-        sig(j, t) setzt r und phi. Rückgabe: N_eff, dominant, Phasenfehler (Effektivwert, rad) von y und vom besten
-        Einzelpunkt (gegen die wahre Phase des Punkts mit der größten Amplitude)."""
+        """K rings: point j = center (300 j, −200 j) + r_j · e^{i(phi_j(t) + 0.7 j)} + noise (σ per component);
+        sig(j, t) sets r and phi. Returns: N_eff, dominant, phase error (RMS, rad) of y and of the best
+        single point (against the true phase of the point with the largest amplitude)."""
         out = run_cpp(f"""
         const uint8_t K = {K}; const uint16_t N = 900;
         static float ring[K][kHistoryLen * 2]; static float y[2 * N]; static float tru[K][N];
@@ -1081,7 +1081,7 @@ class CombinePointsTest(unittest.TestCase):
     COMMON = "r = 400.0f + 100.0f * j; phi = 2.0f * sinf(6.2832f * 0.23f * t) + 0.08f * sinf(6.2832f * 1.2f * t);"
 
     def test_aligned_sum_beats_best_point(self):
-        # 8 Punkte mit Amplitude 400 … 1100, gleiches Rauschen: SNR der Summe ≈ 4 × der beste Punkt → Fehler ≈ 0,5 ×
+        # 8 points with amplitude 400 … 1100, same noise: SNR of the sum ≈ 4 × the best point → error ≈ 0.5 ×
         r = self.combine(self.COMMON)
         self.assertLess(r["err_comb"], 0.6 * r["err_single"])
 
@@ -1095,7 +1095,7 @@ class CombinePointsTest(unittest.TestCase):
         self.assertGreater(self.combine("r = 0; phi = 0;", noise=40.0)["n_eff"], 6.5)
 
     def test_n_eff_two_for_two_movers(self):
-        # Punkte 0–3 sehen Bewegung A (0,23 Hz), 4–7 Bewegung B (0,31 Hz), gleiche Amplitude
+        # points 0–3 see motion A (0.23 Hz), 4–7 motion B (0.31 Hz), same amplitude
         r = self.combine("r = 800.0f; phi = (j < 4) ? 2.0f * sinf(6.2832f * 0.23f * t) "
                          ": 2.0f * sinf(6.2832f * 0.31f * t + 1.0f);", noise=0.0)
         self.assertGreater(r["n_eff"], 1.7)
@@ -1112,7 +1112,7 @@ class CombinePointsTest(unittest.TestCase):
         self.assertGreaterEqual(float(neff), 1.0)
         self.assertLess(float(neff), 3.0)
         f = line.split(",")
-        self.assertEqual(len(f), 15)                      # n_eff hinten an @DSP, nur mit Schalter
+        self.assertEqual(len(f), 15)                      # n_eff appended to @DSP, only with the switch
         self.assertAlmostEqual(float(f[14]), float(neff), delta=0.06)
 
     def test_default_line_unchanged(self):
@@ -1121,7 +1121,7 @@ class CombinePointsTest(unittest.TestCase):
 
 
 class MotionMapTest(unittest.TestCase):
-    """V6: Bewegungskarte aus dem Block-RMS der stärksten Punkte (motionMapFromRms)."""
+    """V6: motion map from the block RMS of the strongest points (motionMapFromRms)."""
     FLAGS = ("-DA121_DSP_REACQ",)
 
     def run_map(self, setup: str, n_pts: int = 3, nb: int = 15) -> tuple[int, int, int]:
@@ -1138,9 +1138,9 @@ class MotionMapTest(unittest.TestCase):
         self.assertEqual(self.run_map(""), (0, 15, 15))
 
     def test_motion_needs_two_votes(self):
-        # Block 8 nur bei Punkt 0 × 10: eine Stimme, nicht bewegt
+        # block 8 only at point 0 × 10: one vote, not moved
         self.assertEqual(self.run_map("rms[0 * 15 + 8] = 10.0f;"), (0, 15, 15))
-        # bei Punkt 0 und 1: bewegt, 6 saubere Blöcke danach
+        # at points 0 and 1: moved, 6 clean blocks afterwards
         self.assertEqual(self.run_map("rms[0 * 15 + 8] = 10.0f; rms[1 * 15 + 8] = 10.0f;"), (1 << 8, 15, 6))
 
     def test_tail_after_last_motion(self):
@@ -1151,8 +1151,8 @@ class MotionMapTest(unittest.TestCase):
         self.assertEqual(self.run_map("rms[14] = 10.0f; rms[15 + 14] = 10.0f;"), (1 << 14, 15, 0))
 
     def test_empty_and_single_point(self):
-        # nb = 0 und nb = 2 (unter 3 Blöcken keine Aussage wie in gateMotion): leere Karte; ein Punkt: Stimmen werden auf
-        # die Punktzahl begrenzt, damit er allein entscheiden kann
+        # nb = 0 and nb = 2 (below 3 blocks no statement, as in gateMotion): empty map; one point: votes are limited to
+        # the point count so that it can decide alone
         out = run_cpp("""
         float rms[15]; for (int i = 0; i < 15; i++) rms[i] = 1.0f;
         const MotionMap a = motionMapFromRms(rms, 3, 0);
@@ -1170,16 +1170,16 @@ class MotionMapTest(unittest.TestCase):
 
 
 class SegmentPeriodicTest(unittest.TestCase):
-    """V6 Variante Periodizität: 3-s-Ausschnitt des Wegsignals (60 Hz → 15 Hz, Hann) auf eine Spitze im Herzband prüfen.
+    """V6 periodicity variant: check a 3 s excerpt of the displacement signal (60 Hz → 15 Hz, Hann) for a peak in the heart band.
 
-    Spitze/Mittel der Bins außerhalb der Hauptkeule: Sinus (mit 10 % Rauschen) über 400, weißes Rauschen im Mittel 5
-    (bis 39 in 500 Seeds), unregelmäßige Stöße bis 167. Mit kPeriodK = 5 gilt also gut ein Drittel der Rausch-Ausschnitte
-    als periodisch (nur ≈ 9 unabhängige Bins in 3 s). Getrennt wird erst bei großem k; dort prüfen die Tests mit klarem
-    Abstand, bei k = 5 nur den Sinus und je einen festen Seed für Rauschen und Stöße."""
+    Peak/mean of the bins outside the main lobe: sine (with 10 % noise) above 400, white noise 5 on average
+    (up to 39 in 500 seeds), irregular jolts up to 167. With kPeriodK = 5, a good third of the noise excerpts therefore
+    count as periodic (only ≈ 9 independent bins in 3 s). They are separated only at large k; there the tests check with a clear
+    margin, at k = 5 only the sine and one fixed seed each for noise and jolts."""
     FLAGS = ("-DA121_DSP_REACQ", "-DA121_DSP_REACQ_PERIOD")
 
     def periodic(self, signal: str, n_seeds: int, k: str = "kPeriodK") -> list[int]:
-        """C++: signal füllt h[180] (60 Hz) je seed; Ausschnitt um die Mitte, dann segmentPeriodic mit Schwelle k."""
+        """C++: signal fills h[180] (60 Hz) per seed; excerpt around the middle, then segmentPeriodic with threshold k."""
         out = run_cpp(f"""
         static a121_fft::RealFft<kFftN> fft;
         static float h[180], seg[kPeriodSegN], spec[kPeriodK1 + 1];
@@ -1200,20 +1200,20 @@ class SegmentPeriodicTest(unittest.TestCase):
                 for (int j = 0; j < 12 && t + j < 180; j++) h[t + j] += 0.5f * (1.0f - cosf(6.2832f * j / 12.0f));"""
 
     def test_sine_is_periodic(self):
-        # 1,2 Hz (72 /min); ebenso 0,9 und 2,4 Hz; auch bei k = 100
+        # 1.2 Hz (72 /min); likewise 0.9 and 2.4 Hz; also at k = 100
         for f in ("1.2f", "0.9f", "2.4f"):
             sig = self.SINE.replace("{f}", f)
             self.assertEqual(self.periodic(sig, 5), [1] * 5, f)
             self.assertEqual(self.periodic(sig, 5, "100.0f"), [1] * 5, f)
 
     def test_noise_is_not_periodic(self):
-        # Seed 100: bei k = 5 nicht periodisch; 40 feste Seeds bei k = 100 keiner
+        # seed 100: not periodic at k = 5; 40 fixed seeds at k = 100 none
         self.assertEqual(self.periodic(self.NOISE, 1), [0])
         self.assertEqual(self.periodic(self.NOISE, 40, "100.0f"), [0] * 40)
 
     def test_impulses_irregular_not_periodic(self):
-        # Stöße (Hann-förmig, 0,2 s) in zufälligen Abständen 0,4–1,0 s: Seed 7 bei k = 5 nicht periodisch;
-        # 20 feste Seeds bei k = 500 keiner
+        # jolts (Hann-shaped, 0.2 s) at random intervals 0.4–1.0 s: seed 7 not periodic at k = 5;
+        # 20 fixed seeds at k = 500 none
         self.assertEqual(self.periodic(self.IMPULSES, 1), [0])
         self.assertEqual(self.periodic(self.IMPULSES, 20, "500.0f"), [0] * 20)
 
@@ -1226,7 +1226,7 @@ class SegmentPeriodicTest(unittest.TestCase):
         self.assertIn("nur zusammen mit A121_DSP_REACQ", str(e.exception))
 
     def test_segment_is_shifted_at_the_edges(self):
-        # Mitte nahe am Rand: Ausschnitt bleibt 3 s lang (45 Werte), N unter 3 s: ganzes Signal
+        # middle near the edge: excerpt stays 3 s long (45 values), N below 3 s: whole signal
         out = run_cpp("""
         static float h[400], seg[kPeriodSegN];
         for (int i = 0; i < 400; i++) h[i] = (float)i;
@@ -1236,12 +1236,12 @@ class SegmentPeriodicTest(unittest.TestCase):
 
 
 class PhaseSlopeTest(unittest.TestCase):
-    """V6 Variante Phasensteigung (A121_DSP_PHASE_SLOPE): Frequenz aus der Steigung der abgewickelten Phase der
-    3-Bin-Rekonstruktion (phaseSlopeHz), Eingang wie in der Pulssuche: 15 Hz, Hann, nullaufgefüllt auf 1024."""
+    """V6 phase slope variant (A121_DSP_PHASE_SLOPE): frequency from the slope of the unwrapped phase of the
+    3-bin reconstruction (phaseSlopeHz), input as in the pulse search: 15 Hz, Hann, zero-padded to 1024."""
     FLAGS = ("-DA121_DSP_PHASE_SLOPE",)
 
     def slope(self, signal: str, m: int, f0: str, fs: str = "15.0f") -> float:
-        """C++: signal füllt x[0 .. m) (Hann wird danach angewendet); Rückgabe phaseSlopeHz in Hz."""
+        """C++: signal fills x[0 .. m) (Hann is applied afterwards); returns phaseSlopeHz in Hz."""
         out = run_cpp(f"""
         static a121_fft::ComplexFft<1024> cfft;
         static float x[2048], re[1024], im[1024];
@@ -1252,12 +1252,12 @@ class PhaseSlopeTest(unittest.TestCase):
         return float(out)
 
     def test_sine_6_s(self):
-        # 1,23 Hz, 6 s (90 Werte), Start 1,2 Hz: Fehler unter 0,01 Hz (0,6 /min)
+        # 1.23 Hz, 6 s (90 values), start 1.2 Hz: error below 0.01 Hz (0.6 /min)
         f = self.slope("x[n] = sinf(6.2832f * 1.23f * t);", 90, "1.2f")
         self.assertAlmostEqual(f, 1.23, delta=0.01)
 
     def test_sine_with_breath_harmonic(self):
-        # Puls 1,2 Hz plus 4 × stärkere Komponente bei 0,75 Hz (Atem-Oberwelle), 6 s: Fehler unter 0,02 Hz
+        # pulse 1.2 Hz plus a 4 × stronger component at 0.75 Hz (breathing harmonic), 6 s: error below 0.02 Hz
         f = self.slope("x[n] = sinf(6.2832f * 1.2f * t) + 4.0f * sinf(6.2832f * 0.75f * t + 0.7f);", 90, "1.2f")
         self.assertAlmostEqual(f, 1.2, delta=0.02)
 
@@ -1265,7 +1265,7 @@ class PhaseSlopeTest(unittest.TestCase):
         self.assertEqual(self.slope("x[n] = 0.0f;", 90, "1.2f"), 1.2)
 
     def test_edges_return_start(self):
-        # Start an der Bandgrenze (Bin 0 / Nyquist), m über der FFT-Länge, zu kurzes Signal: Rückgabe = Start
+        # start at the band edge (bin 0 / Nyquist), m above the FFT length, signal too short: return = start
         sig = "x[n] = sinf(6.2832f * 1.23f * t);"
         self.assertEqual(self.slope(sig, 90, "0.0f"), 0.0)
         self.assertEqual(self.slope(sig, 90, "7.5f"), 7.5)
@@ -1274,7 +1274,7 @@ class PhaseSlopeTest(unittest.TestCase):
         self.assertEqual(self.slope(sig, 3, "1.2f"), 1.2)
 
     def test_sine_grid_and_lengths(self):
-        # unabhängig von der Lage zum 1024-Raster (0,0146 Hz) und der Fensterlänge 6 / 10 / 15 s
+        # independent of the position relative to the 1024 grid (0.0146 Hz) and the window length 6 / 10 / 15 s
         worst = 0.0
         for f_true in (0.9, 1.0, 1.0073, 1.2, 1.5, 2.0, 2.5):
             for m in (90, 150, 225):
@@ -1288,7 +1288,7 @@ class PhaseSlopeTest(unittest.TestCase):
 
 
 class ReacqMemoryTest(unittest.TestCase):
-    """V6: Kurzzeit-Gedächtnis des Pulses (ReacqMemory): gilt 60 s, erlischt mit dem Echo oder wenn das Ziel die Zone verlässt."""
+    """V6: short-term memory of the pulse (ReacqMemory): valid for 60 s, expires with the echo or when the target leaves the zone."""
     FLAGS = ("-DA121_DSP_REACQ",)
 
     def run_mem(self, body: str) -> list[str]:
@@ -1359,7 +1359,7 @@ class ReacqMemoryTest(unittest.TestCase):
 
 
 class PreferMemoryTest(unittest.TestCase):
-    """V6: preferMemoryCandidate wählt den stärksten FFT-Kandidaten nahe dem gemerkten Puls (±15 /min, ≥ 50 % des besten)."""
+    """V6: preferMemoryCandidate picks the strongest FFT candidate near the remembered pulse (±15 /min, ≥ 50 % of the best)."""
     FLAGS = ("-DA121_DSP_REACQ",)
 
     def pick(self, bpm: list[float], score: list[float], mem: float) -> int:
@@ -1403,7 +1403,7 @@ class PreferMemoryTest(unittest.TestCase):
         self.assertEqual(out.split(), ["-1", "-1", "-1"])
 
     def test_nan_is_rejected(self):
-        # NaN als Frequenz oder Wert eines Kandidaten darf nicht gewählt werden; ohne positiven besten Wert keine Wahl
+        # NaN as the frequency or value of a candidate must not be chosen; without a positive best value no choice
         out = run_cpp("""
         const float b1[] = {140.0f, NAN}; const float s1[] = {1.0f, 0.8f};
         const float b2[] = {140.0f, 74.0f}; const float s2[] = {1.0f, NAN};
@@ -1415,9 +1415,9 @@ class PreferMemoryTest(unittest.TestCase):
 
 
 class MemSubstituteTest(unittest.TestCase):
-    """V6 (Ruling R15): Ein Gedächtnis-Wert ersetzt die Atemspitze nur bis kMemSubstBpm = 5 /min vom gemerkten Puls; das
-    Kandidatenband kMemBandBpm (15 /min) bleibt breiter. Anlass: Prüfstand lang, 84,7 gegen gemerkt ≈ 73; dort sind die
-    Reports allerdings über die Atemspitze gültig, die Regel ändert sie nicht."""
+    """V6 (Ruling R15): A memory value replaces the breathing peak only up to kMemSubstBpm = 5 /min from the remembered pulse; the
+    candidate band kMemBandBpm (15 /min) stays wider. Reason: test bench lang, 84.7 against remembered ≈ 73; there the
+    reports are valid via the breathing peak anyway, the rule does not change them."""
     FLAGS = ("-DA121_DSP_REACQ",)
 
     def test_rule(self):
@@ -1429,7 +1429,7 @@ class MemSubstituteTest(unittest.TestCase):
         self.assertEqual(out, ["1", "1", "1", "0", "0", "0", "0", "0", "0", "5"])
 
     def test_narrower_than_candidate_band(self):
-        # 84,7 liegt im Kandidatenband um 72,8 (bevorzugt), ersetzt die Atmung aber nicht
+        # 84.7 lies in the candidate band around 72.8 (preferred), but does not replace the breathing
         out = run_cpp("""
         const float b[] = {84.7f, 120.0f}; const float s[] = {1.0f, 0.9f};
         printf("%d %d", (int)preferMemoryCandidate(b, s, 2, 72.8f), (int)memSubstitutesBreath(b[0], 72.8f));""",
@@ -1442,10 +1442,10 @@ class MemSubstituteTest(unittest.TestCase):
 
 
 class TemplateIbiTest(unittest.TestCase):
-    """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage. Herzsignal im Band 0,6–8 Hz (statt 0,6–5 Hz),
-    Vorlage = Mittel der Abschnitte ±0,3 × Schlagabstand um die ersten Spitzen (wie V1.6 gefunden), Korrelationsfilter
-    mit der Vorlage, Spitzen der Korrelation parabolisch verfeinert, danach dieselben Artefakt-Regeln wie V1.6.
-    Abnahme laut Plan: IBI-Fehler gegen Gurt-RR halbiert gegenüber V1.6 (hier gegen die wahren Schläge, NUR SIMULATION)."""
+    """V3.6 (switch A121_DSP_IBI_TEMPLATE): individual beats with a template. Heart signal in the 0.6–8 Hz band (instead of 0.6–5 Hz),
+    template = mean of the segments ±0.3 × beat interval around the first peaks (found as in V1.6), correlation filter
+    with the template, correlation peaks refined parabolically, then the same artifact rules as V1.6.
+    Acceptance per plan: IBI error against strap RR halved compared to V1.6 (here against the true beats, SIMULATION ONLY)."""
 
     FLAGS = ("-DA121_DSP_IBI_TEMPLATE",)
 
@@ -1453,9 +1453,9 @@ class TemplateIbiTest(unittest.TestCase):
 
     def run_beats(self, noise: float, hrv_ms: float = 40.0, seed: int = 3, hr: float = 72.0, beat: str = BEAT,
                   extra: str = "0.0f") -> dict:
-        """Herzwelle wie host/vital_sim.py (zwei Gauß-Anteile je Schlag, Spitze-Spitze 1) + weißes Rauschen (σ = noise),
-        60 Hz, 15 s. V1.6: Band 0,6–5 Hz + timeDomainIbi; V3.6: Band 0,6–8 Hz + templateIbi. Rückgabe je Verfahren:
-        Median |IBI-Fehler| (ms) über aufeinanderfolgende getroffene Schläge, Zahl der Treffer, bpm."""
+        """Heart wave as in host/vital_sim.py (two Gaussian components per beat, peak-to-peak 1) + white noise (σ = noise),
+        60 Hz, 15 s. V1.6: band 0.6–5 Hz + timeDomainIbi; V3.6: band 0.6–8 Hz + templateIbi. Returns per method:
+        median |IBI error| (ms) over consecutive detected beats, number of hits, bpm."""
         out = run_cpp(f"""
         const uint16_t N = 900; const float fs = 60.0f;
         static float raw[N], ext[N + 2 * kFiltPad], x5[N], x8[N], work[N];
@@ -1512,7 +1512,7 @@ class TemplateIbiTest(unittest.TestCase):
         np.testing.assert_allclose(np.array(nums).reshape(4, 6), sos, rtol=1e-6, atol=1e-12)
 
     SEEDS = (3, 11, 29, 41, 57, 73)
-    REST = (dict(noise=0.05, extra="0.3f * sinf(6.2832f * 1.05f * t + 0.4f)"),   # Atem-Rest nahe am Puls
+    REST = (dict(noise=0.05, extra="0.3f * sinf(6.2832f * 1.05f * t + 0.4f)"),   # breathing residue near the pulse
             dict(noise=0.05, extra="0.25f * sinf(6.2832f * 0.81f * t)",
                  beat="(1.0f + 0.35f * sinf(6.2832f * 0.27f * b)) * (expf(-0.5f * u * u) - 0.45f * expf(-0.5f * w * w))"))
 
@@ -1525,14 +1525,14 @@ class TemplateIbiTest(unittest.TestCase):
         return out
 
     def test_white_noise_not_worse(self):
-        # weißes Rauschen σ = 0,15 × Spitze-Spitze: V1.6 liegt schon nahe der Cramér-Rao-Grenze (≈ 7 ms je Schlag),
-        # die Vorlage gewinnt dort wenig (Median-Faktor gemessen 0,81, ein Fenster 1,24)
+        # white noise σ = 0.15 × peak-to-peak: V1.6 is already close to the Cramér-Rao bound (≈ 7 ms per beat),
+        # the template gains little there (median factor measured 0.81, one window 1.24)
         import statistics
         self.assertLessEqual(statistics.median(self.ratios(noise=0.15)), 0.9)
 
     def test_breath_residual_error_reduced(self):
-        # Atem-Rest im Herzband (0,81 / 1,05 Hz, wie ihn removeBreathHarmonics am Puls stehen lässt), Schlaghöhe ±35 %:
-        # die mittelwertfreie Vorlage unterdrückt ihn; Median-Faktor gemessen 0,58 (Plan: 0,5, an Tag A gegen Gurt-RR)
+        # breathing residue in the heart band (0.81 / 1.05 Hz, as removeBreathHarmonics leaves it at the pulse), beat height ±35 %:
+        # the zero-mean template suppresses it; median factor measured 0.58 (plan: 0.5, on day A against strap RR)
         import statistics
         r = [x for kw in self.REST for x in self.ratios(**kw)]
         self.assertLessEqual(statistics.median(r), 0.65)
@@ -1548,7 +1548,7 @@ class TemplateIbiTest(unittest.TestCase):
             self.assertAlmostEqual(r["bpm36"], hr, delta=3.0, msg=r)
 
     def test_dsp_with_switch(self):
-        # mit Schalter laufen die Einzelschläge über das Band 0,6–8 Hz und die Vorlage: Puls gleich, IBI-Werte anders
+        # with the switch the individual beats run over the 0.6–8 Hz band and the template: pulse the same, IBI values different
         body = RezoomTrackingTest.GEN.split("    push(900, 1.2f);")[0].replace(
             "+ 0.08f * sinf(6.2832f * f_hr * t);",
             "+ 0.08f * (expf(-8.0f * (1.0f - cosf(6.2832f * f_hr * t))) + 0.4f * sinf(6.2832f * 2.0f * f_hr * t + 0.7f));") + """
@@ -1563,7 +1563,7 @@ class TemplateIbiTest(unittest.TestCase):
         self.assertNotEqual(ms1, ms0)
 
     def test_default_ibi_unchanged_with_times(self):
-        # Standard: timeDomainIbi mit Zeitausgabe liefert dieselben Werte wie ohne
+        # default: timeDomainIbi with time output gives the same values as without
         out = run_cpp("""
         static float x[900]; float tt[kIbiMaxPk];
         for (int n = 0; n < 900; n++) { const float t = n / 60.0f; x[n] = sinf(6.2832f * 1.2f * t) + 0.3f * sinf(6.2832f * 2.4f * t); }

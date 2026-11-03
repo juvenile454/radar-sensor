@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Persönliche Einstellungen aus android/local.properties (nicht im Repo), z. B. radar.bridge=<host>:7777
+// Personal settings from android/local.properties (not in the repo), e.g. radar.bridge=<host>:7777
 val localProps =
     Properties().apply {
         rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
@@ -18,7 +18,7 @@ android {
         libs.versions.compileSdk
             .get()
             .toInt()
-    // A5: DSP-Header der Firmware per NDK (nur Nachrechnen von Aufnahmen); Standard-NDK von AGP 9.4
+    // A5: firmware DSP header via NDK (only for replaying recordings); default NDK of AGP 9.4
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
@@ -33,11 +33,11 @@ android {
                 .toInt()
         versionCode = 1
         versionName = "0.1.0"
-        // Vorbelegung der Brücke (host/esp_tcp_bridge.py); leer = in der App eintragen
+        // Default for the bridge (host/esp_tcp_bridge.py); empty = enter it in the app
         val bridge = localProps.getProperty("radar.bridge", "").replace("\"", "")
         buildConfigField("String", "DEFAULT_BRIDGE", "\"$bridge\"")
         ndk {
-            abiFilters += "arm64-v8a" // nur das eigene Gerät
+            abiFilters += "arm64-v8a" // only the own device
         }
     }
 

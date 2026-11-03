@@ -33,11 +33,11 @@ data class RecordingMeta(
 )
 
 /**
- * Schreibt eine Aufnahme im selben Format wie host/esp_record.py: `stream.log` (Zeilen wie vom ESP32),
- * `rxtime.csv` (line,rx_ms seit Start), `meta.json`; dazu, sobald es Daten gibt, `ref_hr.csv` (EKG-Gurt, V0.1:
- * rx_ms,hr_bpm,rr_ms,contact, eine Zeile je RR-Wert) und `events.csv` (Marker, V0.2: rx_ms,text). Alle rx_ms auf
- * derselben Zeitachse (ms seit Aufnahmebeginn, elapsedRealtimeNanos), so wertet host/vital_eval.py sie aus. Puffer werden jede Sekunde geleert, damit ein Absturz
- * höchstens die letzte Sekunde kostet. Aufrufe aus dem Lese-Thread und der Oberfläche, daher synchronisiert.
+ * Writes a recording in the same format as host/esp_record.py: `stream.log` (lines as from the ESP32),
+ * `rxtime.csv` (line,rx_ms since start), `meta.json`; plus, as soon as there is data, `ref_hr.csv` (ECG chest strap, V0.1:
+ * rx_ms,hr_bpm,rr_ms,contact, one line per RR value) and `events.csv` (markers, V0.2: rx_ms,text). All rx_ms on the
+ * same time axis (ms since recording start, elapsedRealtimeNanos), which is how host/vital_eval.py evaluates them. Buffers are flushed every second, so that a crash
+ * costs at most the last second. Called from the read thread and the UI, hence synchronized.
  */
 class Recorder private constructor(
     val dir: File,
@@ -79,7 +79,7 @@ class Recorder private constructor(
         }
     }
 
-    /** Eine Gurt-Benachrichtigung (V0.1): je RR-Wert eine Zeile, ohne RR eine Zeile mit leerem rr_ms. */
+    /** One chest strap notification (V0.1): one line per RR value, without RR one line with empty rr_ms. */
     fun reference(
         rxNanos: Long,
         m: HrMeasurement,
@@ -102,8 +102,8 @@ class Recorder private constructor(
         }
     }
 
-    /** Marker (V0.2), wie host/vital_eval.py sie liest: „ein" (Metronom), „anhalten_start" / „anhalten_ende",
-     *  „bewegung_start" / „bewegung_ende", „zaehlen_start" / „zaehlen_ende". */
+    /** Markers (V0.2), as host/vital_eval.py reads them: "ein" (metronome), "anhalten_start" / "anhalten_ende",
+     *  "bewegung_start" / "bewegung_ende", "zaehlen_start" / "zaehlen_ende". */
     fun mark(
         rxNanos: Long,
         text: String,
@@ -177,7 +177,7 @@ class Recorder private constructor(
             return Recorder(dir, meta, nowNanos)
         }
 
-        /** Aufnahmen im Ordner, neueste zuerst (Unterordner mit stream.log). */
+        /** Recordings in the folder, newest first (subfolders with stream.log). */
         fun list(root: File): List<File> =
             (root.listFiles() ?: emptyArray())
                 .filter { File(it, "stream.log").isFile }

@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Host tools + DSP test bench
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # one test replays the DSP header from an older commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: host/requirements.txt
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1
+          python -m pip install -r host/requirements.txt
+      - name: Unit tests (Python + DSP header compiled with g++)
+        run: python -m unittest discover -s host/tests
+      - name: Synthetic test bench (simulation only)
+        run: python host/vital_sim.py bench --check
+
+  firmware:
+    name: ESP32-S3 firmware build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('firmware/esp32s3/platformio.ini') }}
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Build both environments
+        run: pio run -d firmware/esp32s3 -e esp32s3-n16r8 -e esp32s3-n16r8-reacq
+
+  android:
+    name: Android app unit tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest

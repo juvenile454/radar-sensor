@@ -1,4 +1,4 @@
-"""Tests für den Prüfstand host/vital_sim.py (nur Simulation).
+"""Tests for the test bench host/vital_sim.py (simulation only).
 
   .venv/bin/python -m unittest host/tests/test_vital_sim.py
 """
@@ -20,7 +20,7 @@ import vital_sim  # noqa: E402
 
 
 def worsen_header(src: str) -> str:
-    """Absichtlich verschlechterter Header: Suchband beginnt erst bei Bin 85 (1,25 Hz, 75 /min), Puls 72 fällt heraus."""
+    """Deliberately degraded header: the search band starts only at bin 85 (1.25 Hz, 75 /min), pulse 72 falls out."""
     return re.sub(r"(kHrK0\s*=\s*)[0-9]+U", r"\g<1>85U", src, count=1)
 
 
@@ -49,8 +49,8 @@ class CheckLimitsTest(unittest.TestCase):
 
 
 class ConfStatsTest(unittest.TestCase):
-    """Konfidenz falscher (> 10 /min) und richtiger (≤ 5 /min) Reports; ohne falsche Reports ist nichts falsch markiert
-    worden, konf_falsch = 0 (vorher NaN und damit ein Verstoß gegen die Grenze, Szenario tachy6)."""
+    """Confidence of wrong (> 10 /min) and correct (≤ 5 /min) reports; without wrong reports nothing was marked
+    wrong, konf_falsch = 0 (previously NaN and thus a violation of the limit, scenario tachy6)."""
 
     def test_no_wrong_reports_is_zero(self):
         st = vital_sim.conf_stats(np.array([80.0, 90.0]), np.array([1.0, 2.0]))
@@ -65,8 +65,8 @@ class ConfStatsTest(unittest.TestCase):
 
 
 class EarlyValueTest(unittest.TestCase):
-    """Abschluss-Review I1: erst_s zählt den ersten gültigen Report, auch wenn er falsch ist. Dazu: erster richtiger
-    Report (≤ 5 /min) und falsche Reports (> 10 /min) in den ersten 15 s."""
+    """Final review I1: erst_s counts the first valid report, even if it is wrong. In addition: first correct
+    report (≤ 5 /min) and wrong reports (> 10 /min) in the first 15 s."""
 
     def test_metrics(self):
         t = np.array([5.0, 6.0, 7.0, 8.0, 9.0, 16.0, 17.0])
@@ -74,7 +74,7 @@ class EarlyValueTest(unittest.TestCase):
         err = np.array([np.nan, 30.0, 6.0, 2.0, 1.0, 20.0, 1.0])
         m = vital_sim.early_metrics(t, valid, err)
         self.assertEqual(m["erst_ok_s"], 8.0)
-        self.assertEqual(m["frueh_falsch_n"], 1)   # 6 s; 16 s liegt nach den ersten 15 s
+        self.assertEqual(m["frueh_falsch_n"], 1)   # 6 s; 16 s lies after the first 15 s
 
     def test_never_correct(self):
         m = vital_sim.early_metrics(np.array([6.0]), np.array([True]), np.array([40.0]))
@@ -83,14 +83,14 @@ class EarlyValueTest(unittest.TestCase):
 
     def test_limits_pin_known_early_errors(self):
         lim = {(s, k): (op, x) for s, xs in vital_sim.LIMITS.items() for k, op, x in xs}
-        self.assertEqual(lim[("tief", "frueh_falsch_n")], ("<=", 1))   # 40,3 statt 71 nach 6 s (3. Atem-Oberwelle)
+        self.assertEqual(lim[("tief", "frueh_falsch_n")], ("<=", 1))   # 40.3 instead of 71 after 6 s (3rd breathing harmonic)
         self.assertEqual(lim[("base", "frueh_falsch_n")], ("<=", 0))
         self.assertIn(("tief", "erst_ok_s"), lim)
 
 
 class SceneTest(unittest.TestCase):
     def test_niemand_has_no_echo_in_zoom_window(self):
-        """Ohne Person bleiben im Zoom-Fenster (0,61–0,67 m) nur Rauschen und die Ausläufer ferner Echos."""
+        """Without a person, only noise and the tails of distant echoes remain in the zoom window (0.61–0.67 m)."""
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "niemand"
             vital_sim.make_frames(p, seed=1, T=2.0, **vital_sim.SCENARIOS["niemand"][1])
@@ -101,7 +101,7 @@ class SceneTest(unittest.TestCase):
 
 
 class LeaveBenchTest(unittest.TestCase):
-    """Abschluss-Review C1: Person geht — danach weder gültiger Puls noch Zustand Apnoe (Prüfen Nr. 1 und 4)."""
+    """Final review C1: person leaves — afterwards neither a valid pulse nor state apnea (checks no. 1 and 4)."""
 
     def test_no_apnea_after_leaving(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "weg"],
@@ -113,7 +113,7 @@ class LeaveBenchTest(unittest.TestCase):
 
 
 class CheckCommandTest(unittest.TestCase):
-    """Fertig-Kriterium V0.5: heutiger Header → Exit 0, absichtlich verschlechterter Header → Exit 1."""
+    """Done criterion V0.5: current header → exit 0, deliberately degraded header → exit 1."""
 
     def run_check(self, header: pathlib.Path) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--header", str(header)],
@@ -135,7 +135,7 @@ class CheckCommandTest(unittest.TestCase):
 
 
 class ZoomWidthBenchTest(unittest.TestCase):
-    """V2.3 Schritt 3: Prüfstand mit 48 Zoom-Punkten (Frames und Header mit A121_ZOOM_POINTS=48) in den Grenzwerten."""
+    """V2.3 step 3: Test bench with 48 zoom points (frames and header with A121_ZOOM_POINTS=48) within the limits."""
 
     def test_bench_48_points(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--zoom", "48",
@@ -145,7 +145,7 @@ class ZoomWidthBenchTest(unittest.TestCase):
 
 
 class WindowLengthBenchTest(unittest.TestCase):
-    """V2.5: Prüfstand mit kürzerem Pulsfenster (Header mit A121_HR_WIN übersetzt)."""
+    """V2.5: Test bench with a shorter pulse window (header compiled with A121_HR_WIN)."""
 
     def test_bench_10_s_window(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--hr-win", "600", "--scen", "step"],
@@ -156,7 +156,7 @@ class WindowLengthBenchTest(unittest.TestCase):
 
 
 class DefineOptionTest(unittest.TestCase):
-    """V3: A/B-Varianten im Prüfstand über --define NAME[=WERT] (Header mit -D übersetzt)."""
+    """V3: A/B variants in the test bench via --define NAME[=VALUE] (header compiled with -D)."""
 
     def test_define_reaches_header(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--define", "A121_HR_WIN=720",
@@ -167,7 +167,7 @@ class DefineOptionTest(unittest.TestCase):
 
 
 class StateBenchTest(unittest.TestCase):
-    """V3.5: Prüfstand meldet den Zustand BEWEGUNG im Szenario beweg (50–60 s), sonst nicht."""
+    """V3.5: The test bench reports the state BEWEGUNG in scenario beweg (50–60 s), otherwise not."""
 
     def test_motion_state(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "beweg", "base"],
@@ -178,8 +178,8 @@ class StateBenchTest(unittest.TestCase):
 
 
 class BreathBenchTest(unittest.TestCase):
-    """V3.4: Prüfstand wertet @BREATH aus (Rate gegen die wahre Atemfrequenz, erster Wert in Atemzügen); Szenario
-    takt6 = Metronom 6 /min (R3, unter dem Spektralband)."""
+    """V3.4: The test bench evaluates @BREATH (rate against the true breathing rate, first value in breaths); scenario
+    takt6 = metronome 6 /min (R3, below the spectral band)."""
 
     def test_breath_metrics(self):
         r = subprocess.run([sys.executable, str(HOST / "vital_sim.py"), "bench", "--check", "--scen", "takt6", "base",
@@ -194,8 +194,8 @@ class BreathBenchTest(unittest.TestCase):
 
 
 class ViterbiBenchTest(unittest.TestCase):
-    """V3.2 (Schalter A121_DSP_VITERBI): Variante hält die Grenzwerte, auch mit 12-s-Fenster (V2.5 „mit der Verfolgung
-    aus V3.2"); nur Simulation, Wahl an Tag A."""
+    """V3.2 (switch A121_DSP_VITERBI): the variant keeps the limits, also with a 12 s window (V2.5 "with the tracking
+    from V3.2"); simulation only, choice on day A."""
 
     def test_variant_within_limits(self):
         for extra in ([], ["--hr-win", "720"]):
@@ -207,8 +207,8 @@ class ViterbiBenchTest(unittest.TestCase):
 
 
 class HarmRemoveBenchTest(unittest.TestCase):
-    """V3.3 (Schalter A121_DSP_HARM_REMOVE): Variante hält die Grenzwerte, auch mit Viterbi; brady prüft die Regel
-    „nur nach sicherem Report" (ohne sie MAE 3,7 > Grenze 3,7)."""
+    """V3.3 (switch A121_DSP_HARM_REMOVE): the variant keeps the limits, also with Viterbi; brady checks the rule
+    "only after a safe report" (without it MAE 3.7 > limit 3.7)."""
 
     def test_variant_within_limits(self):
         for extra in ([], ["--define", "A121_DSP_VITERBI"]):
@@ -219,11 +219,11 @@ class HarmRemoveBenchTest(unittest.TestCase):
 
 
 class CombineBenchTest(unittest.TestCase):
-    """V3.1 (Schalter A121_DSP_COMBINE): ein kombinierter Kanal statt Einzelspektren, NUR SIMULATION. Abnahme laut Plan
-    „MAE ≤ heute bei ≤ 50 % Rechenzeit". Bekannte Abweichung, festgehalten: Der kombinierte Kanal ist atemlastig, im
-    6-s-Fenster liegt die stärkste Spitze bei step und tief auf einer niedrigen Atem-Oberwelle (verworfen), der erste
-    Wert kommt dort nach 7 statt 6 s (bei step ist er auch der erste richtige, daher zusätzlich erst_ok_s; tief hat dafür
-    ohnehin 7 s als Grenze)."""
+    """V3.1 (switch A121_DSP_COMBINE): one combined channel instead of individual spectra, SIMULATION ONLY. Acceptance per plan
+    "MAE ≤ today at ≤ 50 % compute time". Known deviation, recorded: the combined channel is breathing-dominated, in the
+    6 s window the strongest peak in step and tief lies on a low breathing harmonic (rejected), the first
+    value arrives there after 7 instead of 6 s (in step it is also the first correct one, hence additionally erst_ok_s; tief has
+    7 s as its limit anyway)."""
 
     SCEN = ["--scen", "base", "brady", "step", "tief"]
     DEFINE = "A121_DSP_COMBINE"
@@ -247,9 +247,9 @@ class CombineBenchTest(unittest.TestCase):
 
 
 class IbiTemplateBenchTest(unittest.TestCase):
-    """V3.6 (Schalter A121_DSP_IBI_TEMPLATE): Einzelschläge mit Vorlage, NUR SIMULATION. Mehr Reports mit RMSSD (mehr
-    Schläge bestehen die Artefakt-Regeln), RMSSD gemessen/wahr in den Grenzen. Bekannt: tief verwirft den 6-s-Wert
-    (40,3 statt 71 /min, den der Standard über die zirkuläre IBI-Bestätigung gelten lässt), erster Wert nach 7 s."""
+    """V3.6 (switch A121_DSP_IBI_TEMPLATE): individual beats with a template, SIMULATION ONLY. More reports with RMSSD (more
+    beats pass the artifact rules), RMSSD measured/true within the limits. Known: tief rejects the 6 s value
+    (40.3 instead of 71 /min, which the default accepts through the circular IBI confirmation), first value after 7 s."""
 
     SCEN = ["--scen", "base", "step", "tief", "tachy"]
     DEFINE = "A121_DSP_IBI_TEMPLATE"
@@ -277,7 +277,7 @@ class IbiTemplateBenchTest(unittest.TestCase):
 
 
 class ReacqMetricsTest(unittest.TestCase):
-    """V6: Wiederfinden nach Bewegung (Zeit bis zum ersten richtigen Report, falsche Reports danach)."""
+    """V6: Reacquisition after motion (time to the first correct report, wrong reports afterwards)."""
 
     def test_first_correct_after_episode(self):
         t = np.arange(50.0, 100.0)
@@ -285,7 +285,7 @@ class ReacqMetricsTest(unittest.TestCase):
         e = np.where(t >= 68, 1.0, 20.0)
         m = vital_sim.reacq_metrics(t, v, e, [(60.0, 63.0)])
         self.assertEqual(m["wiederfind_s"], 5.0)          # 68 - 63
-        self.assertEqual(m["falsch_nach_beweg_n"], 2)     # 66, 67 gültig und > 10 daneben
+        self.assertEqual(m["falsch_nach_beweg_n"], 2)     # 66, 67 valid and > 10 off
 
     def test_never_found_is_nan(self):
         t = np.arange(50.0, 100.0)
@@ -296,31 +296,31 @@ class ReacqMetricsTest(unittest.TestCase):
 
     def test_one_found_one_never_found(self):
         t = np.arange(0.0, 100.0)
-        e = np.where(t <= 50, 1.0, 20.0)   # ab 51 s dauerhaft falsch
+        e = np.where(t <= 50, 1.0, 20.0)   # permanently wrong from 51 s
         m = vital_sim.reacq_metrics(t, np.ones_like(t, bool), e, [(10.0, 12.0), (60.0, 62.0)])
         self.assertEqual(m["nie_gefunden_n"], 1)
-        self.assertEqual(m["wiederfind_s"], 1.0)   # nur die gefundene Episode zählt, endlich
+        self.assertEqual(m["wiederfind_s"], 1.0)   # only the found episode counts, finite
         self.assertEqual(m["falsch_nach_beweg_n"], 30)
 
     def test_median_over_episodes_and_no_double_count(self):
         t = np.arange(0.0, 100.0)
         v = np.ones_like(t, bool)
-        e = np.where(((t > 12) & (t < 17)) | ((t > 32) & (t < 40)), 20.0, 1.0)   # falsch 13–16 und 33–39
+        e = np.where(((t > 12) & (t < 17)) | ((t > 32) & (t < 40)), 20.0, 1.0)   # wrong 13–16 and 33–39
         m = vital_sim.reacq_metrics(t, v, e, [(10.0, 12.0), (30.0, 32.0)])
-        self.assertEqual(m["wiederfind_s"], (5.0 + 8.0) / 2)   # Median aus 17 - 12 und 40 - 32
+        self.assertEqual(m["wiederfind_s"], (5.0 + 8.0) / 2)   # median of 17 - 12 and 40 - 32
         self.assertEqual(m["nie_gefunden_n"], 0)
         self.assertEqual(m["falsch_nach_beweg_n"], 4 + 7)
 
     def test_wrong_inside_episode(self):
-        # Ruling R15: falsche gültige Reports in (Beginn, Ende] zählen extra, nicht in falsch_nach_beweg_n
+        # Ruling R15: wrong valid reports in (start, end] count separately, not in falsch_nach_beweg_n
         t = np.arange(0.0, 100.0)
         v = np.ones_like(t, bool)
-        e = np.where((t >= 10) & (t <= 12), 20.0, 1.0)   # 10 (Beginn, nicht drin), 11, 12 falsch
-        e[[62, 63]] = 20.0                               # in der zweiten Episode, 63 = Ende (drin)
+        e = np.where((t >= 10) & (t <= 12), 20.0, 1.0)   # 10 (start, not inside), 11, 12 wrong
+        e[[62, 63]] = 20.0                               # in the second episode, 63 = end (inside)
         eps = [(10.0, 15.0), (60.0, 63.0)]
         m = vital_sim.reacq_metrics(t, v, e, eps)
         self.assertEqual(m["falsch_in_beweg_n"], 4)      # 11, 12, 62, 63
-        self.assertEqual(m["falsch_nach_beweg_n"], 0)    # (15, 45] und (63, 93] alle richtig
+        self.assertEqual(m["falsch_nach_beweg_n"], 0)    # (15, 45] and (63, 93] all correct
         v[62] = False
         self.assertEqual(vital_sim.reacq_metrics(t, v, e, eps)["falsch_in_beweg_n"], 3)
 
@@ -329,7 +329,7 @@ class ReacqMetricsTest(unittest.TestCase):
         v = t >= 72
         hr = np.where(t >= 72, 82.0, 70.0)
         f = vital_sim.first_after_error(t, v, hr, 70.0, lambda x: 70.0 if x < 60 else 70 + 15 * min(1, (x - 60) / 10))
-        self.assertAlmostEqual(f, 3.0)                   # |82 − 85| zur Zeit 72 s
+        self.assertAlmostEqual(f, 3.0)                   # |82 − 85| at time 72 s
         self.assertTrue(math.isnan(vital_sim.first_after_error(t, np.zeros_like(v), hr, 70.0, lambda x: 72.0)))
 
 
@@ -339,7 +339,7 @@ class SectionMetricsTest(unittest.TestCase):
         v = t % 2 == 0
         e = np.full(10, 1.5)
         m = vital_sim.section_metrics(t, v, e, 0.0, 10.0)
-        self.assertAlmostEqual(m["abschnitt_gueltig_pct"], 44.4, places=1)  # t = 2,4,6,8 von 1…9
+        self.assertAlmostEqual(m["abschnitt_gueltig_pct"], 44.4, places=1)  # t = 2,4,6,8 out of 1…9
         self.assertAlmostEqual(m["abschnitt_mae"], 1.5)
 
     def test_no_valid_report_is_nan_mae(self):
@@ -350,10 +350,10 @@ class SectionMetricsTest(unittest.TestCase):
 
 
 class MotionModelTest(unittest.TestCase):
-    """V6: Bewegungsarten von make_frames (Verschiebung, Stöße, mehrere Episoden), NUR SIMULATION."""
+    """V6: Motion types of make_frames (shift, jolts, multiple episodes), SIMULATION ONLY."""
 
     def frames(self, **kw):
-        """Zoom-Phase (relativ zum ruhigen Anfang) am stärksten Punkt, ohne Atmung und Herzschlag."""
+        """Zoom phase (relative to the quiet start) at the strongest point, without breathing and heartbeat."""
         kw = dict(T=100.0, breath_pp_mm=0.0, heart_pp_um=0.0) | kw
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "m"
@@ -403,7 +403,7 @@ class MotionModelTest(unittest.TestCase):
         self.assertEqual(vital_sim.SCENARIOS["lage"][1]["shift"], (60, 2, 8.0, 0.7))
         self.assertEqual(vital_sim.SCENARIOS["tippen"][1]["jolts"], (60, 120, 0.3))
         self.assertEqual(vital_sim.SCENARIOS["beweg_weg"][1]["leave"], 60)
-        # bestehende Szenarien behalten ihre Seeds (Index in SCENARIOS), neue stehen hinten
+        # existing scenarios keep their seeds (index in SCENARIOS), new ones go at the end
         self.assertEqual(list(vital_sim.SCENARIOS)[13:15], ["weg", "kurz"])
 
     def test_episodes_cover_all_motion_kinds(self):
@@ -416,21 +416,21 @@ class MotionModelTest(unittest.TestCase):
 
 
 class ReacqBenchTest(unittest.TestCase):
-    """V6 (Schalter A121_DSP_REACQ): Wiederfinden nach Bewegung gegen LIMITS und LIMITS_REACQ (nur Simulation);
-    Gedächtnis bleibt beim Rezoom auf dasselbe Ziel und erlischt, wenn das Ziel nicht mehr im Zoom-Fenster liegt.
+    """V6 (switch A121_DSP_REACQ): reacquisition after motion against LIMITS and LIMITS_REACQ (simulation only);
+    the memory is kept on a rezoom onto the same target and expires when the target is no longer in the zoom window.
 
-    Bekannte Verletzungen (Stand Task 6, festgehalten wie bei CombineBenchTest): Die Bewegungskarte (Block über
-    3 × ruhiges Viertel) sieht die zweite Hälfte der 20-s-Bewegung in lang nicht (Bezug ist dort selbst Bewegung, Blöcke
-    1,4–2,9 ×), das 6-s-Endstück bei 71–72 s liegt noch in der Bewegung (83 statt 72 /min, von AKF/Einzelschlägen
-    bestätigt). tippen: Stöße überschreiten 3 × Bezug kaum, die normale Verfolgung springt bei 114 s auf 99 /min (wie
-    ohne Schalter: falsch 4, MAE 4,0); die Variante A121_DSP_REACQ_PERIOD (Task 7) hilft nicht und ist verworfen (docs/
-    EXPERIMENTS.md, V6). Kleinere Schwelle (2,5 / 2)
-    oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg).
+    Known violations (as of task 6, recorded as in CombineBenchTest): the motion map (block over
+    3 × quiet quarter) does not see the second half of the 20 s motion in lang (the reference there is itself motion, blocks
+    1.4–2.9 ×), the 6 s tail at 71–72 s still lies in the motion (83 instead of 72 /min, confirmed by ACF/individual
+    beats). tippen: jolts barely exceed 3 × reference, the normal tracking jumps to 99 /min at 114 s (as
+    without the switch: wrong 4, MAE 4.0); the variant A121_DSP_REACQ_PERIOD (task 7) does not help and is rejected (docs/
+    EXPERIMENTS.md, V6). A smaller threshold (2.5 / 2)
+    or a tail in the moving section violate other limits (Start, weg, beweg_weg).
 
-    Final-Review (Ruling R15): falsch_in_beweg_n zählt auch die Fehlwerte mitten in der Bewegung. lang: 60 und 63 s
-    (84,7 / 84,6 statt 72,5, reacq 2) in der Bewegung, 71 und 72 s danach; alle vier haben eine Atemspitze (breath_ok,
-    Atmung auf dem vollen Fenster), die Regel kMemSubstBpm ändert daran nichts. tippen: 7 Fehlwerte im Abschnitt der
-    Stöße (60–120 s), ohne Schalter ebenso 7."""
+    Final review (Ruling R15): falsch_in_beweg_n also counts the wrong values in the middle of the motion. lang: 60 and 63 s
+    (84.7 / 84.6 instead of 72.5, reacq 2) during the motion, 71 and 72 s after it; all four have a breathing peak (breath_ok,
+    breathing on the full window), the rule kMemSubstBpm does not change that. tippen: 7 wrong values in the section of the
+    jolts (60–120 s), 7 as well without the switch."""
 
     KNOWN = ["VERLETZT lang: falsch_in_beweg_n = 2, Grenze <= 0",
              "VERLETZT lang: falsch_nach_beweg_n = 2, Grenze <= 0",
@@ -481,9 +481,9 @@ class ReacqBenchTest(unittest.TestCase):
         self.assertEqual(out.split(), ["1", "1", "1", "1", "1", "0", "0", "0"])
 
     def run_scenario(self, name: str, per_report: str, T: float | None = None) -> list[list[str]]:
-        """Szenario-Frames (fester Seed wie im Prüfstand) durch UltimateEspDsp mit A121_DSP_REACQ, je 60 Frames ein
-        Report; per_report: C++ nach dem Report (r = Report, before/after = trackState, m0/m1 = Gedächtnis vorher/
-        nachher), druckt eine Zeile je Report."""
+        """Scenario frames (fixed seed as in the test bench) through UltimateEspDsp with A121_DSP_REACQ, one
+        report per 60 frames; per_report: C++ after the report (r = report, before/after = trackState, m0/m1 = memory before/
+        after), prints one line per report."""
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
         from test_dsp_unit import run_cpp
         kw = dict(vital_sim.SCENARIOS[name][1])
@@ -516,7 +516,7 @@ class ReacqBenchTest(unittest.TestCase):
         return [ln.split() for ln in out.splitlines()]
 
     def test_pulse_off_freezes_tracking(self):
-        # kurz: Bewegung 60–63 s; Reports mit zu kurzem ruhigem Endstück (win_s 0) lassen die Verfolgung unverändert
+        # kurz: motion 60–63 s; reports with too short a quiet tail (win_s 0) leave the tracking unchanged
         rows = self.run_scenario("kurz", """
             if (r.frame_count >= kHrMinWin && r.win_s == 0) {
                 const bool same = before.hr_prev == after.hr_prev && before.hr_miss == after.hr_miss &&
@@ -524,13 +524,13 @@ class ReacqBenchTest(unittest.TestCase):
                                   memcmp(before.hr_hist, after.hr_hist, sizeof(before.hr_hist)) == 0;
                 printf("%u %d %d %.1f\\n", n / 60, (int)r.valid, (int)same, after.hr_prev);
             }""", T=80.0)
-        self.assertGreaterEqual(len(rows), 2, rows)          # die Bewegung erzeugt Reports ohne Pulsfenster
+        self.assertGreaterEqual(len(rows), 2, rows)          # the motion produces reports without a pulse window
         for t, valid, same, hr_prev in rows:
             self.assertEqual((valid, same), ("0", "1"), rows)
-            self.assertGreater(float(hr_prev), 60.0, rows)    # der Wert vor der Bewegung bleibt stehen (Puls 72)
+            self.assertGreater(float(hr_prev), 60.0, rows)    # the value before the motion stays in place (pulse 72)
 
     def test_memory_stored_only_when_safe(self):
-        # tippen: Start mit 6/7-s-Fenster und gültige Reports mit Konfidenz < 50; gemerkt wird nur ab 8 s und 50 %
+        # tippen: start with a 6/7 s window and valid reports with confidence < 50; only stored from 8 s and 50 %
         rows = self.run_scenario("tippen", """
             const bool stored = m1.stored() && (!m0.stored() || m1.storedAt() != m0.storedAt());
             printf("%u %d %u %.1f %d\\n", n / 60, (int)r.valid, (unsigned)r.win_s, r.confidence_pct, (int)stored);""",
@@ -541,13 +541,13 @@ class ReacqBenchTest(unittest.TestCase):
             self.assertEqual(valid, "1")
             self.assertGreaterEqual(int(win), 8)
             self.assertGreaterEqual(float(conf), 50.0)
-        # beide Ausschlussfälle kommen vor (sonst prüfte der Test nichts)
+        # both exclusion cases occur (otherwise the test would check nothing)
         self.assertTrue(any(v == "1" and int(w) < 8 and s == "0" for _, v, w, _c, s in rows), rows)
         self.assertTrue(any(v == "1" and int(w) >= 8 and float(c) < 50.0 and s == "0" for _, v, w, c, s in rows), rows)
 
 
 class ReacqLimitsTest(unittest.TestCase):
-    """V6: LIMITS_REACQ gilt nur mit dem Schalter A121_DSP_REACQ; die neuen Szenarien haben Grenzen ohne Schalter."""
+    """V6: LIMITS_REACQ applies only with the switch A121_DSP_REACQ; the new scenarios have limits without the switch."""
 
     def test_limits_reacq_values(self):
         lim = {(s, k): (op, x) for s, xs in vital_sim.LIMITS_REACQ.items() for k, op, x in xs}
@@ -578,7 +578,7 @@ class ReacqLimitsTest(unittest.TestCase):
             self.assertEqual(got, want, define)
             self.assertIn(("wiederfind_s", "<=", 8.0), got["kurz"])
             self.assertEqual(got["base"], vital_sim.LIMITS["base"])
-        self.assertNotIn(("wiederfind_s", "<=", 8.0), vital_sim.LIMITS["kurz"])   # LIMITS selbst bleibt unverändert
+        self.assertNotIn(("wiederfind_s", "<=", 8.0), vital_sim.LIMITS["kurz"])   # LIMITS itself stays unchanged
 
     def test_new_scenarios_have_baseline_limits(self):
         for s in ("kurz", "zappel", "lang", "lage", "beweg_hr", "beweg_weg", "tippen"):
@@ -586,8 +586,8 @@ class ReacqLimitsTest(unittest.TestCase):
             self.assertIn("falsch_nach_beweg_n", names)
             self.assertIn("zustand_beweg_fehl", names)
             self.assertIn("atemzug_mae", names)
-            self.assertNotIn("wiederfind_s", names)    # ohne Schalter keine Wiederfind-Grenze
-            self.assertNotIn("falsch_in_beweg_n", names)   # ohne Schalter nur berichtet (Ruling R15)
+            self.assertNotIn("wiederfind_s", names)    # without the switch no reacquisition limit
+            self.assertNotIn("falsch_in_beweg_n", names)   # without the switch only reported (Ruling R15)
 
 
 if __name__ == "__main__":

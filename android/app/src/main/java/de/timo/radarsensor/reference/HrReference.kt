@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
-/** Gefundener Gurt (BLE-Werbung mit Heart Rate Service). */
+/** Found chest strap (BLE advertisement with Heart Rate Service). */
 data class HrDevice(
     val address: String,
     val name: String?,
@@ -49,12 +49,12 @@ sealed interface RefState {
 }
 
 /**
- * EKG-Gurt über BLE (V0.1), z. B. Polar H10: Suche nach Geräten mit Heart Rate Service (0x180D), Verbinden,
- * Benachrichtigungen der Heart Rate Measurement (0x2A37) einschalten, jede Benachrichtigung mit Empfangszeit
- * (elapsedRealtimeNanos, dieselbe Zeitachse wie rxtime.csv) an [onMeasurement]. Reißt die Verbindung ab, verbindet
- * Android von selbst wieder (autoConnect), bis [disconnect] gerufen wird; ebenso nach einer fehlgeschlagenen
- * Dienstsuche (höchstens [MAX_DISCOVERY_FAILURES] in Folge, [discoveryAction]). Die Berechtigungen BLUETOOTH_SCAN
- * (neverForLocation) und BLUETOOTH_CONNECT fragt die Activity an; fehlen sie, meldet [state] Failed.
+ * ECG chest strap over BLE (V0.1), e.g. Polar H10: scan for devices with Heart Rate Service (0x180D), connect,
+ * enable notifications of the Heart Rate Measurement (0x2A37), pass every notification with its receive time
+ * (elapsedRealtimeNanos, same time axis as rxtime.csv) to [onMeasurement]. If the connection drops, Android
+ * reconnects by itself (autoConnect) until [disconnect] is called; likewise after a failed
+ * service discovery (at most [MAX_DISCOVERY_FAILURES] in a row, [discoveryAction]). The permissions BLUETOOTH_SCAN
+ * (neverForLocation) and BLUETOOTH_CONNECT are requested by the activity; if they are missing, [state] reports Failed.
  */
 @SuppressLint("MissingPermission")
 class HrReference(
@@ -71,7 +71,7 @@ class HrReference(
     private val _found = MutableStateFlow<List<HrDevice>>(emptyList())
     val found: StateFlow<List<HrDevice>> = _found.asStateFlow()
 
-    /** Letzte Benachrichtigung (für Status und Anzeige). */
+    /** Last notification (for status and display). */
     @Volatile var last: HrMeasurement? = null
         private set
 
@@ -101,7 +101,7 @@ class HrReference(
             }
         }
 
-    /** Gurte suchen (durationMs lang); Ergebnisse in [found], stärkstes Signal zuerst. */
+    /** Scan for chest straps (for durationMs); results in [found], strongest signal first. */
     fun scan(durationMs: Long = 10_000L) {
         val sc = adapter?.bluetoothLeScanner
         if (adapter == null || !adapter.isEnabled || sc == null) {
@@ -135,7 +135,7 @@ class HrReference(
         log("Gurt-Suche beendet: ${_found.value.size} gefunden")
     }
 
-    /** Mit dem Gurt an address (MAC) verbinden; eine bestehende Verbindung wird vorher getrennt. */
+    /** Connect to the chest strap at address (MAC); an existing connection is disconnected first. */
     fun connect(address: String) {
         stopScan()
         closeGatt()
@@ -162,7 +162,7 @@ class HrReference(
         }
     }
 
-    /** Vom Nutzer: trennen, nicht wieder verbinden. */
+    /** By the user: disconnect, do not reconnect. */
     fun disconnect() {
         userClosed = true
         stopScan()
@@ -198,7 +198,7 @@ class HrReference(
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         if (gatt !== g) return
                         if (userClosed) return
-                        // abgerissen (außer Reichweite, Gurt ab): Android verbindet selbst wieder, sobald er da ist
+                        // dropped (out of range, strap off): Android reconnects by itself as soon as it is there
                         g.close()
                         _state.value = RefState.Connecting(g.device.address)
                         log("Gurt-Verbindung verloren (Status $status), verbinde wieder")
@@ -222,7 +222,7 @@ class HrReference(
                         return
                     }
                     Discovery.Reconnect -> {
-                        // trennen; onConnectionStateChange verbindet dann wie bei einem Abriss wieder
+                        // disconnect; onConnectionStateChange then reconnects as after a drop
                         discoveryFailures++
                         log("Gurt-Dienstsuche fehlgeschlagen (Status $status), verbinde wieder")
                         g.disconnect()

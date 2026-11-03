@@ -1,4 +1,4 @@
-"""Tests für die Prüfung in host/esp_record.py (an synthetischen Ordnern, ohne ESP32).
+"""Tests for the check in host/esp_record.py (on synthetic folders, without an ESP32).
 
   .venv/bin/python -m unittest host/tests/test_esp_record.py
 """
@@ -32,7 +32,7 @@ def write_folder(d: pathlib.Path, zoom_points: int) -> None:
 
 
 class CheckZoomWidthTest(unittest.TestCase):
-    """V2.3 Schritt 3: Die Prüfung nimmt die Zoom-Breite aus den @RAW-Zeilen (24 oder 48 Punkte)."""
+    """V2.3 step 3: The check takes the zoom width from the @RAW lines (24 or 48 points)."""
 
     def test_24_points_ok(self):
         with tempfile.TemporaryDirectory() as d:

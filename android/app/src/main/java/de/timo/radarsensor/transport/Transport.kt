@@ -1,11 +1,11 @@
 package de.timo.radarsensor.transport
 
 /**
- * Verbindung zum ESP32: USB-CDC jetzt, TCP für die Entwicklung, Wiedergabe von Aufnahmen; BLE später als weitere
- * Umsetzung. [start] öffnet und liest im Hintergrund; [Listener] wird im Lese-Thread aufgerufen.
+ * Connection to the ESP32: USB-CDC now, TCP for development, replay of recordings; BLE later as another
+ * implementation. [start] opens and reads in the background; [Listener] is called on the read thread.
  */
 interface Transport {
-    /** Kurzbeschreibung für Anzeige und meta.json, z. B. "USB 303a:1001 EC:DA:…" */
+    /** Short description for display and meta.json, e.g. "USB 303a:1001 EC:DA:…" */
     val label: String
 
     /** "usb", "tcp", "replay" */
@@ -17,14 +17,14 @@ interface Transport {
             len: Int,
         )
 
-        /** Verbindung verloren oder Ende der Wiedergabe (`null`). */
+        /** Connection lost or end of replay (`null`). */
         fun onClosed(error: Exception?)
     }
 
-    /** Öffnet die Verbindung (blockierend) und startet das Lesen. Wirft bei Fehlern. */
+    /** Opens the connection (blocking) and starts reading. Throws on errors. */
     fun start(listener: Listener)
 
-    /** Sendet Bytes an den ESP32 (bei Wiedergabe ohne Wirkung). */
+    /** Sends bytes to the ESP32 (no effect during replay). */
     fun write(data: ByteArray)
 
     fun close()

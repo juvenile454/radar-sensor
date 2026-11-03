@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Synthetischer Prüfstand für die Vital-DSP (Audit 2026-11-01, docs/VITAL_AUDIT.md).
+"""Synthetic test bench for the vital DSP (audit 2026-11-01, docs/VITAL_AUDIT.md).
 
-NUR SIMULATION: Das Brustmodell (mehrere Streuzentren, Gauß-Hüllkurve je Profil, komplexes Rauschen, nicht-sinusförmige
-Atmung, Herzschlag als Pulsfolge mit Streuung) ist eine Annahme. Ergebnisse zeigen Schwächen der Logik und die Richtung
-einer Änderung, sie ersetzen keine Messung mit Referenzgerät.
+SIMULATION ONLY: The chest model (several scattering centers, Gaussian envelope per profile, complex noise, non-sinusoidal
+breathing, heartbeat as a pulse train with jitter) is an assumption. Results show weaknesses of the logic and the direction
+of a change; they do not replace a measurement with a reference device.
 
-Modi:
-  demod   Ein Range-Punkt z = C + A·exp(j·4π·x/λ) + Rauschen: Herzband-Fehler nach Phasen-Demodulation mit
-          wahrem Kreismittelpunkt, Fenster-Mittelwert (a121_esp_dsp.h bis 2026-11-01) und Kåsa-Kreisfit (seit V1.1).
-  bench   Übersetzt firmware/esp32s3/src/a121_esp_dsp.h (oder --header) für den PC, erzeugt iq3-Frames (105 Punkte)
-          für mehrere Szenarien und vergleicht die Reports mit der Simulationswahrheit (Puls, Atmung, RMSSD, Konfidenz,
-          Reaktionszeit, Atemzustand).
+Modes:
+  demod   One range point z = C + A·exp(j·4π·x/λ) + noise: heart-band error after phase demodulation with
+          true circle center, window mean (a121_esp_dsp.h up to 2026-11-01) and Kåsa circle fit (since V1.1).
+  bench   Compiles firmware/esp32s3/src/a121_esp_dsp.h (or --header) for the PC, generates iq3 frames (105 points)
+          for several scenarios and compares the reports with the simulation truth (pulse, breathing, RMSSD, confidence,
+          response time, breathing state).
 
   .venv/bin/python host/vital_sim.py demod
   .venv/bin/python host/vital_sim.py bench [--out <ordner>] [--scen base harm4 ...] [--header <a121_esp_dsp.h>]
-  .venv/bin/python host/vital_sim.py bench --check     # Regressionstest: Exit 1, wenn ein Grenzwert verletzt ist
-  .venv/bin/python host/vital_sim.py record --out <ordner> [--scen anhalt]   # synthetische Aufnahme im App-Format
+  .venv/bin/python host/vital_sim.py bench --check     # regression test: exit 1 if a limit is violated
+  .venv/bin/python host/vital_sim.py record --out <ordner> [--scen anhalt]   # synthetic recording in the app format
 
---check prüft nur den angegebenen Header (Standard: Firmware) gegen LIMITS. Jede DSP-Änderung verschärft die Grenzwerte,
-die sie verbessert (docs/VITAL_AUDIT.md, V0.5).
+--check checks only the given header (default: firmware) against LIMITS. Every DSP change tightens the limits
+that it improves (docs/VITAL_AUDIT.md, V0.5).
 
-Die erzeugten Frames (je Szenario ≈ 3 MB) landen in einem temporären Ordner oder unter --out (nicht im Repo).
+The generated frames (≈ 3 MB per scenario) go to a temporary folder or to --out (not into the repo).
 """
 
 from __future__ import annotations
@@ -44,12 +44,12 @@ UM_PER_RAD = LAM / (4 * np.pi) * 1e6
 FS = 60.0
 STEP_M = 0.0025
 ZOOM_N, ROOM_N, ROOM_START_PT, ROOM_STEP = 24, 80, 120, 12
-HR_WIN = 900  # Pulsfenster in Frames (A121_HR_WIN, V2.5)
-DEFINES: list[str] = []  # weitere Schalter für den Header (--define, V3-Varianten)
+HR_WIN = 900  # pulse window in frames (A121_HR_WIN, V2.5)
+DEFINES: list[str] = []  # further compile switches for the header (--define, V3 variants)
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Signalmodell
+# Signal model
 # ---------------------------------------------------------------------------------------------------------
 
 def heart_beats(rng, T, hr_fn, hrv_ms):
@@ -61,7 +61,7 @@ def heart_beats(rng, T, hr_fn, hrv_ms):
 
 
 def heart_wave(t, beats, pp_um):
-    """Je Schlag ein glatter Puls (zwei Gauß-Anteile); Spitze-Spitze auf pp_um normiert."""
+    """One smooth pulse per beat (two Gaussian components); peak-to-peak normalized to pp_um."""
     h = np.zeros_like(t)
     for bt in beats:
         h += np.exp(-0.5 * ((t - bt) / 0.06) ** 2) - 0.45 * np.exp(-0.5 * ((t - bt - 0.18) / 0.09) ** 2)
@@ -74,13 +74,13 @@ def breath_phase(t, rr_fn):
 
 
 def breath_wave(ph, pp_um):
-    """Nicht-sinusförmige Atmung (natürliche 2./3. Oberwelle), Spitze-Spitze ≈ pp_um."""
+    """Non-sinusoidal breathing (natural 2nd/3rd harmonic), peak-to-peak ≈ pp_um."""
     b = np.sin(ph) + 0.15 * np.sin(2 * ph + 0.5) + 0.05 * np.sin(3 * ph + 1.0)
     return b / 2.3 * pp_um
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Modus demod
+# Mode demod
 # ---------------------------------------------------------------------------------------------------------
 
 def kasa_center(z):
@@ -139,7 +139,7 @@ def run_demod() -> int:
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Modus bench: Firmware-Header auf synthetischen iq3-Frames
+# Mode bench: firmware header on synthetic iq3 frames
 # ---------------------------------------------------------------------------------------------------------
 
 def gauss_env(dd, fwhm):
@@ -147,14 +147,14 @@ def gauss_env(dd, fwhm):
 
 
 def motion_list(motion) -> list[tuple[float, float, float]]:
-    """motion als Liste von (t0, t1, pp_mm): None → [], ein Tupel → [Tupel], eine Liste bleibt."""
+    """motion as a list of (t0, t1, pp_mm): None → [], a tuple → [tuple], a list stays."""
     if not motion:
         return []
     return [tuple(motion)] if np.isscalar(motion[0]) else [tuple(m) for m in motion]
 
 
 def episodes_of(kw: dict) -> list[tuple[float, float]]:
-    """Bewegungsepisoden (Beginn, Ende) eines Szenarios aus motion, shift (t0, t0 + Dauer) und jolts (t0, t1)."""
+    """Motion episodes (start, end) of a scenario from motion, shift (t0, t0 + duration) and jolts (t0, t1)."""
     eps = [(m[0], m[1]) for m in motion_list(kw.get("motion"))]
     if kw.get("shift"):
         eps.append((kw["shift"][0], kw["shift"][0] + kw["shift"][1]))
@@ -166,30 +166,30 @@ def episodes_of(kw: dict) -> list[tuple[float, float]]:
 def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=lambda t: 15.0, breath_pp_mm=2.5,
                 heart_pp_um=100.0, hrv_ms=35.0, motion=None, hold=None, zoom_start_pt=244, person=True, leave=None,
                 shift=None, jolts=None):
-    """Schreibt <path>.iq (int16 real/imag je Punkt, 105 Punkte je Frame) und <path>_truth.npz.
+    """Writes <path>.iq (int16 real/imag per point, 105 points per frame) and <path>_truth.npz.
 
-    person=False: nur Tisch, Wand und Möbel (leerer Platz vor dem Sensor). leave=t: Die Person geht bei t s (ihre
-    Streuzentren blenden in 1 s aus, Tisch, Wand und Möbel bleiben).
-    V6, Bewegungsarten: motion = (t0, t1, pp_mm) oder Liste davon (Zufallsweg des Oberkörpers je Episode);
-    shift = (t0, dauer_s, dd_mm, amp_faktor): alle Brust-Streuzentren wandern ab t0 in dauer_s linear um dd_mm und
-    ihre Amplitude auf amp_faktor (Lageänderung); jolts = (t0, t1, pp_mm): zufällige Stöße am Brust-Echo (Länge
-    0,2–0,5 s, Abstand 0,5–3 s, Halbsinus mit zufälligem Vorzeichen und 50–100 % der Höhe pp_mm)."""
+    person=False: only table, wall and furniture (empty space in front of the sensor). leave=t: the person leaves at t s (their
+    scattering centers fade out within 1 s, table, wall and furniture remain).
+    V6, kinds of motion: motion = (t0, t1, pp_mm) or a list of them (random walk of the upper body per episode);
+    shift = (t0, dauer_s, dd_mm, amp_faktor): all chest scattering centers move linearly by dd_mm from t0 over dauer_s and
+    their amplitude to amp_faktor (change of posture); jolts = (t0, t1, pp_mm): random jolts at the chest echo (length
+    0.2–0.5 s, spacing 0.5–3 s, half sine with random sign and 50–100 % of the height pp_mm)."""
     rng = np.random.default_rng(seed)
     n = int(T * FS)
     t = np.arange(n) / FS
     ph, rr = breath_phase(t, rr_fn)
     b = breath_wave(ph, breath_pp_mm * 1e-3)
-    if hold:  # Atem anhalten: Atmung weich aus- und wieder einblenden
+    if hold:  # breath hold: fade breathing out and in again smoothly
         w = np.where((t > hold[0]) & (t < hold[1]), 0.0, 1.0)
         b = b * np.convolve(w, np.ones(int(FS)) / FS, mode="same")
     beats = heart_beats(rng, T, hr_fn, hrv_ms)
     h = heart_wave(t, beats, heart_pp_um * 1e-6)
     body = np.zeros(n)
-    for m0, m1, m_pp in motion_list(motion):  # Zufallsbewegung des Oberkörpers (eine Episode oder mehrere)
+    for m0, m1, m_pp in motion_list(motion):  # random motion of the upper body (one episode or several)
         k = (t > m0) & (t < m1)
         walk = np.convolve(np.cumsum(rng.normal(0, 1, k.sum())), np.ones(15) / 15, mode="same")
         body[k] = walk / (np.ptp(walk) + 1e-9) * m_pp * 1e-3
-    if jolts:  # Stöße (z. B. Tippen): Halbsinus, zufälliges Vorzeichen; Zufallszahlen nur hier gezogen
+    if jolts:  # jolts (e.g. tapping): half sine, random sign; random numbers drawn only here
         tc = jolts[0]
         while True:
             tc += rng.uniform(0.5, 3.0)
@@ -200,8 +200,8 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
             k = (t >= tc) & (t < tc + dur)
             body[k] += amp * np.sin(np.pi * (t[k] - tc) / dur)
             tc += dur
-    sh = np.clip((t - shift[0]) / shift[1], 0.0, 1.0) if shift else None  # Lageänderung: 0 → 1
-    # Streuzentren: Abstand (m), Amplitude, Atem-Anteil, Herz-Anteil, Phase. Vorderbrust, Bauch, Schulter, Tisch, Wand, Möbel
+    sh = np.clip((t - shift[0]) / shift[1], 0.0, 1.0) if shift else None  # change of posture: 0 → 1
+    # Scattering centers: distance (m), amplitude, breathing share, heart share, phase. Front chest, abdomen, shoulder, table, wall, furniture
     scat = [(0.640, 1500, 1.0, 1.0, 0.3), (0.668, 900, 1.3, 0.5, 1.9), (0.730, 800, 0.3, 0.2, 4.0),
             (0.450, 600, 0.0, 0.0, 2.2), (2.200, 1500, 0.0, 0.0, 5.1), (1.300, 500, 0.0, 0.0, 0.9)]
     if not person:
@@ -210,13 +210,13 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
     rd = (ROOM_START_PT + np.arange(ROOM_N) * ROOM_STEP) * STEP_M
     Z = np.zeros((n, ZOOM_N), complex)
     R = np.zeros((n, ROOM_N), complex)
-    pres = np.clip(1.0 - (t - leave), 0.0, 1.0) if leave is not None else np.ones(n)  # Person da (1) / weg (0)
+    pres = np.clip(1.0 - (t - leave), 0.0, 1.0) if leave is not None else np.ones(n)  # person present (1) / gone (0)
     for r0, A, bs, hs, p0 in scat:
         r = r0 + bs * b + hs * h + (body if bs > 0 else 0.0)
         if shift and bs > 0:
             r = r + sh * shift[2] * 1e-3
         rot = np.exp(1j * (p0 - 4 * np.pi * r / LAM))
-        a_t = A * (1 + 0.08 * bs * np.sin(ph + 0.7))  # Amplitude schwankt etwas mit der Atmung
+        a_t = A * (1 + 0.08 * bs * np.sin(ph + 0.7))  # amplitude fluctuates slightly with breathing
         if bs > 0:
             a_t = a_t * pres
             if shift:
@@ -225,7 +225,7 @@ def make_frames(path: pathlib.Path, seed, T=120.0, hr_fn=lambda t: 72.0, rr_fn=l
         R += (a_t * rot)[:, None] * gauss_env(rd[None, :] - r[:, None], 0.140)   # Profil 3
     Z += 25 * (rng.normal(size=Z.shape) + 1j * rng.normal(size=Z.shape)) / np.sqrt(2)
     R += 40 * (rng.normal(size=R.shape) + 1j * rng.normal(size=R.shape)) / np.sqrt(2)
-    lb_phi = 0.003 * rng.normal(size=n) + 0.02 * np.sin(2 * np.pi * t / 300)  # gemeinsamer Phasenfehler
+    lb_phi = 0.003 * rng.normal(size=n) + 0.02 * np.sin(2 * np.pi * t / 300)  # common phase error
     L = 3000 * np.exp(1j * (1.1 + lb_phi)) + 5 * (rng.normal(size=n) + 1j * rng.normal(size=n))
     Z *= np.exp(1j * lb_phi)[:, None]
     R *= np.exp(1j * lb_phi)[:, None]
@@ -250,14 +250,14 @@ SCENARIOS = {
     "anhalt": ("Atem anhalten 40–60 s", dict(hold=(40, 60), rr_fn=lambda t: 16.0, hr_fn=lambda t: 76.0)),
     "leer":   ("ruhendes Echo, keine Atmung/Puls", dict(breath_pp_mm=0.0, heart_pp_um=0.0)),
     "niemand": ("keine Person, nur Möbel und Wand", dict(person=False)),
-    # Puls genau auf einer Atem-Oberwelle (120 = 6 × 20, die 3. Oberwelle 60 ist im Modell stärker als der Puls):
-    # spektral nicht trennbar; der Wert darf falsch sein, die Konfidenz muss es zeigen (VITAL_AUDIT.md, Prüfen Nr. 2)
+    # Pulse exactly on a breathing harmonic (120 = 6 × 20, the 3rd harmonic 60 is stronger than the pulse in the model):
+    # not separable spectrally; the value may be wrong, the confidence must show it (VITAL_AUDIT.md, check no. 2)
     "tachy6": ("Puls 120 = 6 × Atmung 20", dict(rr_fn=lambda t: 20.0, hr_fn=lambda t: 120.0)),
-    # Metronom 6 /min (R3): unter dem Spektralband der Atmung (ab 7 /min), nur Atemzug für Atemzug (V3.4) misst sie
+    # Metronome 6 /min (R3): below the spectral band of breathing (from 7 /min), only breath by breath (V3.4) measures it
     "takt6":  ("Metronom 6 /min (R3), Puls 64", dict(rr_fn=lambda t: 6.0, hr_fn=lambda t: 64.0)),
-    # Person steht auf und geht (Abschluss-Review C1): danach weder gültiger Puls noch „Apnoe" (Prüfen Nr. 1 und 4)
+    # Person stands up and leaves (final review C1): afterwards neither valid pulse nor "Apnoe" (apnea) (check no. 1 and 4)
     "weg":    ("Person geht bei 60 s", dict(leave=60.0)),
-    # V6, Puls nach Bewegung wiederfinden (Plan 2026-11-02): neue Szenarien hinten, damit die Seeds der übrigen bleiben
+    # V6, pulse reacquisition after motion (plan 2026-11-02): new scenarios at the end so the seeds of the others stay
     "kurz":   ("Bewegung 3 s (±2 mm) bei 60–63 s", dict(motion=(60, 63, 4.0))),
     "zappel": ("3 × Bewegung 2 s bei 40/60/80 s", dict(motion=[(40, 42, 4.0), (60, 62, 4.0), (80, 82, 4.0)])),
     "lang":   ("Bewegung 20 s (±3 mm) bei 50–70 s", dict(motion=(50, 70, 6.0), T=150.0)),
@@ -268,8 +268,8 @@ SCENARIOS = {
     "tippen": ("Stöße 0,3 mm (Tippen) 60–120 s", dict(jolts=(60, 120, 0.3), T=150.0)),
 }
 
-# Grenzwerte für --check: (Kennzahl, Vergleich, Grenze). Stand V0.5 = Werte des Headers vom 2026-11-01 mit kleinem
-# Spielraum (Anteil −3 Prozentpunkte, MAE +0,5 /min, Reaktion +1 s). Jede DSP-Aufgabe verschärft, was sie verbessert.
+# Limits for --check: (metric, comparison, limit). As of V0.5 = values of the header from 2026-11-01 with a small
+# margin (share −3 percentage points, MAE +0.5 /min, response +1 s). Every DSP task tightens what it improves.
 LIMITS = {
     "base":    [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("br_mae", "<=", 0.5), ("apnoe_fehl", "<=", 0),
                 ("rmssd_ratio", ">=", 0.7), ("rmssd_ratio", "<=", 1.3)],                                       # V1.6
@@ -288,13 +288,13 @@ LIMITS = {
     "leer":    [("n_valid", "<=", 0)],                                                                    # V1.3
     "niemand": [("n_valid", "<=", 0)],                                                                    # V1.3
     "tachy6":  [("konf_falsch", "<=", 60.0)],                                                             # V1.3
-    # Atmung 6 /min liegt unter dem Spektralband (Atem-MAE ≈ 8 /min, keine Grenze); Puls und Atemzüge schon (V3.4)
+    # Breathing 6 /min lies below the spectral band (breathing MAE ≈ 8 /min, no limit); pulse and breaths do have limits (V3.4)
     "takt6":   [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8)],                                           # V3.4
-    # Person geht (Abschluss-Review C1): Puls bis dahin wie base, danach kein gültiger Wert und keine Apnoe
+    # Person leaves (final review C1): pulse until then like base, afterwards no valid value and no apnea
     "weg":     [("hr_p5", ">=", 97.0), ("hr_mae", "<=", 0.8), ("weg_gueltig_n", "<=", 0), ("weg_apnoe_n", "<=", 0)],
-    # V6, Basislinie ohne Schalter (heutiger Header, gemessen 2026-11-02): falsche Reports (> 10 /min) in den 30 s nach
-    # der Bewegung höchstens wie gemessen. Gemessene Wiederfindzeit (wiederfind_s) im Kommentar, keine Grenze: kurz 14 s,
-    # zappel 1 s, lang 11 s, lage 1 s, beweg_hr 12 s, beweg_weg 3 s, tippen 5 s. Die Ziele stehen in LIMITS_REACQ.
+    # V6, baseline without compile switch (current header, measured 2026-11-02): wrong reports (> 10 /min) in the 30 s after
+    # the motion at most as measured. Measured reacquisition time (wiederfind_s) in the comment, no limit: kurz 14 s,
+    # zappel 1 s, lang 11 s, lage 1 s, beweg_hr 12 s, beweg_weg 3 s, tippen 5 s. The targets are in LIMITS_REACQ.
     "kurz":    [("falsch_nach_beweg_n", "<=", 2)],
     "zappel":  [("falsch_nach_beweg_n", "<=", 10)],
     "lang":    [("falsch_nach_beweg_n", "<=", 3)],
@@ -302,40 +302,40 @@ LIMITS = {
     "beweg_hr": [("falsch_nach_beweg_n", "<=", 0)],
     "beweg_weg": [("falsch_nach_beweg_n", "<=", 2)],
     "tippen":  [("falsch_nach_beweg_n", "<=", 4)],
-    # über alle Szenarien mit Person: Konfidenz der Reports mit > 10 /min Fehler bzw. ≤ 5 /min (V1.3)
+    # across all scenarios with a person: confidence of the reports with > 10 /min error or ≤ 5 /min respectively (V1.3)
     "alle":    [("konf_falsch", "<=", 40.0), ("konf_richtig", ">=", 70.0)],
 }
 
 PERSON_FREE = ("leer", "niemand")
-# V2.4: erster gültiger Wert nach höchstens 6 s (wachsendes Fenster). base, harm4, brady, tachy6: Im 6-s-Fenster liegt
-# die stärkste Spitze dort auf 2 × Puls oder am Bandrand, Autokorrelation/Einzelschläge bestätigen sie nicht, der
-# vorläufige Wert wird verworfen; Grenze dort wie vor V2.4 (8 s).
-# V6 (neue Szenarien, Stand 2026-11-02 gemessen): Die Streuzentren sind dieselben wie in base, nur andere Zufallszahlen;
-# im 6-s-Fenster liegt die stärkste Spitze mal auf der Oberwelle (dann kommt der erste Wert erst nach 7–8 s).
+# V2.4: first valid value after at most 6 s (growing window). base, harm4, brady, tachy6: in the 6 s window the
+# strongest peak lies there at 2 × pulse or at the band edge, autocorrelation/individual beats do not confirm it, the
+# provisional value is rejected; limit there as before V2.4 (8 s).
+# V6 (new scenarios, measured as of 2026-11-02): the scattering centers are the same as in base, only different random numbers;
+# in the 6 s window the strongest peak sometimes lies on the harmonic (then the first value comes only after 7–8 s).
 FIRST_VALUE_S = {"base": 8.0, "harm4": 8.0, "brady": 8.0, "tachy6": 8.0, "takt6": 10.0,
                  "zappel": 7.0, "lang": 7.0, "lage": 8.0, "beweg_hr": 8.0, "beweg_weg": 8.0, "tippen": 7.0}
-# Abschluss-Review I1: erster richtiger Wert (≤ 5 /min) und falsche Werte (> 10 /min) in den ersten 15 s, Stand der
-# Messung als Grenze (keine Ziele): brady meldet 8–13 s den doppelten Puls (98,6, Konfidenz 18–43 %), tief nach 6 s die
-# 3. Atem-Oberwelle (40,3 statt 71, Konfidenz 28 %); Autokorrelation und Einzelschläge sehen auf demselben Signal dasselbe
+# Final review I1: first correct value (≤ 5 /min) and wrong values (> 10 /min) in the first 15 s, state of the
+# measurement as limit (not targets): brady reports double the pulse for 8–13 s (98.6, confidence 18–43 %), tief after 6 s the
+# 3rd breathing harmonic (40.3 instead of 71, confidence 28 %); autocorrelation and individual beats see the same on the same signal
 FIRST_OK_S = {"base": 8.0, "harm4": 8.0, "brady": 14.0, "tief": 7.0, "tachy6": 8.0, "takt6": 10.0,
-              "zappel": 7.0, "lang": 7.0, "lage": 8.0, "beweg_hr": 8.0, "beweg_weg": 8.0, "tippen": 7.0}   # V6, wie oben
-# V6: zappel meldet in den ersten 15 s (vor der ersten Bewegung bei 40 s) dreimal einen falschen Puls, wie brady
+              "zappel": 7.0, "lang": 7.0, "lage": 8.0, "beweg_hr": 8.0, "beweg_weg": 8.0, "tippen": 7.0}   # V6, as above
+# V6: zappel reports a wrong pulse three times in the first 15 s (before the first motion at 40 s), like brady
 EARLY_WRONG_N = {"brady": 6, "tief": 1, "zappel": 3}
 for _scen in LIMITS:
     if _scen not in PERSON_FREE + ("alle",):
         LIMITS[_scen].append(("erst_s", "<=", FIRST_VALUE_S.get(_scen, 6.0)))
         LIMITS[_scen].append(("erst_ok_s", "<=", FIRST_OK_S.get(_scen, 6.0)))
         LIMITS[_scen].append(("frueh_falsch_n", "<=", EARLY_WRONG_N.get(_scen, 0)))
-# V3.5: Zustand BEWEGUNG im Bewegungsabschnitt (beweg), sonst nirgends
+# V3.5: state BEWEGUNG (motion) in the motion section (beweg), nowhere else
 LIMITS["beweg"].append(("zustand_beweg_n", ">=", 5.0))
 for _scen in LIMITS:
     if _scen != "alle":
         LIMITS[_scen].append(("zustand_beweg_fehl", "<=", 0))
-# V3.4 Atemzug für Atemzug: R3-Kriterium ±1 /min als MAE, Anteil ±1 /min wie gemessen (anhalt: die zwei Atemzüge nach
-# dem Anhalten; flach mit 48 Zoom-Punkten 93 %), erster Wert nach höchstens 2,5 Atemzügen (flach: Telemetrie-Strahl
-# schwingt bei 0,6 mm Atemhub erst nach ≈ 9 s ein, 4,1 Atemzüge); ohne Person kein @BREATH
+# V3.4 breath by breath: R3 criterion ±1 /min as MAE, share ±1 /min as measured (anhalt: the two breaths after
+# the hold; flach with 48 zoom points 93 %), first value after at most 2.5 breaths (flach: telemetry beam
+# settles at 0.6 mm breathing stroke only after ≈ 9 s, 4.1 breaths); without a person no @BREATH
 BREATH_FIRST_N = {"flach": 4.5}
-BREATH_P1 = {"anhalt": 90.0, "flach": 90.0, "zappel": 90.0}   # V6 zappel: 90 % gemessen (3 von 30 Atemzügen > 1 /min daneben)
+BREATH_P1 = {"anhalt": 90.0, "flach": 90.0, "zappel": 90.0}   # V6 zappel: 90 % measured (3 of 30 breaths off by > 1 /min)
 for _scen in LIMITS:
     if _scen in PERSON_FREE:
         LIMITS[_scen].append(("atemzug_n", "<=", 0))
@@ -343,10 +343,10 @@ for _scen in LIMITS:
         LIMITS[_scen] += [("atemzug_mae", "<=", 1.0), ("atemzug_p1", ">=", BREATH_P1.get(_scen, 100.0)),
                           ("atemzug_erst_n", "<=", BREATH_FIRST_N.get(_scen, 2.5))]
 
-# V6: Ziele für „Puls nach Bewegung wiederfinden" (Plan 2026-11-02), nur angewendet, wenn der Schalter A121_DSP_REACQ
-# gesetzt ist (--define A121_DSP_REACQ). Ohne die DSP-Änderung verletzt der heutige Header sie, das ist erwartet.
-# Ruling R15: falsch_in_beweg_n (Fehlwerte > 10 /min mitten in der Bewegung) ≤ 0 überall; ohne Schalter nur berichtet.
-# beweg_hr: erster gültiger Wert nach der Bewegung höchstens 5 /min neben dem wahren Puls (85, nicht 70; Spec).
+# V6: targets for "pulse reacquisition after motion" (plan 2026-11-02), applied only if the compile switch A121_DSP_REACQ
+# is set (--define A121_DSP_REACQ). Without the DSP change the current header violates them, which is expected.
+# Ruling R15: falsch_in_beweg_n (wrong values > 10 /min in the middle of the motion) ≤ 0 everywhere; without the switch only reported.
+# beweg_hr: first valid value after the motion at most 5 /min off the true pulse (85, not 70; spec).
 LIMITS_REACQ = {
     "kurz":      [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
     "zappel":    [("wiederfind_s", "<=", 8.0), ("falsch_nach_beweg_n", "<=", 0), ("nie_gefunden_n", "<=", 0)],
@@ -362,15 +362,15 @@ for _scen in LIMITS_REACQ:
 
 
 def active_limits() -> dict:
-    """LIMITS, mit Schalter A121_DSP_REACQ (DEFINES) zusätzlich LIMITS_REACQ."""
+    """LIMITS, with compile switch A121_DSP_REACQ (DEFINES) additionally LIMITS_REACQ."""
     if not any(x.partition("=")[0] == "A121_DSP_REACQ" for x in DEFINES):
         return LIMITS
     return {k: LIMITS.get(k, []) + LIMITS_REACQ.get(k, []) for k in {**LIMITS, **LIMITS_REACQ}}
 
 
 def check_limits(results: dict, limits: dict) -> list[str]:
-    """Verletzte Grenzwerte als Meldungen; NaN (z. B. kein gültiger Report) gilt als verletzt. Szenarien ohne
-    Ergebnis werden übersprungen."""
+    """Violated limits as messages; NaN (e.g. no valid report) counts as violated. Scenarios without a
+    result are skipped."""
     msgs = []
     for scen, rules in limits.items():
         if scen not in results:
@@ -383,8 +383,8 @@ def check_limits(results: dict, limits: dict) -> list[str]:
                 msgs.append(f"{scen}: {metric} = {shown}, Grenze {op} {lim}")
     return msgs
 
-# Prüfstand-Programm: Frames einspielen, je 60 Frames ein Report, Ausgabe als @DSP-/@VITAL-Zeilen über die
-# Formatfunktionen des Headers (dsp_replay.h bringt sie auch für ältere Header mit, z. B. die Basislinie).
+# Test-bench program: feed in frames, one report per 60 frames, output as @DSP/@VITAL lines via the
+# format functions of the header (dsp_replay.h also brings them for older headers, e.g. the baseline).
 HARNESS = r"""
 #include <Arduino.h>
 #include "dsp_replay.h"
@@ -456,7 +456,7 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> dict[str, pat
         d.mkdir(exist_ok=True)
         (d / "a121_esp_dsp.h").write_text(text)
         exe = tmp / f"harness_{name}"
-        # Shim zuerst (chrono-micros), dann Header-Ordner, Firmware-Ordner als Rückfall, dsp_replay für die Formate
+        # Shim first (chrono micros), then header folder, firmware folder as fallback, dsp_replay for the formats
         subprocess.run(["g++", "-O2", "-std=c++17", f"-DA121_ZOOM_POINTS={ZOOM_N}", f"-DA121_HR_WIN={HR_WIN}",
                         *(f"-D{x}" for x in DEFINES),
                         f"-I{tmp / 'inc'}", f"-I{d}",
@@ -468,16 +468,16 @@ def build(tmp: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> dict[str, pat
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Modus record: synthetische Aufnahme im App-Format (stream.log, rxtime.csv, ref_hr.csv, events.csv, meta.json)
+# Mode record: synthetic recording in the app format (stream.log, rxtime.csv, ref_hr.csv, events.csv, meta.json)
 # ---------------------------------------------------------------------------------------------------------
 
 REPLAY_DIR = REPO_ROOT / "host" / "dsp_replay"
 
 
 def write_skeleton(iq_path: pathlib.Path, zoom_start_pt: int, out: pathlib.Path, vital_placeholders: bool = True) -> None:
-    """Log wie `iq3 … raw` vom ESP32, aber nur mit Platzhaltern für alles, was die DSP rechnet: @IQ3 (Zähler, tick,
-    Temperatur), @RAW, je 12 Frames @ROOMPROF und je 60 Frames @DSP/@ROOM/@VITAL. host/dsp_replay füllt sie mit dem
-    Header aus (ungültige Reports bekommen keine @VITAL-Zeile)."""
+    """Log like `iq3 … raw` from the ESP32, but with placeholders only for everything the DSP computes: @IQ3 (counter, tick,
+    temperature), @RAW, every 12 frames @ROOMPROF and every 60 frames @DSP/@ROOM/@VITAL. host/dsp_replay fills them in with the
+    header (invalid reports get no @VITAL line)."""
     import base64
 
     raw = np.fromfile(iq_path, "<i2").reshape(-1, 1 + ZOOM_N + ROOM_N, 2)
@@ -499,8 +499,8 @@ def write_skeleton(iq_path: pathlib.Path, zoom_start_pt: int, out: pathlib.Path,
 
 def replay_skeleton(skeleton: pathlib.Path, out_log: pathlib.Path, header: pathlib.Path = DSP_HEADER,
                     defines: tuple[str, ...] | None = None) -> str:
-    """Platzhalter-Log mit host/dsp_replay und dem Header durchrechnen; out_log = Zeilen wie live. Rückgabe: Bericht
-    der Nachrechnung. defines: z. B. ("-DA121_ZOOM_POINTS=48",); ohne Angabe die Zoom-Breite von ZOOM_N."""
+    """Run the placeholder log through host/dsp_replay and the header; out_log = lines as live. Returns: report
+    of the replay. defines: e.g. ("-DA121_ZOOM_POINTS=48",); without it the zoom width of ZOOM_N."""
     if defines is None:
         defines = (f"-DA121_ZOOM_POINTS={ZOOM_N}",)
     with tempfile.TemporaryDirectory() as d:
@@ -513,8 +513,8 @@ def replay_skeleton(skeleton: pathlib.Path, out_log: pathlib.Path, header: pathl
 
 
 def polar_notifications(rng, beats_s: np.ndarray, T: float) -> list[tuple[float, int, list[float]]]:
-    """Wie ein EKG-Gurt (BLE Heart Rate Service): etwa jede Sekunde eine Benachrichtigung mit den RR-Werten der
-    Schläge seit der letzten (1/1024 s aufgelöst), Latenz 20–80 ms nach dem letzten Schlag."""
+    """Like an ECG strap (BLE Heart Rate Service): about once per second a notification with the RR values of the
+    beats since the last one (resolved to 1/1024 s), latency 20–80 ms after the last beat."""
     out, last = [], 0
     rr_all = np.diff(beats_s)
     for k in range(1, int(T)):
@@ -529,8 +529,8 @@ def polar_notifications(rng, beats_s: np.ndarray, T: float) -> list[tuple[float,
 
 
 def record_scenario(name: str, folder: pathlib.Path, header: pathlib.Path = DSP_HEADER) -> pathlib.Path:
-    """Synthetische Aufnahme eines Szenarios im App-Format, NUR SIMULATION. Gurt-Referenz aus den wahren Schlägen,
-    Einatem-Marker „ein" je Atemzug (wie Metronom-Atmung), Anhalte-Marker beim Szenario anhalt."""
+    """Synthetic recording of a scenario in the app format, SIMULATION ONLY. Strap reference from the true beats,
+    inhale marker "ein" per breath (like metronome breathing), hold markers in the scenario anhalt."""
     import json
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -546,12 +546,12 @@ def record_scenario(name: str, folder: pathlib.Path, header: pathlib.Path = DSP_
         replay_skeleton(skel, computed, header)
         raw = {int(ln.split(",", 2)[1]): ln for ln in skel.read_text().splitlines() if ln.startswith("@RAW,")}
         lines = []
-        for ln in computed.read_text().splitlines():  # @RAW wie live direkt hinter das @IQ3 desselben Frames
+        for ln in computed.read_text().splitlines():  # @RAW as live directly after the @IQ3 of the same frame
             lines.append(ln)
             if ln.startswith("@IQ3,"):
                 lines.append(raw[int(ln.split(",")[7])])
     (folder / "stream.log").write_text("\n".join(lines) + "\n")
-    with open(folder / "rxtime.csv", "w") as f:  # Empfang 3 ms nach der ESP32-Zeit der Zeile
+    with open(folder / "rxtime.csv", "w") as f:  # receipt 3 ms after the ESP32 time of the line
         f.write("line,rx_ms\n")
         t_ms = 0.0
         for i, ln in enumerate(lines):
@@ -583,7 +583,7 @@ def record_scenario(name: str, folder: pathlib.Path, header: pathlib.Path = DSP_
 
 
 def truth_at(tr, t_end, win=15.0):
-    """Wahre Werte im 15-s-Fenster vor dem Report (wie das Pulsfenster der DSP)."""
+    """True values in the 15 s window before the report (like the pulse window of the DSP)."""
     b = tr["beats"]
     bb = b[(b > t_end - win) & (b <= t_end)]
     ibi = np.diff(bb) * 1000.0
@@ -594,20 +594,20 @@ def truth_at(tr, t_end, win=15.0):
 
 
 def early_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray) -> dict:
-    """Erster richtiger Report (Fehler ≤ 5 /min) und falsche Reports (> 10 /min) in den ersten 15 s (Abschluss-Review
-    I1: erst_s zählt den ersten gültigen Report, auch einen falschen)."""
+    """First correct report (error ≤ 5 /min) and wrong reports (> 10 /min) in the first 15 s (final review
+    I1: erst_s counts the first valid report, including a wrong one)."""
     ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
     bad = valid & (np.nan_to_num(err, nan=0.0) > 10.0) & (t_s <= 15.0)
     return {"erst_ok_s": float(t_s[ok][0]) if ok.any() else np.nan, "frueh_falsch_n": int(bad.sum())}
 
 
 def reacq_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, episodes: list[tuple[float, float]]) -> dict:
-    """Wiederfinden nach Bewegung (V6). wiederfind_s: Median über die Episoden der Zeit vom Episodenende bis zum ersten
-    gültigen Report mit Fehler ≤ 5 /min; nur Episoden, die wiedergefunden wurden, zählen, NaN wenn keine. nie_gefunden_n:
-    Zahl der Episoden ohne einen solchen Report bis Szenarioende (der Median allein würde sie verdecken).
-    falsch_nach_beweg_n: gültige Reports mit Fehler > 10 /min in (Ende, Ende + 30 s]; falsch_in_beweg_n: dasselbe in
-    (Beginn, Ende] (Ruling R15: Fehlwerte mitten in der Bewegung, z. B. ein Endstück, das die Bewegungskarte nicht als
-    bewegt sieht); überlappende Zeitfenster mehrerer Episoden werden nicht doppelt gezählt."""
+    """Reacquisition after motion (V6). wiederfind_s: median over the episodes of the time from the end of the episode to the first
+    valid report with error ≤ 5 /min; only episodes that were reacquired count, NaN if none. nie_gefunden_n:
+    number of episodes without such a report until the end of the scenario (the median alone would hide them).
+    falsch_nach_beweg_n: valid reports with error > 10 /min in (end, end + 30 s]; falsch_in_beweg_n: the same in
+    (start, end] (ruling R15: wrong values in the middle of the motion, e.g. a tail end that the motion map does not see as
+    moving); overlapping time windows of several episodes are not counted twice."""
     e = np.nan_to_num(err, nan=0.0)
     ok = valid & (np.nan_to_num(err, nan=np.inf) <= 5.0)
     bad = valid & (e > 10.0)
@@ -626,9 +626,9 @@ def reacq_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, episodes:
 
 
 def first_after_error(t_s: np.ndarray, valid: np.ndarray, hr: np.ndarray, t_end: float, hr_fn) -> float:
-    """|erster gültiger Wert nach t_end − wahrer Puls hr_fn(t) zu seiner Zeit| (V6, beweg_hr: Spec „erster gültiger
-    Wert nach der Bewegung innerhalb ±5 /min von 85“; Bezug ist der Momentanpuls des Modells, nicht das 15-s-Mittel,
-    in dem die Rampe 70 → 85 noch steckt). NaN, wenn danach kein gültiger Report kommt."""
+    """|first valid value after t_end − true pulse hr_fn(t) at its time| (V6, beweg_hr: spec "first valid
+    value after the motion within ±5 /min of 85"; the reference is the instantaneous pulse of the model, not the 15 s mean
+    that still contains the ramp 70 → 85). NaN if no valid report follows."""
     after = valid & (t_s > t_end)
     if not after.any():
         return np.nan
@@ -637,7 +637,7 @@ def first_after_error(t_s: np.ndarray, valid: np.ndarray, hr: np.ndarray, t_end:
 
 
 def section_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, a: float, b: float) -> dict:
-    """Anteil gültiger Reports und Puls-MAE der gültigen Reports im Abschnitt a < t ≤ b (V6, z. B. Tippen)."""
+    """Share of valid reports and pulse MAE of the valid reports in the section a < t ≤ b (V6, e.g. tapping)."""
     sel = (t_s > a) & (t_s <= b)
     v = valid & sel
     return {"abschnitt_gueltig_pct": float(100 * v.sum() / sel.sum()) if sel.any() else np.nan,
@@ -645,24 +645,24 @@ def section_metrics(t_s: np.ndarray, valid: np.ndarray, err: np.ndarray, a: floa
 
 
 def conf_stats(conf: np.ndarray, err: np.ndarray) -> dict:
-    """Konfidenz-Median der falschen (> 10 /min) und der richtigen (≤ 5 /min) Reports. Keine falschen Reports →
-    konf_falsch = 0 (nichts war falsch hoch bewertet)."""
+    """Confidence median of the wrong (> 10 /min) and the correct (≤ 5 /min) reports. No wrong reports →
+    konf_falsch = 0 (nothing was rated falsely high)."""
     bad, good = err > 10, err <= 5
     return {"konf_falsch": float(np.median(conf[bad])) if bad.any() else 0.0,
             "konf_richtig": float(np.median(conf[good])) if good.any() else np.nan, "n_falsch": int(bad.sum())}
 
 
 def pooled(results: dict) -> dict:
-    """Konfidenz über alle Szenarien mit Person (ohne leer/niemand und ohne exakte Oberwellen-Fälle wie tachy6, deren
-    Werte falsch sein dürfen)."""
+    """Confidence across all scenarios with a person (without leer/niemand and without exact harmonic cases like tachy6, whose
+    values may be wrong)."""
     err = np.concatenate([r["_err"] for k, r in results.items() if k not in PERSON_FREE and k != "tachy6"] or [[]])
     conf = np.concatenate([r["_conf"] for k, r in results.items() if k not in PERSON_FREE and k != "tachy6"] or [[]])
     return conf_stats(conf, err)
 
 
 def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -> dict[str, np.ndarray]:
-    """Reports des Prüfstand-Programms je @DSP-Zeile: alle @DSP-Felder (fehlende = NaN), dazu t_s, valid und die
-    @VITAL-Felder des Reports (ungültige Reports: NaN)."""
+    """Reports of the test-bench program per @DSP line: all @DSP fields (missing = NaN), plus t_s, valid and the
+    @VITAL fields of the report (invalid reports: NaN)."""
     from vital_eval import parse_lines
     from a121_esp_ultimate import VITAL_FIELDS
 
@@ -675,11 +675,11 @@ def harness_reports(exe: pathlib.Path, base: pathlib.Path, zoom_start_pt: int) -
     pos = {t: i for i, t in enumerate(vd["t_ms"])}
     for k in VITAL_FIELDS[1:]:
         d[k] = np.array([vd[k][pos[t]] if t in pos else np.nan for t in dd["t_ms"]])
-    # Namen wie früher im Prüfstand
+    # Names as formerly in the test bench
     d["hr"], d["rmssd"], d["us"] = d["hr_fused"], d["rmssd_ms"], d["compute_us"]
     st = {int(p[1]): int(p[2]) for p in (ln.split(",") for ln in lines if ln.startswith("@STATE,")) if len(p) >= 3}
-    d["state"] = np.array([st.get(int(t), -1) for t in dd["t_ms"]], float)  # -1: Header ohne @STATE (vor V3.5)
-    # @BREATH (V3.4): t_ms, Frame, Abstand_ms, Tiefe_um, Rate je Atemzug
+    d["state"] = np.array([st.get(int(t), -1) for t in dd["t_ms"]], float)  # -1: header without @STATE (before V3.5)
+    # @BREATH (V3.4): t_ms, frame, interval_ms, depth_um, rate per breath
     d["breath"] = np.array([[float(x) for x in ln.split(",")[1:6]] for ln in lines if ln.startswith("@BREATH,")],
                            float).reshape(-1, 5)
     return d
@@ -694,9 +694,9 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     v = d["valid"] > 0
     tru = np.array([truth_at(tr, x) for x in d["t_s"]])
     e_hr = np.abs(d["hr"] - tru[:, 0])[v]
-    # Atem-MAE ohne Reports im Zustand „angehalten" (br_state 2, dort meldet die DSP bewusst 0 statt einer Rate)
+    # Breathing MAE without reports in state "angehalten" (held; br_state 2, there the DSP deliberately reports 0 instead of a rate)
     e_br = np.where(np.nan_to_num(d["br_state"], nan=-1) == 2, np.nan, np.abs(d["br"] - tru[:, 1]))[v]
-    if not v.any():  # kein gültiger Report (Szenarien ohne Person): Kennzahlen NaN ohne Warnungen
+    if not v.any():  # no valid report (scenarios without a person): metrics NaN without warnings
         e_hr = e_br = np.array([np.nan])
     res = {
         "gueltig": f"{int(v.sum())}/{len(v)}",
@@ -704,7 +704,7 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         "erst_s": float(d["t_s"][v][0]) if v.any() else np.nan,
         "hr_mae": float(np.nanmean(e_hr)), "hr_p5": float(100 * np.nanmean(e_hr <= 5)),
         "br_mae": float(np.nanmean(e_br)),
-        # RMSSD nur aus Reports mit Wert (V1.6: 0 = nicht berechnet, < 90 % gültige Schläge)
+        # RMSSD only from reports with a value (V1.6: 0 = not computed, < 90 % valid beats)
         "rmssd": float(np.nanmedian(d["rmssd"][v][d["rmssd"][v] > 0])) if (d["rmssd"][v] > 0).any() else np.nan,
         "rmssd_wahr": float(np.nanmedian(tru[v, 2])),
         "rmssd_anteil": float(100 * np.mean(d["rmssd"][v] > 0)) if v.any() else np.nan,
@@ -712,29 +712,29 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
         **{k: x for k, x in conf_stats(d["conf"][v], e_hr).items() if k != "konf_richtig"},
         "_err": e_hr, "_conf": d["conf"][v],
         "us": float(np.median(d["us"])),
-        "spruenge": count_jumps(d["hr"], v),   # V3.2: Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports
+        "spruenge": count_jumps(d["hr"], v),   # V3.2: jumps > 15 /min between consecutive valid reports
     }
     res["rmssd_ratio"] = res["rmssd"] / res["rmssd_wahr"] if res["rmssd_wahr"] > 0 else np.nan
     res.update(early_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0])))
-    # Zustand BEWEGUNG (V3.5): Reports im Bewegungsabschnitt (bis 15 s danach, so lange liegt er im Fenster) und außerhalb
+    # State BEWEGUNG (V3.5): reports in the motion section (up to 15 s afterwards, as long as it lies in the window) and outside
     kw = SCENARIOS[name][1]
-    eps = episodes_of(kw)   # Bewegung, Lageänderung und Stöße (V6)
+    eps = episodes_of(kw)   # motion, change of posture and jolts (V6)
     in_mot = np.zeros(len(d["t_s"]), bool)
     for a, b in eps:
         in_mot |= (d["t_s"] > a) & (d["t_s"] <= b + 15.0)
     res["zustand_beweg_n"] = int(np.sum((d["state"] == 4) & in_mot))
     res["zustand_beweg_fehl"] = int(np.sum((d["state"] == 4) & ~in_mot))
     res["episoden"] = eps
-    if eps:  # V6: Wiederfinden nach Bewegung; Abschnitt der Stöße (tippen)
+    if eps:  # V6: reacquisition after motion; section of the jolts (tippen)
         res.update(reacq_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), eps))
         hr_fn = kw.get("hr_fn", inspect.signature(make_frames).parameters["hr_fn"].default)
         res["erst_nach_beweg_fehler"] = first_after_error(d["t_s"], v, d["hr"], max(b for _a, b in eps), hr_fn)
     if kw.get("jolts"):
         res.update(section_metrics(d["t_s"], v, np.abs(d["hr"] - tru[:, 0]), kw["jolts"][0], kw["jolts"][1]))
-    if name == "step":  # Reaktionszeit ab Rampenende (70 s) bis |Puls − 90| ≤ 5
+    if name == "step":  # response time from the end of the ramp (70 s) until |pulse − 90| ≤ 5
         ok = (d["t_s"] >= 70) & v & (np.abs(d["hr"] - 90) <= 5)
         res["reaktion_s"] = float(d["t_s"][ok][0] - 70.0) if ok.any() else np.nan
-    # Atemzustand (V1.4): Verzug bis Zustand 2 ab Beginn des Anhaltens, Fehlalarme außerhalb (vital_eval.apnea_eval)
+    # Breathing state (V1.4): delay until state 2 from the start of the hold, false alarms outside (vital_eval.apnea_eval)
     from vital_eval import apnea_eval
     hold = SCENARIOS[name][1].get("hold")
     holds = [(hold[0] * 1000.0, hold[1] * 1000.0)] if hold else []
@@ -742,7 +742,7 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     res["apnoe_fehl"] = ap["false_alarms"]
     if holds:
         res["apnoe_verzug_s"] = ap["delays_s"][0] if ap["delays_s"] else np.nan
-    # Atemzug für Atemzug (V3.4): Rate je @BREATH gegen die wahre Atemfrequenz; erster Wert in Atemzügen ab Start
+    # Breath by breath (V3.4): rate per @BREATH against the true breathing rate; first value in breaths from the start
     b = d["breath"]
     res["atemzug_n"] = int(len(b))
     if len(b):
@@ -753,11 +753,11 @@ def evaluate(exe: pathlib.Path, base: pathlib.Path, name: str) -> dict:
     else:
         res.update(atemzug_mae=np.nan, atemzug_p1=np.nan, atemzug_erst_s=np.nan, atemzug_erst_n=np.nan)
     leave = SCENARIOS[name][1].get("leave")
-    if leave is not None:  # gültig: ab 16 s nach dem Gehen (nur noch leerer Platz im Fenster); Apnoe: ab 2 s (niemand da)
+    if leave is not None:  # valid: from 16 s after leaving (only empty space in the window); apnea: from 2 s (nobody there)
         res["weg_gueltig_n"] = int(np.sum(v & (d["t_s"] >= leave + 16.0)))
         apnea = (d["state"] == 5) | (np.nan_to_num(d["br_state"], nan=-1) == 2)
         res["weg_apnoe_n"] = int(np.sum(apnea & (d["t_s"] >= leave + 2.0)))
-    if name == "anhalt":  # gemeldete Atemfrequenz, während der Atem ganz angehalten ist (Fenster 45–60 s)
+    if name == "anhalt":  # reported breathing rate while the breath is fully held (window 45–60 s)
         m = (d["t_s"] >= 55) & (d["t_s"] <= 62) & v
         res["atem_beim_anhalten"] = np.round(d["br"][m], 1).tolist()
     return res
@@ -771,7 +771,7 @@ def run_bench(out_dir: pathlib.Path | None, names: list[str], header: pathlib.Pa
         data.mkdir(parents=True, exist_ok=True)
         exes = build(tmp, header)
         results = {}
-        for nm in names:  # fester Zufallswert je Szenario, unabhängig von --scen
+        for nm in names:  # fixed random seed per scenario, independent of --scen
             make_frames(data / nm, seed=list(SCENARIOS).index(nm) + 1, **SCENARIOS[nm][1])
         print("NUR SIMULATION. Puls-MAE und Anteil ≤ 5 /min gegen die wahre mittlere Herzfrequenz im 15-s-Fenster;")
         print("Konfidenz = Median aller gültigen Reports, 'bei Fehler' = Median der Reports mit > 10 /min Abweichung.")
@@ -851,7 +851,7 @@ def main() -> int:
     a = ap.parse_args()
     ZOOM_N = a.zoom
     HR_WIN = a.hr_win
-    for x in a.define:  # Fensterlänge und Zoom-Breite auch über --define, dann passen Frames und Ausgabe dazu
+    for x in a.define:  # window length and zoom width also via --define, then frames and output match
         name, _, val = x.partition("=")
         if name == "A121_HR_WIN" and val:
             HR_WIN = int(val)

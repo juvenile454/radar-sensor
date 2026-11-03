@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 """
-a121_esp_ultimate.py — Live-Aufnahme, PC-Prüfung und Raumbild für `iq3` auf dem ESP32-S3
-(3-Subsweep Sparse-IQ über den Exploration Server auf LPUART1, ESP32 GPIO15/16).
+a121_esp_ultimate.py — live recording, PC check and room image for `iq3` on the ESP32-S3
+(3-subsweep sparse IQ via the Exploration Server on LPUART1, ESP32 GPIO15/16).
 
-Modi:
-  1. `--mode iq3`: startet `iq3 <sek> <start_mm>` am ESP32, speichert alle Zeilen als `.log` und
-     erzeugt daraus `.npz` + `.png` (wie `--mode plot`). Port automatisch über /dev/serial/by-id.
+Modes:
+  1. `--mode iq3`: starts `iq3 <sek> <start_mm>` on the ESP32, saves all lines as `.log` and
+     produces `.npz` + `.png` from it (like `--mode plot`). Port automatically via /dev/serial/by-id.
        sg dialout -c ".venv/bin/python host/a121_esp_ultimate.py --mode iq3 --duration 60"
 
-  2. `--mode verify-cpp`: übersetzt `firmware/esp32s3/src/a121_esp_dsp.h` für den PC und spielt eine
-     `iq3raw_*.npz`-Aufnahme (105 Punkte je Frame, wie der ESP32 sie bekommt) Frame für Frame durch.
-     Ausgabe sind dieselben Zeilen wie auf dem ESP32 (`@ROOMPROF`, `@ROOM`, `@VITAL`). Ein Rezoom
-     wird nur als `@REZOOM_HINT` gemeldet, nicht ausgeführt (die Aufnahme hat ein festes Zoom-Fenster).
-     `--zoom-start-mm` setzt das Fenster absichtlich woandershin, um die Zielsuche zu prüfen.
+  2. `--mode verify-cpp`: compiles `firmware/esp32s3/src/a121_esp_dsp.h` for the PC and plays an
+     `iq3raw_*.npz` recording (105 points per frame, as the ESP32 receives them) through frame by frame.
+     Output is the same lines as on the ESP32 (`@ROOMPROF`, `@ROOM`, `@VITAL`). A rezoom
+     is only reported as `@REZOOM_HINT`, not executed (the recording has a fixed zoom window).
+     `--zoom-start-mm` deliberately places the window elsewhere to check the target search.
        .venv/bin/python host/a121_esp_ultimate.py --mode verify-cpp --out <ausgabe_ohne_endung>
 
-  3. `--mode plot --log <datei.log>`: wertet ein Log aus (Live oder verify-cpp) → `.npz` + `.png`:
-     Entfernungs-Zeit-Bild der Bewegung (0,30–2,67 m) mit Raum-Zielen und Zoom-Fenster,
-     festes Echo-Profil des Raums und Atem-/Puls-Verlauf.
+  3. `--mode plot --log <datei.log>`: evaluates a log (live or verify-cpp) → `.npz` + `.png`:
+     distance-time image of the motion (0.30–2.67 m) with room targets and zoom window,
+     fixed echo profile of the room and breathing/pulse trace.
 
-  4. `--mode replay-cpp --log <stream.log> [--out <neu>] [--header-dir <ordner>]`: rechnet eine `iq3 … raw`-Aufnahme (Live-Log mit
-     `@RAW`) mit `host/dsp_replay/` im Takt des ESP32 neu (Reports, Rezooms, Neuverbindungen wie im Log) und
-     vergleicht jede Zeile mit der ESP32-Ausgabe. Dieselbe Quelle rechnet in der Android-App (NDK, „DSP neu“).
+  4. `--mode replay-cpp --log <stream.log> [--out <neu>] [--header-dir <ordner>]`: recomputes an `iq3 … raw` recording (live log with
+     `@RAW`) with `host/dsp_replay/` at the ESP32's pace (reports, rezooms, reconnects as in the log) and
+     compares every line with the ESP32 output. The same source computes in the Android app (NDK, "DSP neu").
 
-Zeitachse: `tick` (Sensor-Zeitstempel in ms) aus `@ROOMPROF`/`@ROOM`; er läuft auch über Rechenpausen
-lückenlos. `@VITAL` bekommt die Zeit der `@ROOM`-Zeile desselben Reports.
-Puls-Werte sind Rhythmus-Kandidaten; ohne Referenzmessung keine Aussage über Genauigkeit.
+Time axis: `tick` (sensor timestamp in ms) from `@ROOMPROF`/`@ROOM`; it runs seamlessly even across compute pauses.
+`@VITAL` gets the time of the `@ROOM` line of the same report.
+Pulse values are rhythm candidates; no statement about accuracy without a reference measurement.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ DATA_DIR = pathlib.Path("~/Data/radar-sensor").expanduser()
 DEFAULT_NPZ = DATA_DIR / "iq3raw_normal_120s_2026-11-01.npz"
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DSP_HEADER = REPO_ROOT / "firmware" / "esp32s3" / "src" / "a121_esp_dsp.h"
-REPLAY_DIR = REPO_ROOT / "host" / "dsp_replay"  # gemeinsame Nachrechnung für PC und Android-App (NDK)
+REPLAY_DIR = REPO_ROOT / "host" / "dsp_replay"  # shared replay for PC and Android app (NDK)
 
 VITAL_FIELDS = ["t_ms", "br", "hr_fused", "hr_spec", "hr_acf", "hr_ibi", "ibi_ms", "rmssd_ms", "conf",
                 "resp_um", "heart_um", "snr_db", "lb_std_mrad", "target_mm", "n_room"]
@@ -62,7 +62,7 @@ def default_out(tag: str) -> pathlib.Path:
 
 
 # ---------------------------------------------------------------------------------------------------------
-# PC-Prüfung des DSP-Headers
+# PC check of the DSP header
 # ---------------------------------------------------------------------------------------------------------
 
 ARDUINO_SHIM = """#pragma once
@@ -76,7 +76,7 @@ static inline void *ps_malloc(size_t sz) { return malloc(sz); }
 static inline unsigned long micros() { return 0; }
 """
 
-# Gibt dieselben Zeilen aus wie cmdIq3() in main.cpp (ohne @IQ3 je Frame und @DSP).
+# Prints the same lines as cmdIq3() in main.cpp (without @IQ3 per frame and @DSP).
 CPP_HARNESS = r"""
 #include <Arduino.h>
 #include "a121_esp_dsp.h"
@@ -163,11 +163,11 @@ def run_verify_cpp_dsp(npz_path: pathlib.Path, zoom_start_mm: int | None, out: p
 
 
 def run_replay_cpp(log: pathlib.Path, out: pathlib.Path | None, header_dir: pathlib.Path | None = None) -> int:
-    """iq3-raw-Log mit dem DSP-Header neu rechnen und Zeile für Zeile mit der ESP32-Ausgabe vergleichen.
+    """Recompute an iq3-raw log with the DSP header and compare line by line with the ESP32 output.
 
-    Dieselbe Quelle (host/dsp_replay/dsp_replay.h) läuft in der Android-App; deren Ergebnis (dsp_phone.log) muss
-    mit dem hier geschriebenen Log übereinstimmen. Exit 0 = alle Zeilen gleich der ESP32-Ausgabe.
-    header_dir: Ordner mit einer Variante von a121_esp_dsp.h (Standard: Firmware), für Vergleiche mit vital_eval.py.
+    The same source (host/dsp_replay/dsp_replay.h) runs in the Android app; its result (dsp_phone.log) must
+    match the log written here. Exit 0 = all lines equal to the ESP32 output.
+    header_dir: folder with a variant of a121_esp_dsp.h (default: firmware), for comparisons with vital_eval.py.
     """
     if not log.is_file():
         print(f"FEHLER: Log nicht gefunden: {log}", file=sys.stderr)
@@ -187,7 +187,7 @@ def run_replay_cpp(log: pathlib.Path, out: pathlib.Path | None, header_dir: path
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Live-Aufnahme
+# Live recording
 # ---------------------------------------------------------------------------------------------------------
 
 def run_live_iq3(port: str, duration_s: int, start_mm: int, out: pathlib.Path) -> int:
@@ -217,22 +217,22 @@ def run_live_iq3(port: str, duration_s: int, start_mm: int, out: pathlib.Path) -
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Auswertung eines Logs
+# Evaluation of a log
 # ---------------------------------------------------------------------------------------------------------
 
 def parse_log(path: pathlib.Path) -> dict:
     prof_t, prof_amp, prof_mot = [], [], []
     start_mm = step_mm = None
     room_rows = []          # (t_s, dist_mm, amp, mot, moving)
-    room_noise = []         # (t_s, rausch_amp, rausch_bew)
+    room_noise = []         # (t_s, noise_amp, noise_mot)
     vital_rows = []
-    zoom_events = []        # (t_s, start_mm, end_mm, art)
+    zoom_events = []        # (t_s, start_mm, end_mm, kind)
     tick0 = None
     tick_last = None
     t_last = 0.0
     t_offset = 0.0
     lines = path.read_text(errors="replace").splitlines()
-    # Empfangszeit je Zeile (esp_record.py / Android-App), nur für Pausen zwischen zwei Streams
+    # Receive time per line (esp_record.py / Android app), only for pauses between two streams
     rx_ms = None
     rx_path = path.parent / "rxtime.csv"
     if path.name == "stream.log" and rx_path.exists():
@@ -242,7 +242,7 @@ def parse_log(path: pathlib.Path) -> dict:
     i_last = None
 
     def tick_time(t_ms: int, tick: int) -> float:
-        # Nach @RECONNECT (Server neu gestartet) beginnt tick neu: dann ab dort an der ESP32-Zeit t_ms anschließen
+        # After @RECONNECT (server restarted) tick starts over: then continue from there on the ESP32 time t_ms
         nonlocal tick0, tick_last, i_last
         if tick0 is None or (tick_last is not None and tick < tick_last):
             tick0 = (tick, t_ms)
@@ -254,8 +254,8 @@ def parse_log(path: pathlib.Path) -> dict:
         p = raw.strip().split(",")
         tag = p[0]
         if tag in ("@IQ3_START", "@DOPPLER_START") and i_last is not None:
-            # neuer Stream (z. B. ESP32 nach Abziehen neu gebootet): t_ms und tick beginnen bei 0 → hinten anhängen,
-            # Pause aus der Empfangszeit, sonst 1 s
+            # new stream (e.g. ESP32 rebooted after unplugging): t_ms and tick start at 0 → append at the end,
+            # pause from the receive time, otherwise 1 s
             gap = (rx_ms[i] - rx_ms[i_last]) / 1000.0 if rx_ms is not None else 1.0
             t_offset, tick0, tick_last = t_last + max(gap, 0.1), None, None
         try:
@@ -279,14 +279,14 @@ def parse_log(path: pathlib.Path) -> dict:
                 t_last = t
             elif tag == "@VITAL":
                 row = [float(x) for x in p[1:1 + len(VITAL_FIELDS)]]
-                row[0] = t_last if room_noise else row[0] / 1000.0  # Zeit der @ROOM-Zeile desselben Reports
+                row[0] = t_last if room_noise else row[0] / 1000.0  # time of the @ROOM line of the same report
                 vital_rows.append(row)
             elif tag in ("@IQ3_START", "@REZOOM"):
                 zoom_events.append((t_last, float(p[1]), float(p[2]), tag[1:]))
             elif tag == "@REZOOM_HINT":
                 zoom_events.append((t_last, float(p[2]), float(p[3]), "REZOOM_HINT"))
         except (ValueError, IndexError):
-            continue  # abgeschnittene Zeile (z. B. beim Abbruch)
+            continue  # truncated line (e.g. on abort)
 
     return {
         "prof_t": np.array(prof_t),
@@ -313,7 +313,7 @@ def analyze_log(log: pathlib.Path, out: pathlib.Path) -> int:
     t = d["prof_t"]
     n_pts = d["prof_amp"].shape[1]
     dist_m = (d["start_mm"] + d["step_mm"] * np.arange(n_pts)) / 1000.0
-    # Rauschpegel je Profil wie in der Firmware (nth_element bei n/4): unteres Viertel der Punkte
+    # Noise level per profile as in the firmware (nth_element at n/4): lower quarter of the points
     noise_amp = np.sort(d["prof_amp"], axis=1)[:, n_pts // 4, None] + 1.0
     noise_mot = np.sort(d["prof_mot"], axis=1)[:, n_pts // 4, None] + 1.0
     mot_db = 20.0 * np.log10(np.maximum(d["prof_mot"] / noise_mot, 1e-3))
@@ -334,7 +334,7 @@ def analyze_log(log: pathlib.Path, out: pathlib.Path) -> int:
 
     im = ax_w.pcolormesh(t, dist_m, mot_db.T, shading="nearest", cmap="magma", vmin=0, vmax=36)
     fig.colorbar(im, ax=ax_p, pad=0.02, label="Bewegung über Rauschen (dB)")
-    # Zoom-Fenster als Stufenlinien (Start und Ende)
+    # Zoom window as step lines (start and end)
     ev = [(a, b, c) for a, b, c, k in d["zoom_events"] if k in ("IQ3_START", "REZOOM")]
     if ev:
         te = [e[0] for e in ev] + [t[-1]]
@@ -342,7 +342,7 @@ def analyze_log(log: pathlib.Path, out: pathlib.Path) -> int:
             ax_w.step(te, [e[col] / 1000 for e in ev] + [ev[-1][col] / 1000], where="post", color="cyan", lw=1,
                       label="Zoom-Fenster" if col == 1 else None)
     hints = [e for e in d["zoom_events"] if e[3] == "REZOOM_HINT"]
-    if hints:  # empfohlenes Fenster als senkrechter Balken (nur verify-cpp; live steht dort @REZOOM)
+    if hints:  # recommended window as a vertical bar (verify-cpp only; live there is @REZOOM)
         ax_w.vlines([h[0] for h in hints], [h[1] / 1000 for h in hints], [h[2] / 1000 for h in hints],
                     colors="deepskyblue", lw=3, zorder=5, label="Rezoom-Empfehlung")
     r = d["room"]
@@ -365,7 +365,7 @@ def analyze_log(log: pathlib.Path, out: pathlib.Path) -> int:
     v = d["vital"]
     if len(v):
         ax_v.plot(v[:, 0], v[:, 2], "r.-", lw=1, ms=3, label="Puls verfolgt (/min)")
-        ax_v.plot(v[:, 0], np.where(v[:, 1] > 0, v[:, 1], np.nan), "b.-", lw=1, ms=3, label="Atmung (/min)")  # 0 = keine Atemspitze
+        ax_v.plot(v[:, 0], np.where(v[:, 1] > 0, v[:, 1], np.nan), "b.-", lw=1, ms=3, label="Atmung (/min)")  # 0 = no breathing peak
         ax_v.legend(fontsize=8, loc="upper right")
     else:
         ax_v.text(0.5, 0.5, "keine @VITAL-Zeilen", transform=ax_v.transAxes, ha="center")

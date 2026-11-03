@@ -21,9 +21,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
- * Prüft Parser, LiveStore, Aufnahme und Wiedergabe gegen echte Aufnahmen vom ESP32 (host/esp_record.py).
- * Ablage außerhalb des Repos: RADAR_FIXTURES oder ~/Data/radar-sensor/app-fixtures. Fehlt sie, werden die
- * Tests übersprungen (nicht als bestanden gezählt).
+ * Checks parser, LiveStore, recording and replay against real recordings from the ESP32 (host/esp_record.py).
+ * Stored outside the repo: RADAR_FIXTURES or ~/Data/radar-sensor/app-fixtures. If it is missing, the
+ * tests are skipped (not counted as passed).
  */
 class FixtureTest {
     private val root = File(System.getenv("RADAR_FIXTURES") ?: (System.getProperty("user.home") + "/Data/radar-sensor/app-fixtures"))
@@ -69,11 +69,11 @@ class FixtureTest {
             assertEquals(105, r.points)
             val q = iq[r.frame] ?: continue
             assertEquals(q.tick, r.tick)
-            // wie esp_record.py --check: Loopback = Punkt 0, Zoom-Amplitude = Mitte der 24 Zoom-Punkte (1 + 12)
+            // like esp_record.py --check: loopback = point 0, zoom amplitude = middle of the 24 zoom points (1 + 12)
             maxDiff = maxOf(maxDiff, abs(r.amplitude(0) - q.loopbackAmp), abs(r.amplitude(13) - q.zoomAmp))
         }
         println("FixtureTest: ${raws.size} Rohframes, |IQ| vs. @IQ3 max. Abweichung $maxDiff")
-        assertTrue("Abweichung $maxDiff", maxDiff <= 0.051f) // @IQ3 mit einer Nachkommastelle
+        assertTrue("Abweichung $maxDiff", maxDiff <= 0.051f) // @IQ3 with one decimal place
     }
 
     @Test fun liveStoreZaehltWieDieDatei() {
@@ -86,7 +86,7 @@ class FixtureTest {
         assertEquals(counts["@IQ3"], snap.iqT.size)
         assertEquals(counts["@VITAL"], snap.vitalT.size)
         assertEquals(counts["@RECONNECT"], snap.reconnects)
-        // Zeitachse läuft trotz Server-Neustart (tick beginnt neu) nicht rückwärts
+        // Time axis does not run backwards despite the server restart (tick starts over)
         val t = snap.iqT
         for (i in 1 until t.size) assertTrue("Zeit rückwärts bei $i: ${t[i - 1]} → ${t[i]}", t[i] >= t[i - 1])
         assertTrue("Dauer ${t.last()} s", t.last() in 25f..35f)
@@ -97,7 +97,7 @@ class FixtureTest {
         val src = fixture("2026-11-01_doppler_8s")
         val tmp = Files.createTempDirectory("radar-rec").toFile()
         try {
-            // Wiedergabe (20-fach) → Zeilen → Recorder, wie in der App
+            // Replay (20x) → lines → Recorder, as in the app
             val rec = Recorder.start(tmp, "test doppler", "test", "JVM", "replay", "replay", null, System.nanoTime())
             val store = LiveStore()
             val done = CountDownLatch(1)
@@ -133,7 +133,7 @@ class FixtureTest {
             val meta = File(out, "meta.json").readText()
             assertTrue(meta.contains("\"source\": \"android\""))
             assertTrue(meta.contains("\"command\": \"doppler 8\""))
-            // Originaltakt / 20: Quelle dauert ≈ 8 s
+            // Original pace / 20: source lasts ≈ 8 s
             val lastRx = rx.last().substringAfter(',').toDouble()
             assertTrue("Takt $lastRx ms", lastRx in 250.0..1500.0)
             assertEquals(tagCounts(File(src, "stream.log"))["@DOPPLER"], store.snapshot().dopT.size)

@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PhoneDspTest {
-    /** Ersatz für die native Bibliothek (die echte prüft LiveDspNativeTest): merkt sich die Zeilen, antwortet fest. */
+    /** Replacement for the native library (the real one is checked by LiveDspNativeTest): remembers the lines, answers with fixed values. */
     private class Engine(
         override val available: Boolean = true,
     ) : DspEngine {
@@ -110,7 +110,7 @@ class PhoneDspTest {
         val e = Engine()
         val p = PhoneDsp(e) {}
         p.setEnabled(true)
-        assertNull(p.sampleCpu(1_000_000_000L)) // erster Wert: noch kein Abstand
+        assertNull(p.sampleCpu(1_000_000_000L)) // first value: no interval yet
         e.cpu = 50_000_000L
         assertEquals(5f, p.sampleCpu(2_000_000_000L)!!, 1e-4f)
         e.cpu = 60_000_000L

@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Zeilen wörtlich aus den Testaufnahmen 2026-11-01 (Firmware 2026-11-01-app1, Server a121-v1.13.0). */
+/** Lines verbatim from the test recordings 2026-11-01 (firmware 2026-11-01-app1, server a121-v1.13.0). */
 class LineParserTest {
     private inline fun <reified T : EspMsg> parse(line: String): T {
         val m = LineParser.parse(line)
@@ -26,7 +26,7 @@ class LineParserTest {
     }
 
     @Test fun iq3MitDelayed() {
-        // V1.5: frame_delayed hinten an @IQ3
+        // V1.5: frame_delayed appended to @IQ3
         assertEquals(true, parse<Iq3>("@IQ3,8,14,1419.0,0.00,206.6,0,0,572,1").delayed)
         assertNull(parse<Iq3>("@IQ3,8,14,1419.0,0.00,206.6,0,0,572").delayed)
     }
@@ -122,17 +122,17 @@ class LineParserTest {
         assertEquals(57, alt.hrBin)
         assertEquals(0f, alt.motionPct)
         assertEquals(null, alt.brState)
-        // V1.3/V1.4: point_agree_pct und br_state hinten angehängt
+        // V1.3/V1.4: point_agree_pct and br_state appended
         val neu = parse<Dsp>("@DSP,1009,1,5,72.0,300000,0,0,55,2")
         assertEquals(55f, neu.pointAgreePct)
         assertEquals(2, neu.brState)
         assertEquals(null, neu.nEff)
-        // V3.1: effektive Punktzahl als Feld 14, nur mit Schalter A121_DSP_COMBINE
+        // V3.1: effective point count as field 14, only with compile switch A121_DSP_COMBINE
         val komb = parse<Dsp>("@DSP,1009,1,5,72.0,300000,0,0,100,0,0,0,0,1234,1.4")
         assertEquals(1.4f, komb.nEff)
     }
 
-    /** V6: win_s und reacq als Felder 15 und 16 (A121_DSP_REACQ); Feld 14 (n_eff) bleibt ohne A121_DSP_COMBINE leer. */
+    /** V6: win_s and reacq as fields 15 and 16 (A121_DSP_REACQ); field 14 (n_eff) stays empty without A121_DSP_COMBINE. */
     @Test fun dspWithReacqFields() {
         val d = parse<Dsp>("@DSP,1000,1,5,88.0,300000,0,0,0,0,0,0,0,60,,7,2")
         assertEquals(7, d.winS)
@@ -146,7 +146,7 @@ class LineParserTest {
         assertEquals(null, d.reacq)
     }
 
-    /** V3.5/V5.1: Zustand der Messung je Report. */
+    /** V3.5/V5.1: state of the measurement per report. */
     @Test fun messZustand() {
         val m = parse<MeasState>("@STATE,12000,2,4000")
         assertEquals(12000L, m.tMs)
@@ -158,7 +158,7 @@ class LineParserTest {
         assertEquals("unbekannt (9)", MeasState.name(9))
     }
 
-    /** V3.4/V5.1: ein Atemzug. */
+    /** V3.4/V5.1: one breath. */
     @Test fun atemzug() {
         val b = parse<Breath>("@BREATH,15000,900,4100,2300,14.6")
         assertEquals(15000L, b.tMs)

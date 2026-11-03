@@ -6,15 +6,15 @@ import android.content.Intent
 import de.timo.radarsensor.core.RadarController
 
 /**
- * Nur Debug-Build. Steuerung per adb, auch bei ausgeschaltetem Bildschirm:
+ * Debug build only. Control via adb, also with the screen off:
  *
  *   adb shell am broadcast -a de.timo.radarsensor.DEBUG -n de.timo.radarsensor/.debug.DebugReceiver --es cmd status
  *   … --es cmd rec_start --es name usb_lang | rec_stop | send --es line "iq3 0 raw" | stop | usb | disconnect
- *   … --es cmd ref_scan | ref_connect --es addr <mac> | ref_disconnect | ref_status        (EKG-Gurt, V0.1)
- *   … --es cmd mark --es text anhalten_start | metro --ei rate 15 (0 = aus)                 (Marker, Metronom, V0.2)
- *   … --es cmd phone_dsp --ez on true | phone_dsp_status                         (Handy-DSP live aus @RAW, V5.2)
+ *   … --es cmd ref_scan | ref_connect --es addr <mac> | ref_disconnect | ref_status        (ECG chest strap, V0.1)
+ *   … --es cmd mark --es text anhalten_start | metro --ei rate 15 (0 = off)                 (markers, metronome, V0.2)
+ *   … --es cmd phone_dsp --ez on true | phone_dsp_status                         (phone DSP live from @RAW, V5.2)
  *
- * Antwort steht im Ergebnis von `am broadcast` (data="…").
+ * The response is in the result of `am broadcast` (data="…").
  */
 class DebugReceiver : BroadcastReceiver() {
     override fun onReceive(

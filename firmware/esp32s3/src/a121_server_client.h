@@ -1,30 +1,30 @@
 /**
  * @file a121_server_client.h
- * @brief Voller A121 Exploration Server UART-Client & High-Speed Bridge für den ESP32-S3.
+ * @brief Full A121 Exploration Server UART client & high-speed bridge for the ESP32-S3.
  *
- * UART und Pins übergibt main.cpp. Seit 2026-11-01 am Gerät geprüft: Serial2 über die I2C-Adern des Steckers,
- * ESP32 GPIO15 RX <- STM32 PB11 (LPUART1_TX, SDA-Ader) und GPIO16 TX -> PB10 (LPUART1_RX, SCL-Ader),
- * für eine aus dem Acconeer-SDK gebaute Server-Firmware (firmware/stm32l431/README.md).
- * Grund: PA10 (USART1_RX) wird zusätzlich vom CH342 (TXD1 über R9 = 22 Ω) getrieben.
+ * main.cpp passes the UART and pins. Verified on the device since 2026-11-01: Serial2 over the I2C wires of the connector,
+ * ESP32 GPIO15 RX <- STM32 PB11 (LPUART1_TX, SDA wire) and GPIO16 TX -> PB10 (LPUART1_RX, SCL wire),
+ * for a server firmware built from the Acconeer SDK (firmware/stm32l431/README.md).
+ * Reason: PA10 (USART1_RX) is additionally driven by the CH342 (TXD1 via R9 = 22 Ω).
  *
- * Stellt dem ESP32-S3 die Sparse-IQ-Funktionen des Exploration Servers bereit (Grenzen: ≈ 195 kB/s bei 2 Mbaud,
- * CSM lückenlos bis 21 kHz Sweep-Rate, s. docs/HARDWARE.md):
- *   - 1..4 unabhängige Subsweeps pro Frame (Start, Step, NumPoints, Profile 1..5, PRF 19.5..5.2 MHz,
+ * Provides the ESP32-S3 with the sparse IQ functions of the Exploration Server (limits: ≈ 195 kB/s at 2 Mbaud,
+ * CSM gapless up to 21 kHz sweep rate, see docs/HARDWARE.md):
+ *   - 1..4 independent subsweeps per frame (Start, Step, NumPoints, Profile 1..5, PRF 19.5..5.2 MHz,
  *     HWAAS 1..511, Receiver Gain 0..23, Enable TX, Phase Enhancement, IQ Imbalance Compensation,
  *     On-Chip Loopback)
- *   - Continuous Sweep Mode (CSM) & Double Buffering für kHz-Mikro-Doppler/Vibrationsanalyse
+ *   - Continuous Sweep Mode (CSM) & double buffering for kHz micro-Doppler/vibration analysis
  *   - Inter-Frame & Inter-Sweep Idle States (DEEP_SLEEP, SLEEP, READY)
- *   - On-Chip Temperatursensor, Sättigungs- und Kalibrierungs-Flags pro Frame
- *   - Baudraten-Aushandlung nach Break-Reset (115200 -> 2000000 Baud)
- *   - Hardware-Soft-Reset des STM32L431 per gezieltem UART-Break-Puls auf der TX-Leitung.
+ *   - On-chip temperature sensor, saturation and calibration flags per frame
+ *   - Baud rate negotiation after break reset (115200 -> 2000000 baud)
+ *   - Hardware soft reset of the STM32L431 via a targeted UART break pulse on the TX line.
  *
- * Protokoll (am Server a121-v1.12.0 über CH342 Kanal B geprüft, 2026-10-31):
- *   - Vor fast jeder Antwort sendet der Server eine Logzeile {"status":"log",...};
- *     readResponse()/readStreamFrame() überspringen sie.
- *   - Enum-Werte wie exptool: "profile":1..5, "prf":"15_6_MHz", Idle-States "ready"/"sleep"/"deep_sleep",
- *     freie Rate = 0.0 (nicht null).
- *   - Seit der Härtung (2026-11-01) setzt jeder UART-Fehler auf RX (Break, falsche Baudrate, Rauschen) den STM32
- *     zurück → danach 115200 Baud.
+ * Protocol (checked on server a121-v1.12.0 over CH342 channel B, 2026-10-31):
+ *   - Before almost every reply the server sends a log line {"status":"log",...};
+ *     readResponse()/readStreamFrame() skip it.
+ *   - Enum values like exptool: "profile":1..5, "prf":"15_6_MHz", idle states "ready"/"sleep"/"deep_sleep",
+ *     free rate = 0.0 (not null).
+ *   - Since the hardening (2026-11-01) every UART error on RX (break, wrong baud rate, noise) resets the STM32
+ *     → afterwards 115200 baud.
  */
 
 #ifndef A121_SERVER_CLIENT_H
@@ -40,8 +40,8 @@
 
 namespace a121_srv {
 
-/* iq3-Preset (V4, Messung V4.1/V4.2 in docs/EXPERIMENTS.md): Zoom- und Loopback-Einstellung als Übersetzungsschalter,
- * Standard wie bisher. Die DSP rechnet nur mit 60 Hz (Filter), deshalb ist die Frame-Rate kein Schalter. */
+/* iq3 preset (V4, measurement V4.1/V4.2 in docs/EXPERIMENTS.md): zoom and loopback settings as compile switches,
+ * default as before. The DSP only works at 60 Hz (filter), so the frame rate is not a switch. */
 #ifndef A121_IQ3_ZOOM_PROFILE
 #define A121_IQ3_ZOOM_PROFILE 1
 #endif
@@ -55,7 +55,7 @@ namespace a121_srv {
 #define A121_IQ3_LOOP_GAIN 16
 #endif
 #ifndef A121_IQ3_LOOP_PRF
-#define A121_IQ3_LOOP_PRF "19_5_MHz"  /* 19,5 MHz nur mit Profil 1; 15,6 MHz geht, weil der Zoom 15,6 MHz hat */
+#define A121_IQ3_LOOP_PRF "19_5_MHz"  /* 19.5 MHz only with profile 1; 15.6 MHz works because the zoom has 15.6 MHz */
 #endif
 static_assert(A121_IQ3_ZOOM_PROFILE >= 1 && A121_IQ3_ZOOM_PROFILE <= 5, "A121_IQ3_ZOOM_PROFILE: 1..5");
 static_assert(A121_IQ3_ZOOM_HWAAS >= 1 && A121_IQ3_ZOOM_HWAAS <= 511, "A121_IQ3_ZOOM_HWAAS: 1..511");
@@ -65,7 +65,7 @@ static_assert(A121_IQ3_LOOP_GAIN >= 0 && A121_IQ3_LOOP_GAIN <= 23, "A121_IQ3_LOO
 
 #define A121_IQ3_STR2(x) #x
 #define A121_IQ3_STR(x) A121_IQ3_STR2(x)
-/** Kennung des iq3-Presets für @HELLO, z. B. "p1h32/lp1g16/19_5_MHz" (Zoom-Profil/HWAAS, Loopback-Profil/Gain/PRF). */
+/** Identifier of the iq3 preset for @HELLO, e.g. "p1h32/lp1g16/19_5_MHz" (zoom profile/HWAAS, loopback profile/gain/PRF). */
 inline const char *iq3PresetTag() {
     return "p" A121_IQ3_STR(A121_IQ3_ZOOM_PROFILE) "h" A121_IQ3_STR(A121_IQ3_ZOOM_HWAAS) "/lp" A121_IQ3_STR(
         A121_IQ3_LOOP_PROFILE) "g" A121_IQ3_STR(A121_IQ3_LOOP_GAIN) "/" A121_IQ3_LOOP_PRF;
@@ -115,9 +115,9 @@ public:
         current_baud_ = baud;
         stage_pos_ = stage_len_ = 0;
         if (!rx_buf_allocated_) {
-            uart_.end();                     /* Puffergröße lässt sich nur bei gestoppter UART setzen */
+            uart_.end();                     /* buffer size can only be set while the UART is stopped */
             uart_.setRxBufferSize(32768);
-            uart_.setTxBufferSize(4096);     /* sonst blockiert write(), bis im 128-Byte-FIFO Platz ist */
+            uart_.setTxBufferSize(4096);     /* otherwise write() blocks until there is room in the 128-byte FIFO */
             rx_buf_allocated_ = true;
             uart_.begin(current_baud_, SERIAL_8N1, rx_pin_, tx_pin_);
         } else {
@@ -129,7 +129,7 @@ public:
 
     HardwareSerial &uart() { return uart_; }
 
-    /** UART stoppen und beide Pins hochohmig machen (z. B. bevor I2C dieselben Pins nutzt). */
+    /** Stop the UART and set both pins to high impedance (e.g. before I2C uses the same pins). */
     void release() {
         uart_.end();
         stage_pos_ = stage_len_ = 0;
@@ -139,27 +139,27 @@ public:
     }
 
     /**
-     * @brief Soft-Reset des STM32L431: 15 ms LOW auf der TX-Leitung erzeugt einen Framing-Error.
-     *        Die USART1-Server-Firmware startete daraufhin neu (danach 115200 Baud, bereit nach ~0,5 s);
-     *        ob eine SDK-Neubau-Firmware das ebenso tut, ist am Gerät zu prüfen.
+     * @brief Soft reset of the STM32L431: 15 ms LOW on the TX line produces a framing error.
+     *        The USART1 server firmware then restarted (afterwards 115200 baud, ready after ~0.5 s);
+     *        whether a firmware rebuilt from the SDK does the same must be checked on the device.
      */
     void resetStm32ViaBreak() {
         uart_.end();
         rx_buf_allocated_ = false;
         pinMode(tx_pin_, OUTPUT);
-        digitalWrite(tx_pin_, LOW);   /* UART Break = Dauer-LOW > 1 Zeichenlänge */
+        digitalWrite(tx_pin_, LOW);   /* UART break = constant LOW > 1 character length */
         delay(15);
-        digitalWrite(tx_pin_, HIGH);  /* Idle-HIGH */
+        digitalWrite(tx_pin_, HIGH);  /* idle HIGH */
         begin(115200);
         drainRx(5);
     }
 
     /**
-     * @brief Verbindet sich mit dem Server und schaltet ihn auf `target_baud`.
-     *        Immer erst Break-Reset, dann Handshake auf 115200 (bis ~2,5 s Bootzeit).
-     *        Kein Versuch auf einer geratenen Baudrate: Bytes mit falscher Baudrate erzeugen am STM32
-     *        Noise-/Overrun-Fehler; die HAL bricht dann den DMA-Empfang ab, und der SDK-Server startet nur
-     *        bei einem Framing-Error neu. Er bleibt taub, bis RESET gedrückt wird (2026-11-01 dreimal am Gerät).
+     * @brief Connects to the server and switches it to `target_baud`.
+     *        Always break reset first, then handshake at 115200 (up to ~2.5 s boot time).
+     *        No attempt at a guessed baud rate: bytes at the wrong baud rate produce noise/overrun errors
+     *        on the STM32; the HAL then aborts DMA reception, and the SDK server only restarts
+     *        on a framing error. It stays deaf until RESET is pressed (three times on the device on 2026-11-01).
      */
     bool connectAndNegotiateBaud(uint32_t target_baud = 921600, String *out_sys_info = nullptr) {
         String resp;
@@ -200,7 +200,7 @@ public:
     }
 
     /**
-     * @brief Konfiguriert eine beliebige 1..4 Subsweep Sparse-IQ Session auf dem A121.
+     * @brief Configures an arbitrary 1..4 subsweep sparse IQ session on the A121.
      */
     bool setupSession(const SessionSpec &spec, String *out_setup_ack = nullptr, String *out_logs = nullptr) {
         if (spec.num_subsweeps == 0 || spec.num_subsweeps > 4) return false;
@@ -211,7 +211,7 @@ public:
         json += "\"sweeps_per_frame\":";
         json += String(spec.sweeps_per_frame);
         json += ",\"sweep_rate\":";
-        json += String(spec.sweep_rate_hz > 0.0f ? spec.sweep_rate_hz : 0.0f, 1);   /* 0.0 = frei */
+        json += String(spec.sweep_rate_hz > 0.0f ? spec.sweep_rate_hz : 0.0f, 1);   /* 0.0 = free */
         json += ",\"frame_rate\":";
         json += String(spec.frame_rate_hz > 0.0f ? spec.frame_rate_hz : 0.0f, 1);
         json += ",\"continuous_sweep_mode\":";
@@ -265,11 +265,11 @@ public:
     }
 
     /**
-     * @brief Baut das 3-Subsweep Ultimate Vital + Raum-Tracking Preset:
-     *        - Subsweep 0: On-Chip Loopback (1 Punkt, Profil 1, HWAAS 8, Gain 16, 19,5 MHz, Loopback=true)
-     *        - Subsweep 1: 2.5-mm Vital-Zoom (24 Punkte = 60 mm, Step 1, Profil 1, HWAAS 32, 15,6 MHz, Phase Enhancement)
-     *        Zoom-Profil/HWAAS und Loopback-Profil/Gain/PRF über A121_IQ3_* (oben, Standard wie hier).
-     *        - Subsweep 2: Full-Room Scan (80 Punkte, 0.30..2.67 m, Step 12 = 30 mm, Profil 3, HWAAS 16)
+     * @brief Builds the 3-subsweep Ultimate Vital + room tracking preset:
+     *        - Subsweep 0: on-chip loopback (1 point, profile 1, HWAAS 8, gain 16, 19.5 MHz, loopback=true)
+     *        - Subsweep 1: 2.5 mm vital zoom (24 points = 60 mm, step 1, profile 1, HWAAS 32, 15.6 MHz, phase enhancement)
+     *        Zoom profile/HWAAS and loopback profile/gain/PRF via A121_IQ3_* (above, default as here).
+     *        - Subsweep 2: full-room scan (80 points, 0.30..2.67 m, step 12 = 30 mm, profile 3, HWAAS 16)
      */
     static SessionSpec make3SubsweepPreset(int32_t zoom_start_pt = 200, float frame_rate_hz = 60.0f) {
         SessionSpec spec = {};
@@ -282,17 +282,17 @@ public:
         spec.inter_sweep_idle_state = "ready";
         spec.num_subsweeps          = 3;
 
-        /* Subsweep 0: Interner On-Chip TX->RX Loopback */
+        /* Subsweep 0: internal on-chip TX->RX loopback */
         spec.subsweeps[0] = {
             0, 1, 1, A121_IQ3_LOOP_PROFILE, 8, A121_IQ3_LOOP_GAIN,
             true, false, true, true, A121_IQ3_LOOP_PRF
         };
-        /* Subsweep 1: Kohärenter 2.5-mm Vital-Zoom */
+        /* Subsweep 1: coherent 2.5 mm vital zoom */
         spec.subsweeps[1] = {
             zoom_start_pt, a121_dsp::kZoomPoints, 1, A121_IQ3_ZOOM_PROFILE, A121_IQ3_ZOOM_HWAAS, 16,
             true, true, true, false, "15_6_MHz"
         };
-        /* Subsweep 2: Gleichzeitiger Raum-Scan (0.30..2.67 m, 30-mm Raster) */
+        /* Subsweep 2: simultaneous room scan (0.30..2.67 m, 30 mm grid) */
         spec.subsweeps[2] = {
             120, a121_dsp::kRoomPoints, a121_dsp::kRoomStep, 3, 16, 16,
             true, true, true, false, "15_6_MHz"
@@ -301,8 +301,8 @@ public:
     }
 
     /**
-     * @brief Baut ein High-Speed Continuous-Sweep-Mode (CSM) + Double-Buffering Preset
-     *        für hochfrequente Vibrations- und Mikro-Doppler-Analyse (z.B. 64 Sweeps/Frame @ 2000 Hz Sweep-Rate).
+     * @brief Builds a high-speed continuous sweep mode (CSM) + double buffering preset
+     *        for high-frequency vibration and micro-Doppler analysis (e.g. 64 sweeps/frame @ 2000 Hz sweep rate).
      */
     static SessionSpec makeContinuousDopplerPreset(int32_t target_pt = 200,
                                                    uint16_t sweeps_per_frame = 64,
@@ -310,7 +310,7 @@ public:
         SessionSpec spec = {};
         spec.sweeps_per_frame       = sweeps_per_frame;
         spec.sweep_rate_hz          = sweep_rate_hz;
-        spec.frame_rate_hz          = 0.0f; /* Host-driven / nahtlos durch CSM */
+        spec.frame_rate_hz          = 0.0f; /* host-driven / seamless through CSM */
         spec.continuous_sweep_mode  = true;
         spec.double_buffering       = true;
         spec.inter_frame_idle_state = "ready";
@@ -342,7 +342,7 @@ public:
                     int p_sz = atoi(line.c_str() + p_idx + 15);
                     if (p_sz > 0) discardBytes((size_t)p_sz, 100);
                 }
-                /* Frame-Header tragen ebenfalls "status":"ok" — nur "stop" beendet. */
+                /* Frame headers also carry "status":"ok" — only "stop" ends it. */
                 if (line.indexOf("\"status\":\"stop\"") >= 0) {
                     drainRx(20);
                     return true;
@@ -354,7 +354,7 @@ public:
     }
 
     /**
-     * @brief Liest genau einen Streaming-Frame (JSON-Headerzeile + `payload_size` Binär-Bytes).
+     * @brief Reads exactly one streaming frame (JSON header line + `payload_size` binary bytes).
      */
     bool readStreamFrame(a121_dsp::Complex16 *out_pts, uint16_t max_pts, FrameMeta &meta, uint32_t timeout_ms = 500) {
         String hdr;
@@ -363,7 +363,7 @@ public:
         while (true) {
             const uint32_t el = millis() - t0;
             if (el >= timeout_ms || !readJsonLine(hdr, timeout_ms - el)) return false;
-            if (hdr.indexOf("\"result_info\"") < 0) continue;   /* Log-/Statuszeilen überspringen */
+            if (hdr.indexOf("\"result_info\"") < 0) continue;   /* skip log/status lines */
             p_idx = hdr.indexOf("\"payload_size\":");
             if (p_idx >= 0) break;
         }
@@ -404,9 +404,9 @@ private:
     }
 
     /**
-     * Nächste Antwortzeile, Server-Logzeilen ({"status":"log",...}, payload_size 0) werden übersprungen.
-     * Mit `logs` werden Logzeilen außer INFO als "LEVEL: Text\n" gesammelt. Den genauen Grund einer abgelehnten
-     * Konfiguration (z. B. "Invalid step_length") nennt der Server nur dort.
+     * Next reply line; server log lines ({"status":"log",...}, payload_size 0) are skipped.
+     * With `logs`, log lines other than INFO are collected as "LEVEL: text\n". The server gives the exact reason for a
+     * rejected configuration (e.g. "Invalid step_length") only there.
      */
     bool readResponse(String &out, uint32_t timeout_ms, String *logs = nullptr) {
         const uint32_t t0 = millis();
@@ -423,7 +423,7 @@ private:
         }
     }
 
-    /** Wert eines einfachen String-Felds ("key":"wert"), ohne Escape-Behandlung bis auf \". */
+    /** Value of a simple string field ("key":"value"), without escape handling except for \". */
     static String jsonString(const String &js, const char *key) {
         String k = String("\"") + key + "\":\"";
         int i = js.indexOf(k);
@@ -453,9 +453,9 @@ private:
     }
 
     /**
-     * Zwischenpuffer: Bytes blockweise aus dem UART-Treiber holen statt einzeln. Jeder read()/available()-Aufruf
-     * kostet im Arduino-Core eine Treiber-Sperre. Byteweise schaffte der ESP32 nur ~140 Frame-Header pro Sekunde;
-     * bei 375 Frames/s lief der 32-KB-Puffer über (2026-11-01 am Gerät, `sess`).
+     * Staging buffer: fetch bytes from the UART driver in blocks instead of one by one. Every read()/available() call
+     * costs a driver lock in the Arduino core. Byte by byte, the ESP32 only managed ~140 frame headers per second;
+     * at 375 frames/s the 32 KB buffer overflowed (2026-11-01 on the device, `sess`).
      */
     bool fillStage() {
         if (stage_pos_ < stage_len_) return true;
@@ -480,7 +480,7 @@ private:
                 if (c == '\n') {
                     out.trim();
                     if (out.length() > 0) return true;
-                } else if (c != '\r' && out.length() < 2048) {  // Schutz bei Binärmüll ohne Zeilenende
+                } else if (c != '\r' && out.length() < 2048) {  // protection against binary garbage without a line end
                     out += c;
                 }
             }
@@ -490,7 +490,7 @@ private:
 
     bool readExactBytes(uint8_t *dst, size_t count, uint32_t timeout_ms) {
         size_t got = 0;
-        if (stage_pos_ < stage_len_) {  // erst den Zwischenpuffer leeren
+        if (stage_pos_ < stage_len_) {  // empty the staging buffer first
             size_t n = min(count, stage_len_ - stage_pos_);
             memcpy(dst, stage_ + stage_pos_, n);
             stage_pos_ += n;

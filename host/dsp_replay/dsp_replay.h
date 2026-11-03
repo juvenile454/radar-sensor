@@ -1,23 +1,23 @@
 /**
  * @file dsp_replay.h
- * @brief Rechnet eine `iq3 … raw`-Aufnahme (stream.log) mit dem Firmware-DSP-Header neu durch und vergleicht jede
- *        Ausgabezeile mit der Zeile, die der ESP32 live geschrieben hat.
+ * @brief Recomputes an `iq3 … raw` recording (stream.log) with the firmware DSP header and compares every
+ *        output line with the line the ESP32 wrote live.
  *
- * Gemeinsame Quelle für den PC (`host/a121_esp_ultimate.py --mode replay-cpp`) und die Android-App (NDK, A5).
- * Ablauf wie `cmdIq3()` in `firmware/esp32s3/src/main.cpp`, aber vom Log gesteuert: Frames kommen aus `@RAW`, Reports
- * werden dort gerechnet, wo der ESP32 `@DSP` ausgegeben hat, das Zoom-Fenster wechselt bei `@REZOOM` bzw. nach
- * erfolgreichem `@RECONNECT`. Zeitstempel (`t_ms`) und die Rechenzeit in `@DSP` übernimmt der Replayer vom ESP32, alle
- * anderen Felder rechnet er selbst. Die neuen Zeilen haben dasselbe Format wie live (auswertbar mit `--mode plot`,
- * Formatfunktionen aus a121_esp_dsp.h). Ist ein eigener Report gültig, beim ESP32 aber kein `@VITAL` da, schreibt der
- * Replayer sein `@VITAL` trotzdem (mit der Zeit der `@DSP`-Zeile) und zählt die Zeile als fehlend; so lassen sich
- * Header-Varianten mit anderer Verfügbarkeit auswerten (host/vital_eval.py --replay).
- * Seit V2.1 rechnet der ESP32 den Report aus einem Schnappschuss auf Kern 0; `@DSP` kommt dann einige Frames später und
- * trägt in Feld 13 den Frame-Stand des Schnappschusses. Der Replayer hält dafür die Schnappschüsse der letzten
- * kSnapRing Frames und rechnet an diesem Stand (ohne Feld 13: am aktuellen Stand wie früher). Liegt Feld 13 vor dem
- * eigenen Frame-Stand (Handy-DSP mitten im Stream eingeschaltet, Frames fehlen), rechnet er am aktuellen Stand.
+ * Shared source for the PC (`host/a121_esp_ultimate.py --mode replay-cpp`) and the Android app (NDK, A5).
+ * Flow like `cmdIq3()` in `firmware/esp32s3/src/main.cpp`, but driven by the log: frames come from `@RAW`, reports
+ * are computed where the ESP32 printed `@DSP`, the zoom window changes at `@REZOOM` or after a
+ * successful `@RECONNECT`. The replayer takes timestamps (`t_ms`) and the compute time in `@DSP` from the ESP32, and
+ * computes all other fields itself. The new lines have the same format as live (can be evaluated with `--mode plot`,
+ * format functions from a121_esp_dsp.h). If its own report is valid but the ESP32 has no `@VITAL`, the
+ * replayer writes its `@VITAL` anyway (with the time of the `@DSP` line) and counts the line as missing; this way
+ * header variants with different availability can be evaluated (host/vital_eval.py --replay).
+ * Since V2.1 the ESP32 computes the report from a snapshot on core 0; `@DSP` then comes a few frames later and
+ * carries the frame state of the snapshot in field 13. The replayer therefore keeps the snapshots of the last
+ * kSnapRing frames and computes at that state (without field 13: at the current state as before). If field 13 is before the
+ * own frame state (phone DSP switched on mid-stream, frames missing), it computes at the current state.
  *
- * Braucht vor dem Einbinden ein `Arduino.h` (hier: Shim im selben Ordner) und den Include-Pfad zu
- * `firmware/esp32s3/src`. Für bitgleiche Ergebnisse ohne `-ffast-math` und mit `-ffp-contract=off` übersetzen.
+ * Needs an `Arduino.h` before inclusion (here: shim in the same folder) and the include path to
+ * `firmware/esp32s3/src`. For bit-identical results compile without `-ffast-math` and with `-ffp-contract=off`.
  */
 #ifndef DSP_REPLAY_H
 #define DSP_REPLAY_H
@@ -35,8 +35,8 @@
 #include "a121_esp_dsp.h"
 
 #ifndef A121_DSP_FORMATS
-/* DSP-Header vor V0.4 (Basislinie 2026-11-01, Commit 26c9bff) hat die Formatfunktionen noch nicht: Formate wie
- * damals in main.cpp. So rechnet `vital_eval.py --replay` auch die Basislinie mit dieser Nachrechnung. */
+/* DSP header before V0.4 (baseline 2026-11-01, commit 26c9bff) does not have the format functions yet: formats as
+ * back then in main.cpp. This way `vital_eval.py --replay` also recomputes the baseline with this replay. */
 namespace a121_dsp {
 static constexpr size_t kReportLineMax = 256U;
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
@@ -70,18 +70,18 @@ struct TagStat {
     const char *tag;
     unsigned long compared = 0;
     unsigned long equal    = 0;
-    unsigned long other    = 0;    /* abweichende Feldzahl oder nicht-numerisches Feld */
-    double max_dev         = 0.0;  /* größte Abweichung eines Zahlenfelds (gleiche Feldzahl) */
+    unsigned long other    = 0;    /* differing field count or non-numeric field */
+    double max_dev         = 0.0;  /* largest deviation of a numeric field (same field count) */
     int max_dev_field      = 0;
-    double max_units       = 0.0;  /* größte Abweichung in Einheiten der letzten ausgegebenen Stelle */
-    unsigned shown         = 0;    /* ausgegebene Beispiele */
+    double max_units       = 0.0;  /* largest deviation in units of the last printed digit */
+    unsigned shown         = 0;    /* printed examples */
 };
 
 class Replayer {
 public:
     /**
-     * dsp: wird je Stream mit begin() neu gestartet. Der Header gibt seinen Speicher nie frei, deshalb über mehrere
-     * Läufe dieselbe Instanz verwenden. out: neu gerechnete Zeilen, report: Bericht (beide dürfen nullptr sein).
+     * dsp: restarted per stream with begin(). The header never frees its memory, so use the same instance
+     * across several runs. out: recomputed lines, report: report (both may be nullptr).
      */
     Replayer(UltimateEspDsp &dsp, FILE *out, FILE *report) : out_(out), rep_out_(report), dsp_(dsp) {}
 
@@ -90,7 +90,7 @@ public:
         while (n > 0 && (s[n - 1] == '\r' || s[n - 1] == '\n' || s[n - 1] == ' ')) n--;
         cur_.assign(s, n);
         const char *c = cur_.c_str();
-        if (pend_breath_ && !starts(c, "@BREATH,")) flushBreath();  /* @BREATH gehört direkt hinter @IQ3/@RAW */
+        if (pend_breath_ && !starts(c, "@BREATH,")) flushBreath();  /* @BREATH belongs directly after @IQ3/@RAW */
         if (starts(c, "@IQ3_START,")) onStart(c);
         else if (!running_) return;
         else if (starts(c, "@IQ3,")) onIq3(c);
@@ -108,13 +108,13 @@ public:
         else if (strcmp(c, "@END") == 0) onEnd(c);
     }
 
-    /** Neu gerechnete Zeilen an fn statt in die Datei out (Live-Pfad am Handy, dsp_live.h); nullptr = wieder Datei. */
+    /** Send recomputed lines to fn instead of the file out (live path on the phone, dsp_live.h); nullptr = file again. */
     void setSink(void (*fn)(void *ctx, const char *line), void *ctx) {
         sink_     = fn;
         sink_ctx_ = ctx;
     }
 
-    /** Liest eine ganze Datei. Rückgabe false, wenn sie nicht lesbar ist. */
+    /** Reads a whole file. Returns false if it is not readable. */
     bool runFile(FILE *in) {
         if (!in) return false;
         char *buf = nullptr;
@@ -125,7 +125,7 @@ public:
         return true;
     }
 
-    /** Schreibt den Bericht. Rückgabe: true = alle verglichenen Zeilen gleich und keine Lücke. */
+    /** Writes the report. Returns: true = all compared lines equal and no gap. */
     bool finish() {
         closePending();
         bool all_equal = frames_ > 0;
@@ -159,7 +159,7 @@ private:
 
     static bool starts(const char *s, const char *p) { return strncmp(s, p, strlen(p)) == 0; }
 
-    /** Feld i (0 = Tag) als Zeiger auf den Anfang; nullptr, wenn es fehlt. */
+    /** Field i (0 = tag) as a pointer to its start; nullptr if it is missing. */
     static const char *field(const char *s, int i) {
         for (; i > 0; i--) {
             s = strchr(s, ',');
@@ -196,7 +196,7 @@ private:
         }
     }
 
-    /** Zahlenfelder vergleichen: größte |Differenz|, Feldnummer (1 = erstes Feld nach dem Tag); false = nicht vergleichbar. */
+    /** Compare numeric fields: largest |difference|, field number (1 = first field after the tag); false = not comparable. */
     static bool numericDiff(const char *a, const char *b, double &dev, int &field_no, double &units) {
         dev = 0.0;
         field_no = 0;
@@ -250,7 +250,7 @@ private:
         if (extra_ <= 5) report("Zeile %lu: %s\n", line_no_, what);
     }
 
-    /** Eigenes @VITAL ausgeben, wenn der ESP32 zu diesem Report keines hatte (Zeit = @DSP-Zeile). */
+    /** Output own @VITAL if the ESP32 had none for this report (time = @DSP line). */
     void flushVital() {
         if (!pend_vital_) return;
         missing("@VITAL neu gerechnet, beim ESP32 fehlt sie");
@@ -260,7 +260,7 @@ private:
     }
 
 #ifdef A121_DSP_STATE
-    /** Eigenes @STATE ausgeben, wenn der ESP32 zu diesem Report keines hatte (vor V3.5; Zeit = @DSP-Zeile). */
+    /** Output own @STATE if the ESP32 had none for this report (before V3.5; time = @DSP line). */
     void flushState() {
         if (!pend_state_) return;
         missing("@STATE neu gerechnet, beim ESP32 fehlt sie");
@@ -272,14 +272,14 @@ private:
     void flushState() {}
 #endif
 
-    /** Vitalwerte und Zustand des letzten Reports ausgeben, falls der ESP32 sie nicht hatte. */
+    /** Output vital values and state of the last report if the ESP32 did not have them. */
     void flushReport() {
         flushVital();
         flushState();
     }
 
 #ifdef A121_DSP_BREATH
-    /** Eigenes @BREATH ausgeben, wenn der ESP32 zu diesem Frame keines hatte (vor V3.4; Zeit = @IQ3-Zeile). */
+    /** Output own @BREATH if the ESP32 had none for this frame (before V3.4; time = @IQ3 line). */
     void flushBreath() {
         if (!pend_breath_) return;
         missing("@BREATH neu gerechnet, beim ESP32 fehlt sie");
@@ -291,7 +291,7 @@ private:
     void flushBreath() {}
 #endif
 
-    /** Erwartete, aber vom ESP32 nicht ausgegebene Zeilen des letzten Frames bzw. Reports melden. */
+    /** Report expected lines of the last frame or report that the ESP32 did not output. */
     void closePending() {
         flushBreath();
         flushReport();
@@ -328,7 +328,7 @@ private:
         return -1;
     }
 
-    /** Base64 → Bytes; Rückgabe Anzahl Bytes oder -1. */
+    /** Base64 → bytes; returns number of bytes or -1. */
     static long b64decode(const char *s, uint8_t *dst, size_t cap) {
         size_t n = 0;
         uint32_t acc = 0;
@@ -357,7 +357,7 @@ private:
             missing("@RAW unlesbar");
             return;
         }
-        if (n_pts != (long)kTotal3SubPts) {  /* andere Zoom-Breite als der Header (A121_ZOOM_POINTS, V2.3) */
+        if (n_pts != (long)kTotal3SubPts) {  /* zoom width differs from the header (A121_ZOOM_POINTS, V2.3) */
             char msg[96];
             snprintf(msg, sizeof(msg), "@RAW: Punktzahl %ld passt nicht zum Header (%u), Frame übersprungen", n_pts,
                      (unsigned)kTotal3SubPts);
@@ -371,7 +371,7 @@ private:
             return;
         }
         Complex16 pts[kTotal3SubPts];
-        for (long i = 0; i < n_pts; i++) {  /* Little Endian wie im ESP32-Speicher */
+        for (long i = 0; i < n_pts; i++) {  /* little endian as in ESP32 memory */
             pts[i].real = (int16_t)(bytes[4 * i] | (bytes[4 * i + 1] << 8));
             pts[i].imag = (int16_t)(bytes[4 * i + 2] | (bytes[4 * i + 3] << 8));
         }
@@ -380,11 +380,11 @@ private:
         last_tick_ = tick;
         frames_++;
 
-        // dieselbe Reihenfolge wie cmdIq3(): pushFrame, dann Amplituden für @IQ3
+        // same order as cmdIq3(): pushFrame, then amplitudes for @IQ3
         const char *iq3 = have_iq3_ && lfield(iq3_.c_str(), 7, -1) == frame ? iq3_.c_str() : nullptr;
         const int16_t temp = iq3 ? (int16_t)lfield(iq3, 2) : 0;
         float um = 0.0f;
-        const long delayed = iq3 ? lfield(iq3, 9, -1) : -1;  /* frame_delayed, hinten an @IQ3 seit V1.5 */
+        const long delayed = iq3 ? lfield(iq3, 9, -1) : -1;  /* frame_delayed, appended to @IQ3 since V1.5 */
 #ifdef A121_DSP_FRAME_FLAGS
         FrameFlags ff;
         ff.tick      = (uint32_t)tick;
@@ -393,7 +393,7 @@ private:
         ff.delayed   = delayed > 0;
         dsp_.pushFrame(pts, (uint16_t)n_pts, temp, 0.0f, um, ff);
 #ifdef A121_DSP_BREATH
-        if (dsp_.takeBreathEvent(breath_)) {  /* ausgegeben wird nach @IQ3, verglichen mit der folgenden ESP32-Zeile */
+        if (dsp_.takeBreathEvent(breath_)) {  /* output comes after @IQ3, compared with the following ESP32 line */
             pend_breath_  = true;
             breath_t_ms_  = iq3 ? (uint32_t)ufield(iq3, 1) : 0U;
             breath_tick_  = (uint32_t)tick;
@@ -431,11 +431,11 @@ private:
 
     void onDsp(const char *c) {
         closePending();
-        const long snap = lfield(c, 13, -1);  /* Frame-Stand des Schnappschusses (V2.1) */
+        const long snap = lfield(c, 13, -1);  /* frame state of the snapshot (V2.1) */
 #ifdef A121_DSP_SNAPSHOT
         if (snap > (long)dsp_.frameCount()) {
-            /* Frame-Stand des ESP32 vor dem eigenen: später eingestiegen (Handy-DSP mitten im Stream eingeschaltet) oder
-             * Frames fehlen im Log. Am aktuellen Stand rechnen, ohne Veraltet-Prüfung (sie verglich zwei Zähler). */
+            /* ESP32 frame state is before our own: joined later (phone DSP switched on mid-stream) or
+             * frames are missing in the log. Compute at the current state, without staleness check (it compared two counters). */
             missing("@DSP: Frame-Stand des ESP32 voraus (später eingestiegen?), am aktuellen Stand gerechnet");
             vital_ok_ = dsp_.computeVitalReport(rep_);
         } else if (snap >= 0) {
@@ -453,7 +453,7 @@ private:
         (void)snap;
         have_rep_ = true;
         dsp_t_ms_ = (uint32_t)ufield(c, 1);
-        formatDspLine(buf_, sizeof(buf_), dsp_t_ms_, vital_ok_, rep_, (uint32_t)ufield(c, 5) /* Rechenzeit vom ESP32 */);
+        formatDspLine(buf_, sizeof(buf_), dsp_t_ms_, vital_ok_, rep_, (uint32_t)ufield(c, 5) /* compute time from the ESP32 */);
         compare(DSP, c, buf_);
         emit(buf_);
         pend_vital_ = vital_ok_;
@@ -461,7 +461,7 @@ private:
         pend_state_ = true;
 #endif
 #ifdef A121_DSP_BREATH
-        dsp_.setBreathGate(breathGateOpen(rep_.state));  /* wie cmdIq3() nach @STATE: ab dem nächsten Frame */
+        dsp_.setBreathGate(breathGateOpen(rep_.state));  /* like cmdIq3() after @STATE: from the next frame on */
 #endif
         pend_rezoom_ = rep_.needs_rezoom && rep_.recommended_zoom_start_pt != zoom_pt_;
     }
@@ -486,7 +486,7 @@ private:
         emit(buf_);
     }
 
-    /** @STATE vom ESP32 (V3.5): mit dem eigenen vergleichen; davor fehlende @VITAL ausgeben. */
+    /** @STATE from the ESP32 (V3.5): compare with our own; output missing @VITAL before it. */
     void onState(const char *c) {
 #ifdef A121_DSP_STATE
         if (!have_rep_) return;
@@ -506,7 +506,7 @@ private:
     }
 
 #ifdef A121_DSP_BREATH
-    /** @BREATH vom ESP32 (V3.4): mit dem eigenen dieses Frames vergleichen. */
+    /** @BREATH from the ESP32 (V3.4): compare with our own for this frame. */
     void onBreath(const char *c) {
         if (!pend_breath_) {
             missing("@BREATH beim ESP32, neu gerechnet keiner");
@@ -533,7 +533,7 @@ private:
             missing("@REZOOM beim ESP32, neu gerechnet keiner");
             stats_[REZOOM].compared++;
         }
-        // dem ESP32 folgen: die folgenden Rohdaten gehören zu seinem Fenster
+        // follow the ESP32: the following raw data belong to its window
         zoom_pt_ = esp_pt;
         dsp_.setZoomStartPoint(zoom_pt_);
         clearSnaps();
@@ -541,7 +541,7 @@ private:
         emit(c);
     }
 
-    /** Neu-Kalibrierung (V1.5): gleiches Zoom-Fenster, Historie neu wie beim Rezoom. */
+    /** Recalibration (V1.5): same zoom window, history restarts as with rezoom. */
     void onRecal(const char *c) {
         flushReport();
         dsp_.setZoomStartPoint(zoom_pt_);
@@ -552,15 +552,15 @@ private:
 
     void onReconnect(const char *c) {
         if (lfield(c, 3) == 1) {
-            dsp_.setZoomStartPoint(zoom_pt_);  /* wie cmdIq3(): Lücke im Signal, Verlauf neu */
+            dsp_.setZoomStartPoint(zoom_pt_);  /* like cmdIq3(): gap in the signal, history restarts */
             clearSnaps();
             reconnects_++;
-            last_frame_ = -1;  /* Frame-Zähler läuft weiter, aber über die Lücke nicht als Verlust zählen */
+            last_frame_ = -1;  /* frame counter keeps running, but do not count the gap as loss */
         }
         emit(c);
     }
 
-    /** Neubeginn der Historie: frame_count beginnt bei 0, alte Schnappschüsse gelten nicht mehr. */
+    /** Restart of the history: frame_count starts at 0, old snapshots no longer count. */
     void clearSnaps() { snap_ok_.assign(kSnapRing, false); }
 
     void onEnd(const char *c) {
@@ -589,7 +589,7 @@ private:
     unsigned streams_ = 0;
     std::string cur_, iq3_;
 #ifdef A121_DSP_SNAPSHOT
-    static constexpr size_t kSnapRing = 256U;  /* > kSnapMaxLag: jeder noch gültige Schnappschuss ist da */
+    static constexpr size_t kSnapRing = 256U;  /* > kSnapMaxLag: every still valid snapshot is there */
     std::vector<ReportSnapshot> snaps_ = std::vector<ReportSnapshot>(kSnapRing);
 #else
     static constexpr size_t kSnapRing = 1U;

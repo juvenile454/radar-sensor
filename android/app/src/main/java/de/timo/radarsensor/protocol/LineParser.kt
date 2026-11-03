@@ -2,7 +2,7 @@ package de.timo.radarsensor.protocol
 
 import java.util.Base64
 
-/** Wandelt eine Zeile vom ESP32 in eine [EspMsg] um. Wirft nie; unlesbare `@`-Zeilen werden zu [Malformed]. */
+/** Converts a line from the ESP32 into an [EspMsg]. Never throws; unreadable `@` lines become [Malformed]. */
 object LineParser {
     fun parse(line: String): EspMsg {
         if (line.startsWith("FEHLER")) return EspError(line)

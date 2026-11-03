@@ -1,17 +1,17 @@
-"""Referenzmessung eines einzelnen Ziels (z. B. Wand) mit dem A121.
+"""Reference measurement of a single target (e.g. wall) with the A121.
 
-1) Distance-Detektor: 100 Frames, Abstände gruppiert in 10-cm-Clustern.
-2) Sparse IQ fein (Profil 2, HWAAS 32, 2,5-mm-Schritte): Echostärke, SNR, Echobreite.
-Ergebnis als .npz nach ~/Data/radar-sensor/.
+1) Distance detector: 100 frames, distances grouped in 10 cm clusters.
+2) Sparse IQ fine (profile 2, HWAAS 32, 2.5 mm steps): echo strength, SNR, echo width.
+Result as .npz to ~/Data/radar-sensor/.
 
-Beispiel:
+Example:
   sg dialout -c ".venv/bin/python host/a121_zielmessung.py \
       /dev/serial/by-id/usb-1a86_USB_Dual_Serial_<SERIAL>-if00 \
       ~/Data/radar-sensor/2026-10-30_ref_wand_0p57m_nackt.npz \
       'A121 ohne Kappe, Backsteinwand 570 mm'"
 
-Bekannt: direkt nach einer beendeten Session scheitert die nächste Verbindung oft mit
-`LinkError: recv timeout`; einfach erneut starten.
+Known: right after a session has ended, the next connection often fails with
+`LinkError: recv timeout`; just start again.
 """
 import json
 import sys
@@ -22,7 +22,7 @@ from acconeer.exptool import a121
 from acconeer.exptool.a121.algo.distance import Detector, DetectorConfig
 
 DET_START_M, DET_END_M = 0.4, 2.5
-IQ_START_POINT, IQ_NUM_POINTS = 160, 840  # 0,40–2,50 m bei 2,5 mm/Punkt
+IQ_START_POINT, IQ_NUM_POINTS = 160, 840  # 0.40–2.50 m at 2.5 mm/point
 POINT_M = 0.0025
 
 
@@ -30,7 +30,7 @@ def main(port: str, out: str, label: str) -> None:
     client = a121.Client.open(serial_port=port)
     print("rss_version:", client.server_info.rss_version)
 
-    # 1) Distance-Detektor (Ziele kommen nach Stärke sortiert, nicht nach Abstand)
+    # 1) Distance detector (targets come sorted by strength, not by distance)
     det = Detector(client=client, sensor_ids=[1],
                    detector_config=DetectorConfig(start_m=DET_START_M, end_m=DET_END_M))
     det.calibrate_detector()
@@ -54,7 +54,7 @@ def main(port: str, out: str, label: str) -> None:
             print(f"  Cluster {lo:.1f}-{lo + 0.1:.1f} m: n={m.sum()} median={np.median(alld[m]):.4f} m "
                   f"std={alld[m].std() * 1000:.1f} mm")
 
-    # 2) Sparse IQ fein
+    # 2) Sparse IQ fine
     cfg = a121.SensorConfig(start_point=IQ_START_POINT, num_points=IQ_NUM_POINTS, step_length=1,
                             profile=a121.Profile.PROFILE_2, hwaas=32, sweeps_per_frame=4)
     client.setup_session(cfg)

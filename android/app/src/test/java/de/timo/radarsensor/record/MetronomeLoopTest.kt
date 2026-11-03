@@ -11,7 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Ablauf eines Metronom-Laufs (Metronome.kt) mit virtueller Uhr: Klangquelle gehört dem Lauf. */
+/** Sequence of a metronome run (Metronome.kt) with a virtual clock: the sound source belongs to the run. */
 class MetronomeLoopTest {
     private class FakeBeeper(
         val log: MutableList<String>,
@@ -73,7 +73,7 @@ class MetronomeLoopTest {
     @Test
     fun neuerLaufNachAbbruchBenutztNieDieAlteQuelle() =
         runBlocking {
-            // wie stop() + start(): der alte Lauf schließt seine Quelle selbst, der neue öffnet eine eigene
+            // like stop() + start(): the old run closes its own source, the new one opens its own
             val log = mutableListOf<String>()
             val a = launch { runMetronome(MetronomeSchedule(0L, 15), { t }, sleep, { FakeBeeper(log, "a") }) {} }
             yield()

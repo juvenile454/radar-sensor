@@ -1,20 +1,20 @@
-"""ARCHIV (V5.3, docs/VITAL_AUDIT.md), nicht mehr gepflegt.
-Auswertung mit der DSP-Kette aus a121_vitalaufnahme.py. Neue Auswertungen nur mit host/vital_eval.py und Varianten des
-Firmware-Headers firmware/esp32s3/src/a121_esp_dsp.h (--replay); was sich hier bewährt, wandert in den Header.
-Funktion des Skripts unverändert.
+"""ARCHIVED (V5.3, docs/VITAL_AUDIT.md), no longer maintained.
+Analysis with the DSP chain from a121_vitalaufnahme.py. New analyses only with host/vital_eval.py and variants of the
+firmware header firmware/esp32s3/src/a121_esp_dsp.h (--replay); what proves itself here moves into the header.
+Function of the script unchanged.
 
-Auswertung einer Live-Monitor-/Vitalaufnahme mit Atem-anhalten-Abschnitt (Experiment M3, Aufnahme B).
+Analysis of a live-monitor/vital recording with a breath-hold section (experiment M3, recording B).
 
-Verwendet:
-- Phasenstabilitäts-Bin-Auswahl (vermeidet Mehrwege-Auslöschung / I/Q-Nulldurchgänge wie bei Bin 79)
-- I/Q-Kreisfit + regularisierte DACM-Phasendemodulation
-- Hilbert-Atmungs-Oberwellenprojektion für den Atem-Abschnitt
-- Spektrum, Beschleunigungs-HPS (f0·2f0·3f0), Autokorrelation und Spitzenzählung (IBI)
+Uses:
+- phase-stability bin selection (avoids multipath cancellation / I/Q zero crossings as at bin 79)
+- I/Q circle fit + regularized DACM phase demodulation
+- Hilbert breathing-harmonic projection for the breathing section
+- spectrum, acceleration HPS (f0·2f0·3f0), autocorrelation and peak counting (IBI)
 
   .venv/bin/python host/a121_anhalteanalyse.py <aufnahme.npz> <ausgabe_ohne_endung>
 
-Ausgabe: Kennzahlen auf stdout, <ausgabe>.png und <ausgabe>_seg.npy (Abschnittsgrenzen in Frames).
-Ohne Referenzpuls ist das Ergebnis nur ein Rhythmus-Nachweis, keine Pulsmessung.
+Output: key figures on stdout, <ausgabe>.png and <ausgabe>_seg.npy (section boundaries in frames).
+Without a reference pulse the result is only a rhythm indication, not a pulse measurement.
 """
 import sys
 import numpy as np
@@ -36,7 +36,7 @@ fs = float(z["fs"])
 d = z["distances_m"]
 print("frames", iq.shape, "fs", fs, "Dauer", len(iq) / fs, "s, zero-frames", int((np.abs(iq).sum(axis=1) == 0).sum()))
 
-# Phasenstabiler Bin vs. naives Amplitudenmaximum
+# Phase-stable bin vs. naive amplitude maximum
 k_raw, k_best, z_iq = select_stable_chest_iq(iq, d)
 saved_bin = int(z["target_bin"]) if "target_bin" in z else k_raw
 print(f"Gespeicherter target_bin in Datei: Bin {saved_bin} ({d[saved_bin]*1000:.1f} mm)")
@@ -48,12 +48,12 @@ sos_h = signal.butter(4, [0.8, 2.5], btype="band", fs=fs, output="sos")
 br, disp_clean = project_out_respiration_harmonics(disp, fs=fs, max_harm=5)
 heart = signal.sosfiltfilt(sos_h, disp_clean)
 
-# Zum Vergleich: naiver Bin ohne Kreiszentrierung (zeigt ggf. Nulldurchgangs-Artefakt)
+# For comparison: naive bin without circle centering (may show the zero-crossing artifact)
 zz_naive = iq[:, max(k_raw - 2, 0):k_raw + 3].mean(axis=1)
 disp_naive = signal.detrend(np.unwrap(np.angle(zz_naive)) * (5.0 / (4.0 * np.pi)))
 heart_naive = signal.sosfiltfilt(sos_h, disp_naive)
 
-# Atemaktivität: gleitende Spitze-Spitze (4 s) der Atmungskomponente + Verschiebung
+# Breathing activity: moving peak-to-peak (4 s) of the breathing component + displacement
 w = int(4 * fs)
 act = np.array([np.ptp(signal.detrend(disp[max(0, i - w // 2):i + w // 2])) for i in range(len(disp))])
 for s0 in range(0, int(len(disp) / fs), 5):

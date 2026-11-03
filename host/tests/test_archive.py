@@ -1,5 +1,5 @@
-"""V5.3: alte PC-Skripte mit eigener Vital-DSP sind im Kopfkommentar als Archiv gekennzeichnet; neue Auswertungen
-laufen über host/vital_eval.py und Varianten des Firmware-Headers.
+"""V5.3: old PC scripts with their own vital DSP are marked as archive in their header comment; new evaluations
+run through host/vital_eval.py and variants of the firmware header.
 
   .venv/bin/python -m unittest host/tests/test_archive.py
 """
@@ -11,10 +11,10 @@ import unittest
 HOST = pathlib.Path(__file__).resolve().parent.parent
 README = HOST.parent / "README.md"
 
-# eigene DSP-Kette (Kåsa/DACM/Hilbert-Projektion/HPS) bzw. deren Nutzer (a121_livemonitor importiert a121_vitalaufnahme)
+# own DSP chain (Kåsa/DACM/Hilbert projection/HPS) or its users (a121_livemonitor imports a121_vitalaufnahme)
 ARCHIVE = ["a121_ultimate_vital.py", "a121_vitalaufnahme.py", "a121_anhalteanalyse.py", "a121_esp_vital.py",
            "a121_esp_auto.py", "a121_livemonitor.py"]
-# gepflegt: rechnen mit dem Firmware-Header oder sind Werkzeuge ohne eigene Vital-DSP
+# maintained: compute with the firmware header or are tools without their own vital DSP
 CURRENT = ["vital_eval.py", "vital_sim.py", "a121_esp_ultimate.py", "esp_record.py", "esp_tcp_bridge.py",
            "rezoom_check.py", "a121_zielmessung.py"]
 

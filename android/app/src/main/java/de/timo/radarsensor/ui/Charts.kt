@@ -57,7 +57,7 @@ data class Series(
     val dots: Boolean = false,
 )
 
-/** Senkrechte Ereignislinie (Rezoom, Neuverbinden, Warnung) auf der Zeitachse */
+/** Vertical event line (rezoom, reconnect, warning) on the time axis */
 data class Marker(
     val x: Float,
     val color: Color,
@@ -77,7 +77,7 @@ private fun niceStep(range: Float, target: Int): Float {
 }
 
 private fun fmt(value: Float, step: Float): String {
-    val v = if (abs(value) < step * 1e-3f) 0f else value // kein "-0"
+    val v = if (abs(value) < step * 1e-3f) 0f else value // no "-0"
     return when {
         step >= 1f -> "%.0f".format(v)
         step >= 0.1f -> "%.1f".format(v)
@@ -86,9 +86,9 @@ private fun fmt(value: Float, step: Float): String {
 }
 
 /**
- * Liniendiagramm mit gemeinsamer x-Achse. [xWindow]: nur die letzten Sekunden zeigen. y-Bereich automatisch
- * (robust gegen einzelne Ausreißer nicht nötig: ESP-Werte sind begrenzt) oder fest über [yMin]/[yMax].
- * NaN und ≤ 0 bei [skipNonPositive] werden ausgelassen (z. B. Puls 0 = kein Wert).
+ * Line chart with a shared x axis. [xWindow]: show only the last seconds. y range automatic
+ * (robustness against single outliers not needed: ESP values are bounded) or fixed via [yMin]/[yMax].
+ * NaN and ≤ 0 with [skipNonPositive] are left out (e.g. pulse 0 = no value).
  */
 @Composable
 fun LineChart(
@@ -170,7 +170,7 @@ private fun DrawScope.drawLineChart(
     fun px(x: Float) = left + (x - xMin) / (xMax - xMin) * w
     fun py(y: Float) = 4f + h - (y - yMin) / (yMax - yMin) * h
 
-    // Gitter + Beschriftung
+    // Grid + labels
     val ys = niceStep(yMax - yMin, 4)
     var gy = ceil(yMin / ys) * ys
     while (gy <= yMax) {
@@ -192,7 +192,7 @@ private fun DrawScope.drawLineChart(
         drawLine(m.color, Offset(px(m.x), 4f), Offset(px(m.x), 4f + h), 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
     }
 
-    // Kurven (bei vielen Punkten jeden n-ten; Lücken > 2 s nicht verbinden)
+    // Curves (with many points every n-th; do not connect gaps > 2 s)
     for (s in series) {
         val n = s.x.size
         if (n == 0) continue
@@ -247,7 +247,7 @@ internal fun DrawScope.drawText(
     drawContext.canvas.nativeCanvas.drawText(text, right ?: x, y, paint)
 }
 
-/** Balken-/Linienprofil über dem Abstand mit Zielmarkern */
+/** Bar/line profile over distance with target markers */
 @Composable
 fun ProfileChart(
     title: String,
@@ -276,10 +276,10 @@ fun ProfileChart(
     }
 }
 
-/** Farbskala für Wasserfall (dB über Rauschen, 0…[maxDb]) */
+/** Color scale for the waterfall (dB over noise, 0…[maxDb]) */
 private fun heat(v: Float, maxDb: Float): Int {
     val t = (v / maxDb).coerceIn(0f, 1f)
-    // dunkelblau → türkis → gelb → rot
+    // dark blue → turquoise → yellow → red
     val r: Float
     val g: Float
     val b: Float
@@ -300,7 +300,7 @@ private fun heat(v: Float, maxDb: Float): Int {
     return android.graphics.Color.rgb((r * 255).toInt(), (g * 255).toInt(), (b * 255).toInt())
 }
 
-/** Wasserfall: Zeilen = Zeit (neueste unten), Spalten = Abstand. */
+/** Waterfall: rows = time (newest at the bottom), columns = distance. */
 @Composable
 fun Waterfall(
     title: String,
@@ -360,7 +360,7 @@ fun Waterfall(
     }
 }
 
-/** Kennzahl mit Titel */
+/** Key figure with title */
 @Composable
 fun Stat(
     label: String,

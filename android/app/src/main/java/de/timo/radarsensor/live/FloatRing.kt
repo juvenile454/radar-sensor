@@ -1,6 +1,6 @@
 package de.timo.radarsensor.live
 
-/** Ringpuffer fester Größe für Messreihen. Nicht threadsicher (Zugriff nur unter der Sperre von [LiveStore]). */
+/** Fixed-size ring buffer for measurement series. Not thread-safe (access only under the lock of [LiveStore]). */
 class FloatRing(
     val capacity: Int,
 ) {
@@ -18,7 +18,7 @@ class FloatRing(
 
     fun last(): Float = if (size == 0) Float.NaN else data[(head - 1 + capacity) % capacity]
 
-    /** Älteste zuerst */
+    /** Oldest first */
     fun toArray(): FloatArray {
         val out = FloatArray(size)
         val start = (head - size + capacity) % capacity
@@ -33,9 +33,9 @@ class FloatRing(
 }
 
 /**
- * Durchgehende Zeitachse in Sekunden aus dem Sensor-`tick` (ms). Der tick läuft auch über DSP-Rechenpausen, in denen
- * die Frames gebündelt ankommen. Nach `@RECONNECT` (Server neu gestartet) beginnt er neu; dann wird an der
- * ESP32-Zeit `t_ms` angeschlossen (wie `parse_log()` in host/a121_esp_ultimate.py).
+ * Continuous time axis in seconds from the sensor `tick` (ms). The tick keeps running across DSP compute pauses, in which
+ * the frames arrive bundled. After `@RECONNECT` (server restarted) it starts over; then it is joined to the
+ * ESP32 time `t_ms` (like `parse_log()` in host/a121_esp_ultimate.py).
  */
 class TickClock {
     private var tick0 = -1L

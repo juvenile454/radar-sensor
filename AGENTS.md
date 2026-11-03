@@ -1,16 +1,16 @@
 # Agent instructions
 
-Alles zum Radarprojekt liegt in diesem Ordner (inkl. Android-App unter `android/`).
-Stand und Phasen: `docs/CONCEPT.md`. Pins/Verdrahtung: `docs/HARDWARE.md`.
-Messplan/Ergebnisse: `docs/EXPERIMENTS.md`. App-Plan: `docs/ANDROID_APP.md`. Vital-Audit und Plan: `docs/VITAL_AUDIT.md`.
-Pico und SAR-Scanner sind zurückgestellt.
+Everything about the radar project lives in this folder (incl. the Android app under `android/`).
+Status and phases: `docs/CONCEPT.md`. Pins/wiring: `docs/HARDWARE.md`.
+Measurement plan/results: `docs/EXPERIMENTS.md`. App plan: `docs/ANDROID_APP.md`. Vital audit and plan: `docs/VITAL_AUDIT.md`.
+Pico and SAR scanner are on hold.
 
-## Regeln
+## Rules
 
-- Aufnahmen, Datensätze, Firmware-Binärdateien und Hersteller-Downloads nicht ins Repo;
-  Daten nach `~/Data/radar-sensor/`.
-- Acconeer-SDK/Waveshare-Demos nicht einchecken (Lizenz); nur Download-Quelle und Version notieren.
-- Vor Flashen/Upload das Gerät und den Port eindeutig identifizieren (`ls -l /dev/serial/by-id`).
-- Handy: nur mit Freigabe des Projektinhabers installieren; Seriennummer immer live aus `adb devices -l`.
-- Funkmodule unverändert betreiben. Keine Aussagen über Puls-Genauigkeit ohne Referenzmessung.
-- Build/Compile ist keine Laufzeitprüfung am Gerät; beides getrennt ausweisen.
+- Do not put recordings, datasets, firmware binaries or vendor downloads into the repo;
+  keep data in `~/Data/radar-sensor/`.
+- Do not check in the Acconeer SDK/Waveshare demos (license); only note the download source and version.
+- Before flashing/uploading, identify the device and the port unambiguously (`ls -l /dev/serial/by-id`).
+- Phone: install only with approval from the project owner; always take the serial number live from `adb devices -l`.
+- Operate radio modules unmodified. No claims about pulse accuracy without a reference measurement.
+- Build/compile is not a runtime check on the device; report the two separately.

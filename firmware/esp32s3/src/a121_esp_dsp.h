@@ -1,77 +1,77 @@
 /**
  * @file a121_esp_dsp.h
- * @brief On-Device-Auswertung der 3-Subsweep-Sparse-IQ-Session (`iq3`) auf dem ESP32-S3 (PSRAM).
+ * @brief On-device evaluation of the 3-subsweep sparse IQ session (`iq3`) on the ESP32-S3 (PSRAM).
  *
- * Kette (Stand 2026-11-01, an `iq3raw_normal_120s_2026-11-01.npz` und `iq3raw_motion_120s_2026-11-01.npz` entwickelt):
- *   1. Subsweep 0: On-Chip-Loopback → Phasen-Derotation aller Zoom-Punkte pro Frame (PLL-/Taktjitter).
- *   2. Subsweep 1: alle 24 Zoom-Punkte (60 mm, 2,5-mm-Raster) werden einzeln gespeichert (18 s Historie: 15-s-Fenster
- *      und 3 s, in denen der Report aus seinem Schnappschuss rechnet, während weiter Frames ankommen; V2.1).
- *   3. Puls: pro Punkt Phase um den Kreismittelpunkt der IQ-Werte (Kåsa-Fit, circleCenter) abwickeln (→ µm), linear entzerren, Nullphasen-Bandpass
- *      0,6–5,0 Hz (Butterworth 4. Ordnung, identisch zu scipy `sosfiltfilt`), Bewegungsdämpfung je 1-s-Block
- *      (Bezug: ruhiges Viertel des Fensters), auf 15 Hz dezimieren, Hann, reelle FFT (1024 Punkte, a121_fft.h, V2.2;
- *      vorher Goertzel je Frequenz), Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) für 0,645–3,03 Hz; Spitzen zählen nur
- *      zwischen 0,674 und 3,003 Hz (40–180 /min, V1.2; vorher 55–136), parabolisch verfeinert. Phase per fastAtan2.
- *      Die Spektren aller Punkte werden mit (Spitze/Median)² gewichtet gemittelt;
- *      Punkte mit klarem Puls zählen mehr. Atem-Oberwellen werden im Spektrum NICHT herausprojiziert: Liegt der Puls
- *      nahe m × Atemfrequenz, entfernt die Projektion den Herzanteil mit (am Datensatz: 13–42 % statt 61–89 % Treffer).
- *   4. Kandidaten (V1.3): Top 3 der Spitzen von S mit Abschlag auf Atem-Oberwellen (m = 4..8: × 0,5 bei ±0,04 Hz;
- *      m = 2, 3: × 0,02 in der ganzen Hauptkeule ±0,1 Hz). Oktav-Prüfung je Kandidat: Spitze bei f/2 mit
- *      S(f/2) ≥ 0,5 · S(f) → Kandidat steht für f/2 (2. Herz-Oberwelle), außer f/2 liegt bei 2 × / 3 × Atmung.
- *      Verfolgung: naher Kandidat (±12 /min) mit ≥ 50 % des besten Werts gewinnt (Glättung 0,7/0,3); ein weiter
- *      Sprung gilt nach 3 Reports, auf eine Atem-Oberwelle erst nach 10. Liegt der verfolgte Wert auf 2 × / 3 ×
- *      Atmung, wechselt er nach 3 Reports zu einem Kandidaten ohne Oberwelle. hr_harm = 1 heißt nur "Spitze liegt auf
- *      einer Oberwelle"; der Puls kann dort liegen (live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5).
- *   5. Konfidenz (V1.3, signalQuality): Spitzenhöhe, Oberwelle, Einigkeit von Spektrum, Autokorrelation und
- *      Einzelschlägen, Bewegung, Sprung. Die frühere Punkt-Einigkeit steht als point_agree_pct hinten in @DSP.
- *      motion_pct = Anteil der 1-s-Blöcke mit mehr als 3-facher Ruhe-Amplitude im Herzband (Bewegungshinweis).
- *      Gültig nur mit Lebenszeichen: sauberes Echo und Atmung (≥ 100 µm) oder angehaltener Atem mit klarer Pulsspitze,
- *      höchstens 30 % Bewegung. Start (V2.4): Fenster wächst ab 6 s bis 15 s, Konfidenz × N/900; unter 8 s ist der
- *      Wert vorläufig (nicht verfolgt) und gilt nur, wenn Autokorrelation oder Einzelschläge ihn bestätigen und er
- *      nicht auf einer Atem-Oberwelle m ≤ 3 liegt (V3.1). Variante A121_DSP_COMBINE (V3.1): statt Einzelspektren die
- *      1. Hauptkomponente der 12 stärksten Punkte als ein Kanal (combinePrincipal), effektive Punktzahl hinten in @DSP.
- *      Variante A121_DSP_IBI_TEMPLATE (V3.6): Einzelschläge im Band 0,6–8 Hz über Vorlage und Korrelationsfilter
- *      (templateIbi) statt Spitzen im Pulsband. A121_DSP_HEAVY (V5.2, nur Handy): A121_DSP_VITERBI und
- *      A121_DSP_HARM_REMOVE zusammen.
- *   6. Atemfrequenz aus der mit Amplitude² gewichteten Leistungssumme aller Zoom-Punkte: größtes echtes lokales
- *      Maximum in 0,115–0,585 Hz, sonst 0 (keine Atemspitze). Vorher ungewichtet und größtes Bin; das klebte in rund
- *      einem Viertel der Reports am Rand bei 6,9 /min (schwache Punkte, Lagewechsel). Atemhub am Atem-Punkt (stärkste
- *      Atmung mit sauberem Echo). Herz-Autokorrelation und Zeitbereichs-Schläge (IBI, RMSSD) auf dem Punkt mit dem
- *      klarsten Puls, nach Abzug der Atem-Oberwellen außer denen am Puls (removeBreathHarmonics).
- *   7. Subsweep 2: Raum-Scan 0,30–2,67 m (30 mm) mit Rezoom-Empfehlung. Rauschpegel = unteres Viertel aller 80 Punkte
- *      (Amplitude und Bewegung getrennt). Ziel = lokales Maximum ab 2 × Rauschpegel, "bewegt" ab 3 × Bewegungs-Rauschpegel;
- *      gemeldet werden die 8 stärksten. Vorher galten feste Rohwerte (Wert > 120, Bewegung > 12), die unter dem Rauschen
- *      lagen (≈ 55 / 55), und nur die 4 nächsten Spitzen. Folge: Rausch-Spitzen im Zoom-Fenster blockierten den Rezoom.
- *      Rezoom auf das stärkste bewegte Ziel im über ≈ 3 s geglätteten Profil (nicht in der Momentaufnahme, die bei zwei
- *      nahen Echos kippte); kein Rezoom, solange dieses Ziel im Zoom-Fenster ±60 mm liegt (vorher wechselte der Zoom
- *      zwischen Körperstellen und löschte jedes Mal die Historie).
- *   V6 (A121_DSP_REACQ, Standard aus; Entwurf docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md):
- *      Puls nach Bewegung wiederfinden. Bewegungskarte vor den Spektren (motionMap: 3 stärkste Punkte, 1-s-Block bewegt,
- *      wenn bei 2 von 3 über 3 × ruhiges Viertel). Ohne bewegten Block wie oben. Bewegt und ruhiges Endstück ≥ 6 s: Puls
- *      (Spektren, Kandidaten, AKF, Einzelschläge) nur auf dem Endstück, Atmung, Atemzustand und motion_pct auf dem
- *      ganzen Fenster; der Wert gilt wie vorläufig nur mit Bestätigung durch AKF oder Einzelschläge (±5 /min) und nicht
- *      auf einer Atem-Oberwelle m ≤ 3, die Verfolgung wird nicht fortgeschrieben, hr_prev_ nur aus einem bestätigten
- *      Wert. Endstück kürzer: kein Puls, Verfolgung (hr_prev_, hr_miss_, alt_count_, Viterbi, hr_hist_) unverändert.
- *      Gedächtnis (ReacqMemory): sicherer Wert (Konfidenz ≥ 50 %, Fenster ≥ 8 s) gilt 60 s, solange Echo und Ziel im
- *      Zoom bleiben; im Endstück wird zuerst der stärkste Kandidat ±15 /min um ihn gewählt (preferMemoryCandidate),
- *      bestätigt ist er wiedergefunden (reacq = 2) und ersetzt die Atemspitze als Lebenszeichen, wenn er höchstens
- *      kMemSubstBpm (5 /min) vom gemerkten Wert liegt (Ruling R15). Die 30-%-Bewegungsregel entfällt. @DSP: win_s, reacq.
- *      Variante A121_DSP_REACQ_PERIOD (nur mit A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
- *      ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s, 15 Hz, Hann, Herzband) nicht periodisch ist
- *      (Spitze < 5 × Mittel der Bins außerhalb der Hauptkeule; segmentPeriodic). Bench (Simulation): hält die Grenzen
- *      nicht (beweg hr_mae, kurz, zappel, beweg_weg falsch nach Bewegung), tippen bleibt bei 4 falschen Werten; die
- *      simulierte Bewegung ist ein Sinus, also periodisch. Zahlen in docs/EXPERIMENTS.md (V6).
- *      Variante A121_DSP_PHASE_SLOPE (unabhängig von A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
- *      Der gewählte Kandidat (cf[0]) kommt aus der Steigung der abgewickelten Phase des 3-Bin-Schmalbands (phaseSlopeHz,
- *      1024er FFT, Herzsignal des klarsten Punkts) statt aus der Parabel. Bench (Simulation): schlechter als die Parabel
- *      (auf dem 1024er Raster liegen die drei Bins auf dem flachen Gipfel der Hauptkeule, die Steigung rastet auf den
- *      Mittenbin ein: Fehler bis 0,007 Hz statt < 0,0001 Hz), Puls-MAE in 12 von 19 Szenarien höher (1 niedriger; im
- *      10-s-Fenster 13 von 19), 7 neue Verletzungen (allein). Das Urteil gilt nur für die 3-Bin-Variante des Entwurfs
- *      (k0 ± 1 rastet auf den Mittenbin ein); ein Band von etwa ± 2 · 1024 / m Bins (m = Fensterlänge in Abtastwerten) wurde nicht gegen die Parabel probiert.
- *      Zahlen in docs/EXPERIMENTS.md (V6). Kosten mit Schalter: 14 KB RAM, zwei komplexe FFT (1024) je Report.
+ * Chain (as of 2026-11-01, developed on `iq3raw_normal_120s_2026-11-01.npz` and `iq3raw_motion_120s_2026-11-01.npz`):
+ *   1. Subsweep 0: on-chip loopback → phase derotation of all zoom points per frame (PLL/clock jitter).
+ *   2. Subsweep 1: all 24 zoom points (60 mm, 2.5 mm grid) are stored individually (18 s history: 15 s window
+ *      and 3 s during which the report computes from its snapshot while frames keep arriving; V2.1).
+ *   3. Pulse: per point, unwrap the phase around the circle center of the IQ values (Kåsa fit, circleCenter) (→ µm), detrend linearly, zero-phase bandpass
+ *      0.6–5.0 Hz (4th-order Butterworth, identical to scipy `sosfiltfilt`), motion damping per 1 s block
+ *      (reference: quiet quarter of the window), decimate to 15 Hz, Hann, real FFT (1024 points, a121_fft.h, V2.2;
+ *      previously Goertzel per frequency), harmonic sum S(f) = P(f) + 0.5 · P(2f) for 0.645–3.03 Hz; peaks only count
+ *      between 0.674 and 3.003 Hz (40–180 /min, V1.2; previously 55–136), parabolically refined. Phase via fastAtan2.
+ *      The spectra of all points are averaged, weighted by (peak/median)²;
+ *      points with a clear pulse count more. Breathing harmonics are NOT projected out of the spectrum: if the pulse lies
+ *      near m × breathing rate, the projection removes the heart component with it (on the dataset: 13–42 % instead of 61–89 % hits).
+ *   4. Candidates (V1.3): top 3 peaks of S with a penalty on breathing harmonics (m = 4..8: × 0.5 at ±0.04 Hz;
+ *      m = 2, 3: × 0.02 across the whole main lobe ±0.1 Hz). Octave check per candidate: peak at f/2 with
+ *      S(f/2) ≥ 0.5 · S(f) → the candidate stands for f/2 (2nd heart harmonic), unless f/2 lies at 2 × / 3 × breathing.
+ *      Tracking: a near candidate (±12 /min) with ≥ 50 % of the best value wins (smoothing 0.7/0.3); a far
+ *      jump counts after 3 reports, onto a breathing harmonic only after 10. If the tracked value lies at 2 × / 3 ×
+ *      breathing, it switches to a candidate without a harmonic after 3 reports. hr_harm = 1 only means "peak lies on
+ *      a harmonic"; the pulse may lie there (live 2026-11-01: pulse 78 ≈ 4 × breathing 19.5).
+ *   5. Confidence (V1.3, signalQuality): peak height, harmonic, agreement of spectrum, autocorrelation and
+ *      individual beats, motion, jump. The earlier point agreement is at the end of @DSP as point_agree_pct.
+ *      motion_pct = share of 1 s blocks with more than 3 × the quiet amplitude in the heart band (motion hint).
+ *      Valid only with a sign of life: clean echo and breathing (≥ 100 µm) or held breath with a clear pulse peak,
+ *      at most 30 % motion. Start (V2.4): window grows from 6 s to 15 s, confidence × N/900; below 8 s the
+ *      value is preliminary (not tracked) and counts only if autocorrelation or individual beats confirm it and it
+ *      does not lie on a breathing harmonic m ≤ 3 (V3.1). Variant A121_DSP_COMBINE (V3.1): instead of single spectra, the
+ *      1st principal component of the 12 strongest points as one channel (combinePrincipal), effective point count at the end of @DSP.
+ *      Variant A121_DSP_IBI_TEMPLATE (V3.6): individual beats in the 0.6–8 Hz band via template and matched filter
+ *      (templateIbi) instead of peaks in the pulse band. A121_DSP_HEAVY (V5.2, phone only): A121_DSP_VITERBI and
+ *      A121_DSP_HARM_REMOVE together.
+ *   6. Breathing rate from the power sum of all zoom points, weighted by amplitude²: largest true local
+ *      maximum in 0.115–0.585 Hz, otherwise 0 (no breathing peak). Previously unweighted and largest bin; that stuck in about
+ *      a quarter of the reports at the edge at 6.9 /min (weak points, posture change). Breathing excursion at the breathing point (strongest
+ *      breathing with a clean echo). Heart autocorrelation and time-domain beats (IBI, RMSSD) on the point with the
+ *      clearest pulse, after removing the breathing harmonics except those at the pulse (removeBreathHarmonics).
+ *   7. Subsweep 2: room scan 0.30–2.67 m (30 mm) with a rezoom recommendation. Noise level = lower quarter of all 80 points
+ *      (amplitude and motion separately). Target = local maximum from 2 × noise level, "moving" from 3 × motion noise level;
+ *      the 8 strongest are reported. Previously fixed raw values applied (value > 120, motion > 12), which were below the noise
+ *      (≈ 55 / 55), and only the 4 nearest peaks. Consequence: noise peaks in the zoom window blocked the rezoom.
+ *      Rezoom to the strongest moving target in the profile smoothed over ≈ 3 s (not in the snapshot, which flipped with two
+ *      nearby echoes); no rezoom while this target lies within the zoom window ±60 mm (previously the zoom switched
+ *      between body locations and cleared the history each time).
+ *   V6 (A121_DSP_REACQ, off by default; draft docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md):
+ *      reacquire the pulse after motion. Motion map before the spectra (motionMap: 3 strongest points, 1 s block moving
+ *      if 2 of 3 exceed 3 × the quiet quarter). Without a moving block as above. Moving and quiet tail ≥ 6 s: pulse
+ *      (spectra, candidates, ACF, individual beats) only on the tail; breathing, breathing state and motion_pct on the
+ *      whole window; the value counts only with confirmation by ACF or individual beats (±5 /min), as with preliminary values, and not
+ *      on a breathing harmonic m ≤ 3; tracking is not advanced, hr_prev_ only from a confirmed
+ *      value. Shorter tail: no pulse, tracking (hr_prev_, hr_miss_, alt_count_, Viterbi, hr_hist_) unchanged.
+ *      Memory (ReacqMemory): a safe value (confidence ≥ 50 %, window ≥ 8 s) holds for 60 s while echo and target stay
+ *      in the zoom; in the tail, the strongest candidate ±15 /min around it is chosen first (preferMemoryCandidate);
+ *      once confirmed it is reacquired (reacq = 2) and replaces the breathing peak as the sign of life if it lies at most
+ *      kMemSubstBpm (5 /min) from the remembered value (ruling R15). The 30 % motion rule does not apply. @DSP: win_s, reacq.
+ *      Variant A121_DSP_REACQ_PERIOD (only with A121_DSP_REACQ; REJECTED, off by default, code kept as an experiment):
+ *      a block that is too strong counts as moving only if the signal around it (3 s, 15 Hz, Hann, heart band) is not periodic
+ *      (peak < 5 × mean of the bins outside the main lobe; segmentPeriodic). Bench (simulation): does not hold the limits
+ *      (move hr_mae, short, fidget, move_away wrong after motion), tapping stays at 4 wrong values; the
+ *      simulated motion is a sine, hence periodic. Numbers in docs/EXPERIMENTS.md (V6).
+ *      Variant A121_DSP_PHASE_SLOPE (independent of A121_DSP_REACQ; REJECTED, off by default, code kept as an experiment):
+ *      the chosen candidate (cf[0]) comes from the slope of the unwrapped phase of the 3-bin narrowband (phaseSlopeHz,
+ *      1024 FFT, heart signal of the clearest point) instead of from the parabola. Bench (simulation): worse than the parabola
+ *      (on the 1024 grid the three bins lie on the flat top of the main lobe, the slope snaps to the
+ *      center bin: error up to 0.007 Hz instead of < 0.0001 Hz), pulse MAE higher in 12 of 19 scenarios (1 lower; in the
+ *      10 s window 13 of 19), 7 new violations (alone). The verdict applies only to the 3-bin variant of the draft
+ *      (k0 ± 1 snaps to the center bin); a band of about ± 2 · 1024 / m bins (m = window length in samples) was not tried against the parabola.
+ *      Numbers in docs/EXPERIMENTS.md (V6). Cost with the switch: 14 KB RAM, two complex FFTs (1024) per report.
  *
- * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
- * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
- * Ergebnisse sind Rhythmus-Schätzungen ohne medizinische Aussage; Genauigkeit nur mit Referenzmessung bewerten.
+ * Time base: fixed frame rate kFsHz (the session runs at 60 Hz, the sensor delivers without gaps). The earlier
+ * estimate from ESP32 processing times was wrong because frames arrive bundled after every compute pause.
+ * Results are rhythm estimates without any medical statement; judge accuracy only with a reference measurement.
  */
 
 #ifndef A121_ESP_DSP_H
@@ -87,7 +87,7 @@
 
 #include "a121_fft.h"
 
-/* Handy-Fassung (V5.2): die rechenaufwendigeren Varianten zusammen, nur in der App-Bibliothek radardsp_live. */
+/* Phone build (V5.2): the more compute-intensive variants together, only in the app library radardsp_live. */
 #ifdef A121_DSP_HEAVY
 #ifndef A121_DSP_VITERBI
 #define A121_DSP_VITERBI
@@ -103,98 +103,98 @@ static constexpr float kRadarFreqHz  = 60.5e9f;
 static constexpr float kSpeedOfLight = 299792458.0f;
 static constexpr float kWavelengthM  = kSpeedOfLight / kRadarFreqHz;                    /* ~4.9552 mm */
 static constexpr float kRadToUm      = (kWavelengthM / (4.0f * (float)M_PI)) * 1.0e6f;  /* ~394.37 µm/rad */
-static constexpr float kPointStepM   = 0.0025f;                                         /* 2.5 mm pro A121 Step */
+static constexpr float kPointStepM   = 0.0025f;                                         /* 2.5 mm per A121 step */
 
 #ifndef A121_ZOOM_POINTS
-#define A121_ZOOM_POINTS 24  /* 48 = 120 mm (V2.3 Schritt 3), vorbereitet; Wahl nach Messung V4.4 */
+#define A121_ZOOM_POINTS 24  /* 48 = 120 mm (V2.3 step 3), prepared; choice after measurement V4.4 */
 #endif
-static constexpr uint16_t kZoomPoints   = A121_ZOOM_POINTS;  /* Subsweep 1: 24 Punkte * 2.5 mm = 60 mm Fokusfenster */
+static constexpr uint16_t kZoomPoints   = A121_ZOOM_POINTS;  /* Subsweep 1: 24 points * 2.5 mm = 60 mm focus window */
 static_assert(kZoomPoints >= 8 && kZoomPoints <= 64, "A121_ZOOM_POINTS: 8 .. 64");
-/* Spektren nur für die Punkte mit der stärksten Atmung, wenn das Fenster breiter als 24 Punkte ist (Rechenzeit) */
+/* Spectra only for the points with the strongest breathing when the window is wider than 24 points (compute time) */
 static constexpr uint16_t kSpecPoints   = (kZoomPoints > 24U) ? 16U : kZoomPoints;
-static constexpr uint16_t kRoomStep     = 12U;  /* RSS: step_length muss Teiler oder Vielfaches von 24 sein */
-static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 Punkte * 30 mm = 2.40 m Raumfenster */
-static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 Punkte = 420 Bytes/Frame */
+static constexpr uint16_t kRoomStep     = 12U;  /* RSS: step_length must be a divisor or multiple of 24 */
+static constexpr uint16_t kRoomPoints   = 80U;  /* Subsweep 2: 80 points * 30 mm = 2.40 m room window */
+static constexpr uint16_t kTotal3SubPts = 1U + kZoomPoints + kRoomPoints; /* 105 points = 420 bytes/frame */
 
-static constexpr float    kFsHz        = 60.0f;  /* Frame-Rate der iq3-Session; Filterkoeffizienten gelten nur hierfür */
+static constexpr float    kFsHz        = 60.0f;  /* frame rate of the iq3 session; filter coefficients only apply to this */
 #ifndef A121_HR_WIN
-#define A121_HR_WIN 900  /* Pulsfenster in Frames; 600 / 720 für den Vergleich 10 / 12 / 15 s an Tag A (V2.5) */
+#define A121_HR_WIN 900  /* pulse window in frames; 600 / 720 for the comparison 10 / 12 / 15 s on day A (V2.5) */
 #endif
-static constexpr uint16_t kHrWin       = A121_HR_WIN;  /* 15 s Pulsfenster */
-static constexpr uint16_t kSnapMaxLag  = 180U;   /* pushFrame darf während eines Reports 3 s weiterschreiben (V2.1) */
+static constexpr uint16_t kHrWin       = A121_HR_WIN;  /* 15 s pulse window */
+static constexpr uint16_t kSnapMaxLag  = 180U;   /* pushFrame may keep writing for 3 s during a report (V2.1) */
 static constexpr uint16_t kHistoryLen  = kHrWin + kSnapMaxLag;  /* 18 s @ 60 Hz (ReportSnapshot) */
-static constexpr uint16_t kHrMinWin    = 360U;   /* ab 6 s Daten wird ein Puls berichtet, Fenster wächst bis 15 s (V2.4; vorher 8 s) */
-static constexpr uint16_t kHrStableWin = 480U;   /* Verfolgung erst ab 8 s Fenster; davor vorläufig (V2.4) */
+static constexpr uint16_t kHrMinWin    = 360U;   /* a pulse is reported from 6 s of data, window grows to 15 s (V2.4; previously 8 s) */
+static constexpr uint16_t kHrStableWin = 480U;   /* tracking only from an 8 s window; preliminary before that (V2.4) */
 static_assert(kHrWin >= kHrStableWin && kHrWin % 60U == 0, "A121_HR_WIN: ganze Sekunden, mindestens 8 s");
-static constexpr uint16_t kStartZoomFrames = 120U;  /* Start: nach 2 s auf das Ziel zoomen (2 Reports statt 3, V2.4) */
-static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz für die Spektralsuche */
-/* Spektren (V2.2, B13): reelle FFT der auf 15 Hz dezimierten Folge (≤ 225 Werte, Hann, auf 1024 nullaufgefüllt) statt
- * Goertzel je Frequenz; Raster 15 Hz / 1024 = 0,0146 Hz (0,88 /min), Spitzen parabolisch verfeinert. Vorher Puls im
- * 0,01-Hz-Raster ohne Verfeinerung, Atmung im 0,005-Hz-Raster. Die Grenzen in Hz bleiben wie vorher. */
+static constexpr uint16_t kStartZoomFrames = 120U;  /* start: zoom to the target after 2 s (2 reports instead of 3, V2.4) */
+static constexpr uint8_t  kDecim       = 4U;     /* 60 Hz → 15 Hz for the spectral search */
+/* Spectra (V2.2, B13): real FFT of the sequence decimated to 15 Hz (≤ 225 values, Hann, zero-padded to 1024) instead of
+ * Goertzel per frequency; grid 15 Hz / 1024 = 0.0146 Hz (0.88 /min), peaks parabolically refined. Previously pulse on a
+ * 0.01 Hz grid without refinement, breathing on a 0.005 Hz grid. The limits in Hz stay as before. */
 static constexpr uint16_t kFftN        = 1024U;
 static constexpr float    kFftDf       = kFsHz / (float)kDecim / (float)kFftN;
-static constexpr uint16_t kHrK0        = 44U;    /* erster Bin des Pulsspektrums (0,645 Hz) */
+static constexpr uint16_t kHrK0        = 44U;    /* first bin of the pulse spectrum (0.645 Hz) */
 static constexpr float    kHrFMin      = (float)kHrK0 * kFftDf;
 static constexpr float    kHrFStep     = kFftDf;
-static constexpr uint16_t kHrNumF      = 164U;   /* Bins 44 .. 207 (0,645 .. 3,032 Hz); gesucht 46 .. 205 = 40,4–180,2 /min */
-static constexpr float    kHarm2W      = 0.5f;   /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f) (2. Herz-Oberwelle) */
-static constexpr float    kHr2MaxHz    = 5.0f;   /* 2f über der Bandpass-Grenze zählt nicht (V1.2) */
-static constexpr uint16_t kHr2MaxBin   = (uint16_t)(kHr2MaxHz / kFftDf);  /* 341 = 4,995 Hz */
-static constexpr uint16_t kBrK0        = 7U;     /* Atem-Spektrum über alle Zoom-Punkte: Bins 7 .. 40 = 0,103 .. 0,586 Hz */
+static constexpr uint16_t kHrNumF      = 164U;   /* bins 44 .. 207 (0.645 .. 3.032 Hz); searched 46 .. 205 = 40.4–180.2 /min */
+static constexpr float    kHarm2W      = 0.5f;   /* harmonic sum S(f) = P(f) + 0.5 · P(2f) (2nd heart harmonic) */
+static constexpr float    kHr2MaxHz    = 5.0f;   /* 2f above the bandpass limit does not count (V1.2) */
+static constexpr uint16_t kHr2MaxBin   = (uint16_t)(kHr2MaxHz / kFftDf);  /* 341 = 4.995 Hz */
+static constexpr uint16_t kBrK0        = 7U;     /* breathing spectrum over all zoom points: bins 7 .. 40 = 0.103 .. 0.586 Hz */
 static constexpr float    kBrFMin      = (float)kBrK0 * kFftDf;
 static constexpr float    kBrFStep     = kFftDf;
 static constexpr uint16_t kBrNumF      = 34U;
-static constexpr uint16_t kBrEdgeBins  = 1U;     /* Atem-Spitze nicht am Bandrand (früher oft 6 /min): 0,117 .. 0,571 Hz */
-static constexpr float    kBrMinQ      = 2.0f;   /* Atem-Spitze/Median: darunter keine Oberwellen-Prüfung */
-static constexpr float    kHarmTolHz   = 0.04f;  /* Puls-Kandidat gilt als Atem-Oberwelle, wenn |f − m·f_Atem| ≤ 0,04 Hz */
-static constexpr uint8_t  kHarmMMax    = 8U;     /* geprüfte Oberwellen m = 2 .. 8 (V1.3) */
-static constexpr float    kHarmPenalty = 0.5f;   /* Kandidat auf einer Atem-Oberwelle m ≥ 4: S × 0,5 bei der Kandidatenwahl */
-static constexpr float    kHarmPenLow  = 0.02f;  /* m = 2, 3: S × 0,02 (praktisch gesperrt: Prüfstand 4–12 × Puls, × 0,1 reichte nicht) */
+static constexpr uint16_t kBrEdgeBins  = 1U;     /* breathing peak not at the band edge (often 6 /min before): 0.117 .. 0.571 Hz */
+static constexpr float    kBrMinQ      = 2.0f;   /* breathing peak/median: below this no harmonic check */
+static constexpr float    kHarmTolHz   = 0.04f;  /* pulse candidate counts as a breathing harmonic if |f − m·f_breath| ≤ 0.04 Hz */
+static constexpr uint8_t  kHarmMMax    = 8U;     /* harmonics checked m = 2 .. 8 (V1.3) */
+static constexpr float    kHarmPenalty = 0.5f;   /* candidate on a breathing harmonic m ≥ 4: S × 0.5 in the candidate selection */
+static constexpr float    kHarmPenLow  = 0.02f;  /* m = 2, 3: S × 0.02 (practically blocked: test bench 4–12 × pulse, × 0.1 was not enough) */
 static constexpr uint8_t  kHarmLowMax  = 3U;
-static constexpr float    kLowLobeHz   = 0.1f;   /* m = 2, 3: Toleranz ±0,1 Hz statt ±0,04 (Hauptkeule, Hann 15 s: ±0,13 Hz) */
-static constexpr float    kSubRel      = 0.5f;   /* Oktav-Prüfung: Spitze bei f/2 mit Wert ≥ 0,5 · Wert(f) gilt als Grundwelle */
-static constexpr float    kNearMinRel  = 0.5f;   /* naher Kandidat (±12 /min) gewinnt nur mit S ≥ 0,5 · S_max */
-static constexpr uint8_t  kAltReports  = 3U;     /* Wechsel weg von einer Oberwelle nach 3 Reports mit Alternative */
-static constexpr float    kMaxMotionPct = 30.0f; /* unter 70 % sauberer 1-s-Blöcke ist der Report ungültig */
-static constexpr float    kPulseHeldDb = 8.0f;   /* Atem angehalten: Pulsspitze ≥ 8 dB über dem Median */
-static constexpr float    kEchoSpreadMax = 0.4f; /* sauberes Echo: Abstand zum Kreismittelpunkt streut < 40 % (Rauschen ≈ 52 %) */
-static constexpr float    kBreathMinUm = 100.0f; /* Lebenszeichen: Atemhub ≥ 100 µm Spitze-Spitze am Atem-Punkt */
-static constexpr uint8_t  kHoldHarm    = 10U;    /* Sprung auf eine Oberwelle erst nach 10 Reports (sonst 3) */
-static constexpr float    kKeepTrackS  = 30.0f;  /* Rezoom: Verfolgung bleibt, wenn der letzte gültige Wert < 30 s alt ist */
-/* Atemzustand (V1.4, B9): Amplitude je Report = Spitze-Spitze des 1-s-Mittels über die letzten 10 s am Atem-Punkt
- * (Trend entfernt), Bezug = Median der letzten 60 Werte. Ein 1-s-Effektivwert (Plan) hängt bei 4–10 s Atemperiode von
- * der Phase ab; 10 s enthalten eine ganze Periode bis 6 /min (5 s verloren bei 6 /min bis zur Hälfte). */
+static constexpr float    kLowLobeHz   = 0.1f;   /* m = 2, 3: tolerance ±0.1 Hz instead of ±0.04 (main lobe, Hann 15 s: ±0.13 Hz) */
+static constexpr float    kSubRel      = 0.5f;   /* octave check: peak at f/2 with value ≥ 0.5 · value(f) counts as the fundamental */
+static constexpr float    kNearMinRel  = 0.5f;   /* near candidate (±12 /min) wins only with S ≥ 0.5 · S_max */
+static constexpr uint8_t  kAltReports  = 3U;     /* switch away from a harmonic after 3 reports with an alternative */
+static constexpr float    kMaxMotionPct = 30.0f; /* below 70 % clean 1 s blocks the report is invalid */
+static constexpr float    kPulseHeldDb = 8.0f;   /* breath held: pulse peak ≥ 8 dB above the median */
+static constexpr float    kEchoSpreadMax = 0.4f; /* clean echo: distance to the circle center scatters < 40 % (noise ≈ 52 %) */
+static constexpr float    kBreathMinUm = 100.0f; /* sign of life: breathing excursion ≥ 100 µm peak-to-peak at the breathing point */
+static constexpr uint8_t  kHoldHarm    = 10U;    /* jump onto a harmonic only after 10 reports (otherwise 3) */
+static constexpr float    kKeepTrackS  = 30.0f;  /* rezoom: tracking stays if the last valid value is < 30 s old */
+/* Breathing state (V1.4, B9): amplitude per report = peak-to-peak of the 1 s mean over the last 10 s at the breathing point
+ * (trend removed), reference = median of the last 60 values. A 1 s RMS (plan) depends on the phase at a 4–10 s breathing
+ * period; 10 s contain a whole period down to 6 /min (5 s lost up to half of it at 6 /min). */
 static constexpr float    kBrAmpWinS   = 10.0f;
 static constexpr uint8_t  kBrRingLen   = 60U;
-static constexpr uint8_t  kBrMinRing   = 10U;    /* Median erst ab 10 Werten */
-static constexpr float    kApneaRel    = 0.10f;  /* angehalten: ≥ 90 % unter dem Median */
-static constexpr float    kShallowRel  = 0.70f;  /* flach: ≥ 30 % darunter */
-static constexpr uint8_t  kBrLowReports = 1U;    /* „seit ≥ 10 s": ein niedriger Wert, das Fenster ist schon 10 s lang */
-static constexpr float    kBrMotionPct = 50.0f;  /* Zustand Bewegung ab motion_pct > 50 */
-/* Ohne sauberes Echo in so vielen Reports in Folge ist die Person weg: Referenz vergessen, sonst wird der erste
- * Rausch-Report mit „Echo" gegen die alte Atemtiefe zur Apnoe (Abschluss-Review C1, Prüfstand weg) */
+static constexpr uint8_t  kBrMinRing   = 10U;    /* median only from 10 values */
+static constexpr float    kApneaRel    = 0.10f;  /* held: ≥ 90 % below the median */
+static constexpr float    kShallowRel  = 0.70f;  /* shallow: ≥ 30 % below */
+static constexpr uint8_t  kBrLowReports = 1U;    /* "for ≥ 10 s": one low value, the window is already 10 s long */
+static constexpr float    kBrMotionPct = 50.0f;  /* state motion from motion_pct > 50 */
+/* Without a clean echo in this many reports in a row the person is gone: forget the reference, otherwise the first
+ * noise report with "echo" against the old breathing depth turns into apnea (final review C1, test bench gone) */
 static constexpr uint8_t  kBrEchoLostReports = 3U;
-static constexpr uint32_t kTickGapMs   = 25U;    /* tick-Abstand > 25 ms gilt als Lücke (Soll 16,7 ms; XM125: 1 tick = 1 ms) */
-static constexpr float    kSatMaxPct   = 1.0f;   /* ab 1 % gesättigter Frames im Fenster: Konfidenz × 0,5 (V1.5) */
+static constexpr uint32_t kTickGapMs   = 25U;    /* tick distance > 25 ms counts as a gap (nominal 16.7 ms; XM125: 1 tick = 1 ms) */
+static constexpr float    kSatMaxPct   = 1.0f;   /* from 1 % saturated frames in the window: confidence × 0.5 (V1.5) */
 static constexpr uint8_t  kBrStateNormal = 0U, kBrStateNoPeak = 1U, kBrStateApnea = 2U, kBrStateMotion = 3U,
                           kBrStateShallow = 4U;
-/* Zustand der Messung (V3.5, Zeile @STATE) */
+/* state of the measurement (V3.5, line @STATE) */
 static constexpr uint8_t  kStNoPerson = 0U, kStSearch = 1U, kStAcquire = 2U, kStValid = 3U, kStMotion = 4U,
                           kStApnea = 5U;
-static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * Sektionen + 1) */
-static constexpr uint16_t kGateBlk     = 60U;    /* Bewegungsdämpfung: 1-s-Blöcke im Herzband */
-static constexpr float    kGateK       = 1.25f;  /* Grenze = 1,25 × Effektivwert des ruhigen Viertels der Blöcke */
-static constexpr float    kGateP       = 3.0f;   /* Verstärkung darüber (Grenze/Effektivwert)^3: Bewegung fällt praktisch heraus */
-static constexpr float    kMotionK     = 3.0f;   /* für motion_pct: Block > 3 × ruhiges Viertel gilt als Bewegung */
+static constexpr uint16_t kFiltPad     = 27U;    /* scipy sosfiltfilt: padlen = 3 * (2 * sections + 1) */
+static constexpr uint16_t kGateBlk     = 60U;    /* motion damping: 1 s blocks in the heart band */
+static constexpr float    kGateK       = 1.25f;  /* limit = 1.25 × RMS of the quiet quarter of the blocks */
+static constexpr float    kGateP       = 3.0f;   /* gain above it (limit/RMS)^3: motion practically drops out */
+static constexpr float    kMotionK     = 3.0f;   /* for motion_pct: block > 3 × quiet quarter counts as motion */
 static constexpr uint8_t  kMaxBlocks   = kHrWin / kGateBlk;
-static constexpr uint16_t kHrEdgeBins  = 2U;     /* Spitzen in den äußeren 2 Bins (0,03 Hz) zählen nicht (Leckage vom Bandrand) */
-static constexpr uint8_t  kMaxRoomTargets = 8U;  /* gemeldete Raum-Ziele (die stärksten) */
-static constexpr float    kRoomDetK    = 2.0f;   /* Raum-Ziel: Amplitude oder Bewegung ≥ 2 × Rauschpegel */
-static constexpr float    kRoomMoveK   = 3.0f;   /* bewegt: Bewegung ≥ 3 × Bewegungs-Rauschpegel */
-static constexpr float    kRoomSlowA   = 0.00554f; /* Glättung für das Zoom-Ziel: 1 − exp(−1 / (60 Hz · 3 s)), τ ≈ 3 s */
-static constexpr float    kArcMinRad   = 2.0f;   /* Kreisfit gilt als schlecht bestimmt, wenn die Phase weniger überstreicht */
+static constexpr uint16_t kHrEdgeBins  = 2U;     /* peaks in the outer 2 bins (0.03 Hz) do not count (leakage from the band edge) */
+static constexpr uint8_t  kMaxRoomTargets = 8U;  /* reported room targets (the strongest) */
+static constexpr float    kRoomDetK    = 2.0f;   /* room target: amplitude or motion ≥ 2 × noise level */
+static constexpr float    kRoomMoveK   = 3.0f;   /* moving: motion ≥ 3 × motion noise level */
+static constexpr float    kRoomSlowA   = 0.00554f; /* smoothing for the zoom target: 1 − exp(−1 / (60 Hz · 3 s)), τ ≈ 3 s */
+static constexpr float    kArcMinRad   = 2.0f;   /* circle fit counts as poorly determined if the phase sweeps less than this */
 
-/* Butterworth-Bandpass 4. Ordnung 0,6–5,0 Hz bei 60 Hz (V1.2: Puls 40–180 /min samt 2. Oberwelle; vorher 0,8–3,0 Hz):
+/* 4th-order Butterworth bandpass 0.6–5.0 Hz at 60 Hz (V1.2: pulse 40–180 /min incl. 2nd harmonic; previously 0.8–3.0 Hz):
  * scipy.signal.butter(4, [0.6, 5.0], 'band', fs=60, output='sos') */
 static constexpr float kBpSos[4][6] = {
     {0.0016470443743298322f, 0.0032940887486596643f, 0.0016470443743298322f, 1.0f, -1.3464578520633204f, 0.47760903309535657f},
@@ -203,14 +203,14 @@ static constexpr float kBpSos[4][6] = {
     {1.0f, -2.0f, 1.0f, 1.0f, -1.9571506605508442f, 0.9612033138279775f},
 };
 
-/** Ein Durchlauf von vier Biquads (DF2T) in Vorwärts- oder Rückwärtsrichtung, Anfangszustand = Sprungantwort. */
+/** One pass of four biquads (DF2T) in forward or backward direction, initial state = step response. */
 inline void sosPassSos(float *e, uint32_t L, bool reverse, const float (*sos)[6]) {
     const float x0 = reverse ? e[L - 1U] : e[0];
     float z1[4], z2[4];
     float level = x0;
     for (uint8_t s = 0; s < 4; s++) {
         const float *c = sos[s];
-        const float g = (c[0] + c[1] + c[2]) / (1.0f + c[4] + c[5]);  /* DC-Verstärkung der Sektion */
+        const float g = (c[0] + c[1] + c[2]) / (1.0f + c[4] + c[5]);  /* DC gain of the section */
         z1[s] = (g - c[0]) * level;
         z2[s] = (c[2] - c[5] * g) * level;
         level *= g;
@@ -230,8 +230,8 @@ inline void sosPassSos(float *e, uint32_t L, bool reverse, const float (*sos)[6]
 }
 
 /**
- * Nullphasen-Bandpass wie scipy `sosfiltfilt` (ungerade Erweiterung um kFiltPad, Anfangszustände aus der
- * Sprungantwort) mit vier Biquads sos. ext: N + 2 · kFiltPad Werte; Ergebnis: ext[kFiltPad .. kFiltPad + N).
+ * Zero-phase bandpass like scipy `sosfiltfilt` (odd extension by kFiltPad, initial states from the
+ * step response) with four biquads sos. ext: N + 2 · kFiltPad values; result: ext[kFiltPad .. kFiltPad + N).
  */
 inline void sosFiltFiltSos(const float *x, uint16_t N, float *ext, const float (*sos)[6]) {
     const uint16_t P = (N > kFiltPad) ? kFiltPad : (uint16_t)(N - 1U);
@@ -245,7 +245,7 @@ inline void sosFiltFiltSos(const float *x, uint16_t N, float *ext, const float (
 }
 
 #ifdef A121_DSP_IBI_TEMPLATE
-/* V3.6: breiteres Herzband für die Einzelschläge; scipy.signal.butter(4, [0.6, 8.0], 'band', fs=60, output='sos') */
+/* V3.6: wider heart band for the individual beats; scipy.signal.butter(4, [0.6, 8.0], 'band', fs=60, output='sos') */
 static constexpr float kBp8Sos[4][6] = {
     {0.009764843672775374f, 0.019529687345550748f, 0.009764843672775374f, 1.0f, -0.9137923786305936f, 0.24411561287811703f},
     {1.0f, 2.0f, 1.0f, 1.0f, -1.0869497349419404f, 0.6029896520783747f},
@@ -255,9 +255,9 @@ static constexpr float kBp8Sos[4][6] = {
 #endif
 
 /**
- * atan2 als Polynom (V2.2, B13): atan(a) für a = min/max ∈ [0, 1] nach Abramowitz/Stegun 4.4.49 (Fehler ≤ 1 · 10⁻⁵ rad),
- * dann auf den Quadranten gespiegelt. Beim Abwickeln 21 600 Aufrufe je Report; atan2f kostet auf dem ESP32-S3 ein
- * Vielfaches. 10⁻⁵ rad ≈ 0,004 µm Weg.
+ * atan2 as a polynomial (V2.2, B13): atan(a) for a = min/max ∈ [0, 1] after Abramowitz/Stegun 4.4.49 (error ≤ 1 · 10⁻⁵ rad),
+ * then mirrored into the quadrant. 21,600 calls per report during unwrapping; atan2f costs several
+ * times as much on the ESP32-S3. 10⁻⁵ rad ≈ 0.004 µm of displacement.
  */
 static inline float fastAtan2(float y, float x) {
     const float ax = fabsf(x), ay = fabsf(y);
@@ -271,8 +271,8 @@ static inline float fastAtan2(float y, float x) {
 }
 
 /**
- * Linearen Trend entfernen (kleinste Quadrate) in float (V2.2; vorher double, das der ESP32-S3 in Software rechnet):
- * Σt² = N(N² − 1)/12 geschlossen, Summen um x[0] verschoben, damit float reicht.
+ * Remove the linear trend (least squares) in float (V2.2; previously double, which the ESP32-S3 computes in software):
+ * Σt² = N(N² − 1)/12 in closed form, sums shifted by x[0] so that float suffices.
  */
 inline void removeLinearTrend(float *x, uint16_t N) {
     if (N < 2) return;
@@ -288,7 +288,7 @@ inline void removeLinearTrend(float *x, uint16_t N) {
     for (uint16_t n = 0; n < N; n++) x[n] -= mean + slope * ((float)n - half);
 }
 
-/** sel[i] = true für die k größten Werte von v[0 .. n) (bei Gleichstand der frühere Index). */
+/** sel[i] = true for the k largest values of v[0 .. n) (on a tie the earlier index). */
 inline void selectStrongest(const float *v, uint16_t n, uint16_t k, bool *sel) {
     for (uint16_t i = 0; i < n; i++) sel[i] = false;
     for (uint16_t j = 0; j < k && j < n; j++) {
@@ -303,34 +303,34 @@ inline void selectStrongest(const float *v, uint16_t n, uint16_t k, bool *sel) {
 #error "A121_DSP_REACQ_PERIOD gibt es nur zusammen mit A121_DSP_REACQ"
 #endif
 #ifdef A121_DSP_REACQ
-/* V6: Bewegungskarte */
-static constexpr uint8_t kReacqMinS    = 6U;     /* kürzestes Fenster (s) nach Bewegung, auf dem noch ein Puls gesucht wird */
-static constexpr uint8_t kMotionVotes  = 2U;     /* so viele der stärksten Punkte müssen einen Block bewegt melden */
-static constexpr uint8_t kMotionPoints = 3U;     /* so viele der stärksten Punkte stimmen ab */
+/* V6: motion map */
+static constexpr uint8_t kReacqMinS    = 6U;     /* shortest window (s) after motion on which a pulse is still searched */
+static constexpr uint8_t kMotionVotes  = 2U;     /* this many of the strongest points must report a block as moving */
+static constexpr uint8_t kMotionPoints = 3U;     /* this many of the strongest points vote */
 static_assert(kMaxBlocks <= 32U, "MotionMap::mask hat 32 Bit: höchstens 32 Blöcke");
-/* V6: Gedächtnis */
-static constexpr float    kMemS        = 60.0f;  /* der zuletzt gesicherte Puls gilt so lange (s); danach vergessen */
-static constexpr float    kMemBandBpm  = 15.0f;  /* Kandidat gilt als "nah am Gedächtnis" bei |bpm − gemerkt| ≤ 15 /min */
-static constexpr float    kMemMinConf  = 50.0f;  /* Puls wird nur ab dieser Konfidenz gemerkt (Speicherbedingung, Task 6) */
-/* Ruling R15: Ein über das Gedächtnis wiedergefundener Wert (reacq = 2) ersetzt die Atemspitze als Lebenszeichen nur,
- * wenn er höchstens so weit vom gemerkten Puls liegt. Gleiche Toleranz wie die Bestätigung durch AKF/Einzelschläge
- * (±5 /min), enger als die Fehlergrenze des Prüfstands (10 /min). Anlass war das Bewegungsartefakt im Prüfstand lang
- * (84,7 statt 72,5 /min im Band ±kMemBandBpm); diese Reports sind aber über die Atemspitze gültig, die Regel ändert
- * dort nichts (docs/EXPERIMENTS.md, V6). */
+/* V6: memory */
+static constexpr float    kMemS        = 60.0f;  /* the last secured pulse holds for this long (s); forgotten afterwards */
+static constexpr float    kMemBandBpm  = 15.0f;  /* candidate counts as "near the memory" at |bpm − remembered| ≤ 15 /min */
+static constexpr float    kMemMinConf  = 50.0f;  /* pulse is remembered only from this confidence (store condition, task 6) */
+/* Ruling R15: A value reacquired via the memory (reacq = 2) replaces the breathing peak as the sign of life only
+ * if it lies at most this far from the remembered pulse. Same tolerance as the confirmation by ACF/individual beats
+ * (±5 /min), tighter than the error limit of the test bench (10 /min). The trigger was the motion artifact in the test bench long
+ * (84.7 instead of 72.5 /min in the band ±kMemBandBpm); those reports are valid via the breathing peak, though, so the rule changes
+ * nothing there (docs/EXPERIMENTS.md, V6). */
 static constexpr float    kMemSubstBpm = 5.0f;
 
-/** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */
+/** Motion per 1 s block of the pulse window. Bit k of mask = block k moving (block 0 = oldest). */
 struct MotionMap {
     uint32_t mask;
     uint8_t  n_blocks;
-    uint8_t  clean_tail_blocks;  /* Blöcke nach dem letzten bewegten (alle, wenn keiner) */
+    uint8_t  clean_tail_blocks;  /* blocks after the last moving one (all if none) */
 };
 
 /**
- * Bewegungskarte aus dem Block-Effektivwert (rms: n_pts Zeilen × nb Spalten, zeilenweise). Je Punkt ist der Bezug das
- * ruhige Viertel seiner Blöcke wie in gateMotion; ein Block gilt als bewegt, wenn bei mindestens votes Punkten
- * rms > k × Bezug ist (votes wird auf n_pts begrenzt, ein einzelner Punkt entscheidet also allein). Wie gateMotion
- * gibt es unter 3 Blöcken keine Bewegungsaussage; mehr als kMaxBlocks Blöcke werden abgeschnitten.
+ * Motion map from the block RMS (rms: n_pts rows × nb columns, row by row). Per point the reference is the
+ * quiet quarter of its blocks as in gateMotion; a block counts as moving if at least votes points have
+ * rms > k × reference (votes is limited to n_pts, so a single point decides alone). As in gateMotion,
+ * there is no motion statement below 3 blocks; more than kMaxBlocks blocks are cut off.
  */
 inline MotionMap motionMapFromRms(const float *rms, uint8_t n_pts, uint8_t nb, float k = kMotionK,
                                   uint8_t votes = kMotionVotes) {
@@ -358,17 +358,17 @@ inline MotionMap motionMapFromRms(const float *rms, uint8_t n_pts, uint8_t nb, f
 }
 
 #ifdef A121_DSP_REACQ_PERIOD
-/* V6, Variante Periodizität (Experiment, siehe Kopfkommentar und docs/EXPERIMENTS.md) */
-static constexpr float    kPeriodK     = 5.0f;   /* periodisch: stärkste Spitze ≥ 5 × Mittel der übrigen Bins im Herzband */
-static constexpr uint16_t kPeriodK0    = 46U;    /* Herzband-Bins 46 .. 205 = 0,674 .. 3,003 Hz (wie die Pulssuche) */
+/* V6, periodicity variant (experiment, see the header comment and docs/EXPERIMENTS.md) */
+static constexpr float    kPeriodK     = 5.0f;   /* periodic: strongest peak ≥ 5 × mean of the remaining bins in the heart band */
+static constexpr uint16_t kPeriodK0    = 46U;    /* heart band bins 46 .. 205 = 0.674 .. 3.003 Hz (like the pulse search) */
 static constexpr uint16_t kPeriodK1    = 205U;
-static constexpr uint16_t kPeriodSegS  = 3U;     /* Ausschnitt um den Block: 3 s */
-static constexpr uint16_t kPeriodSegN  = (uint16_t)(kPeriodSegS * (uint16_t)kFsHz / kDecim);  /* 45 Werte bei 15 Hz */
+static constexpr uint16_t kPeriodSegS  = 3U;     /* segment around the block: 3 s */
+static constexpr uint16_t kPeriodSegN  = (uint16_t)(kPeriodSegS * (uint16_t)kFsHz / kDecim);  /* 45 values at 15 Hz */
 
 /**
- * Ausschnitt für segmentPeriodic: bis zu 3 s des bandgefilterten Wegsignals h[0 .. N) (60 Hz) um die Stelle center,
- * auf 15 Hz dezimiert (jeder kDecim-te Wert) und mit Hann gewichtet, nach out (≥ kPeriodSegN Werte). Der Ausschnitt wird
- * am Rand verschoben statt gekürzt (center bleibt darin); N unter 3 s: ganzes Signal. Rückgabe: Zahl der Werte.
+ * Segment for segmentPeriodic: up to 3 s of the bandpass-filtered displacement signal h[0 .. N) (60 Hz) around the position center,
+ * decimated to 15 Hz (every kDecim-th value) and Hann-weighted, into out (≥ kPeriodSegN values). The segment is shifted
+ * at the edge instead of shortened (center stays inside); N below 3 s: whole signal. Returns: number of values.
  */
 inline uint16_t periodSegment(const float *h, uint16_t N, uint16_t center, float *out) {
     const uint16_t len = std::min<uint16_t>(N, (uint16_t)(kPeriodSegS * (uint16_t)kFsHz));
@@ -383,12 +383,12 @@ inline uint16_t periodSegment(const float *h, uint16_t N, uint16_t center, float
 }
 
 /**
- * Periodisch im Herzband? x: n gewichtete Werte aus periodSegment (15 Hz). Spektrum |X|² über fft (spec: ≥ kPeriodK1 + 1
- * Werte, Arbeitsfeld); wahr, wenn die stärkste Spitze in den Bins kPeriodK0 .. kPeriodK1 mindestens k × Mittel der
- * übrigen Bins im Band ist (nach Vital-Radio, Adib et al. 2015). Ein Ausschnitt ohne Leistung ist nicht periodisch.
- * Abweichung vom Entwurf: "übrige" Bins sind die außerhalb der Hann-Hauptkeule der Spitze (± 2 Auflösungszellen
- * kFftN / n Bins). Mit allen übrigen Bins liegt schon ein reiner Sinus im 3-s-Ausschnitt nur bei Spitze/Mittel ≈ 4,7
- * (die Hauptkeule ist 1,3 Hz breit, das Band 2,3 Hz), Rauschen bis 7: k = 5 trennt dann nichts.
+ * Periodic in the heart band? x: n weighted values from periodSegment (15 Hz). Spectrum |X|² via fft (spec: ≥ kPeriodK1 + 1
+ * values, work array); true if the strongest peak in bins kPeriodK0 .. kPeriodK1 is at least k × the mean of the
+ * remaining bins in the band (after Vital-Radio, Adib et al. 2015). A segment without power is not periodic.
+ * Deviation from the draft: the "remaining" bins are those outside the Hann main lobe of the peak (± 2 resolution cells
+ * kFftN / n bins). With all remaining bins, even a pure sine in the 3 s segment reaches only peak/mean ≈ 4.7
+ * (the main lobe is 1.3 Hz wide, the band 2.3 Hz), noise up to 7: k = 5 then separates nothing.
  */
 inline bool segmentPeriodic(const float *x, uint16_t n, a121_fft::RealFft<kFftN> &fft, float *spec, float k = kPeriodK) {
     if (n < 4U) return false;
@@ -415,19 +415,19 @@ inline bool segmentPeriodic(const float *x, uint16_t n, a121_fft::RealFft<kFftN>
 #endif
 
 #ifdef A121_DSP_PHASE_SLOPE
-static constexpr uint8_t kPhaseSlopeWalk = 4U;  /* höchstens so viele Bins von der Startfrequenz bergauf zur Spitze */
+static constexpr uint8_t kPhaseSlopeWalk = 4U;  /* at most this many bins uphill from the start frequency to the peak */
 
 /**
- * V6, Variante Feinschätzung über die Phasensteigung (Experiment, VERWORFEN, siehe Kopfkommentar und docs/EXPERIMENTS.md; nach
- * Vital-Radio, Adib et al. 2015): Frequenz einer Spektrumsspitze aus der Steigung der abgewickelten Phase, statt aus der
- * parabolischen Verfeinerung der Spitze.
- * x: m Werte (dezimiert auf fs, gefenstert), werden auf NF mit Nullen aufgefüllt (m ≤ NF). Vorwärts-FFT, nur der Bin
- * k0 = round(f0 / fs · NF) und seine Nachbarn k0 ± 1 bleiben (alle anderen, auch die negativen Frequenzen, werden 0),
- * inverse FFT: komplexes Schmalband-Signal der Spitze. Phase der ersten m Werte abwickeln (Sprünge über ±π auflösen),
- * Gerade per kleinsten Quadraten, Steigung in rad/Wert · fs / 2π → Hz.
- * re, im: je NF Werte Arbeitsspeicher (Inhalt danach ungültig). cfft: Drehfaktoren, wird nur gelesen.
- * Rückgabe f0_hz unverändert, wenn k0 am Rand liegt (k0 < 1 oder k0 + 1 ≥ NF/2), m < 4 oder m > NF, fs ≤ 0, das Signal
- * keine Leistung hat (mittlere Amplitude des Schmalbands < 1e-9) oder das Ergebnis nicht endlich ist.
+ * V6, fine-estimation variant via the phase slope (experiment, REJECTED, see the header comment and docs/EXPERIMENTS.md; after
+ * Vital-Radio, Adib et al. 2015): frequency of a spectrum peak from the slope of the unwrapped phase, instead of from the
+ * parabolic refinement of the peak.
+ * x: m values (decimated to fs, windowed), zero-padded to NF (m ≤ NF). Forward FFT, only the bin
+ * k0 = round(f0 / fs · NF) and its neighbors k0 ± 1 are kept (all others, including the negative frequencies, become 0),
+ * inverse FFT: complex narrowband signal of the peak. Unwrap the phase of the first m values (resolve jumps beyond ±π),
+ * least-squares line, slope in rad/value · fs / 2π → Hz.
+ * re, im: NF values of work memory each (contents invalid afterwards). cfft: twiddle factors, only read.
+ * Returns f0_hz unchanged if k0 lies at the edge (k0 < 1 or k0 + 1 ≥ NF/2), m < 4 or m > NF, fs ≤ 0, the signal
+ * has no power (mean narrowband amplitude < 1e-9) or the result is not finite.
  */
 template <uint16_t NF>
 inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, const a121_fft::ComplexFft<NF> &cfft,
@@ -440,8 +440,8 @@ inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, con
         im[n] = 0.0f;
     }
     cfft.transform(re, im, false);
-    /* Spitze suchen: von k0 bergauf im Betrag, höchstens kPhaseSlopeWalk Schritte (der Start kann ein paar Bins neben
-     * der Spitze liegen, die Grobwahl der Pulssuche ist ein anderes Spektrum als das dieses Signals) */
+    /* Find the peak: from k0 uphill in magnitude, at most kPhaseSlopeWalk steps (the start can be a few bins next to
+     * the peak, the coarse choice of the pulse search is a different spectrum than that of this signal) */
     int32_t kp = k0;
     for (uint8_t i = 0; i < kPhaseSlopeWalk; i++) {
         const auto pw = [&](int32_t k) { return re[k] * re[k] + im[k] * im[k]; };
@@ -451,12 +451,12 @@ inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, con
         else break;
     }
     for (uint16_t k = 0; k < NF; k++)
-        if (k + 1 < kp || k > kp + 1) {  /* außer kp − 1 .. kp + 1 */
+        if (k + 1 < kp || k > kp + 1) {  /* except kp − 1 .. kp + 1 */
             re[k] = 0.0f;
             im[k] = 0.0f;
         }
     cfft.transform(re, im, true);
-    /* Phase abwickeln (in re, nach dem Lesen von re[n], im[n]); Amplitudensumme für die Stille-Prüfung */
+    /* Unwrap the phase (into re, after reading re[n], im[n]); amplitude sum for the silence check */
     float amp_sum = 0.0f, prev = 0.0f, cum = 0.0f;
     for (uint16_t n = 0; n < m; n++) {
         amp_sum += sqrtf(re[n] * re[n] + im[n] * im[n]);
@@ -473,7 +473,7 @@ inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, con
         re[n] = cum;
     }
     if (amp_sum < 1e-9f * (float)m) return f0_hz;
-    /* Gerade durch (n, Phase) per kleinsten Quadraten: Steigung = Σ(n − n̄)(φ − φ̄) / Σ(n − n̄)² */
+    /* Line through (n, phase) by least squares: slope = Σ(n − n̄)(φ − φ̄) / Σ(n − n̄)² */
     const float half = 0.5f * (float)(m - 1U);
     float mean = 0.0f;
     for (uint16_t n = 0; n < m; n++) mean += re[n];
@@ -490,15 +490,15 @@ inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, con
 #endif
 
 /**
- * Kreismittelpunkt der IQ-Werte eines Zoom-Punkts im Fenster: Kåsa-Fit in Bullock-Form (algebraisch, ein 2×2-System).
- * Die Phase eines Punkts muss um den Mittelpunkt des Kreises gemessen werden, den die Atembewegung beschreibt (festes
- * Echo im selben Punkt), nicht um den Mittelwert: Der liegt bei einem Atemhub mit Phasenhub β um J0(β) × Radius
- * daneben und erzeugt Atem-Oberwellen im Pulsband (docs/VITAL_AUDIT.md, B2).
- * Summen in float über (u, v) = (z − Mittelwert) / s mit s = Effektivwert des Abstands zum Mittelwert, damit float reicht
- * (der ESP32-S3 rechnet double in Software).
- * ring: [kHistoryLen][I, Q] dieses Punkts, Fenster start .. start + N (modulo kHistoryLen).
- * Rückgabe false und (ci, cq) = Mittelwert, wenn das System schlecht bestimmt ist (det ≤ 10⁻⁶ · Suu · Svv, z. B. alle
- * Punkte auf einer Geraden) oder der Mittelpunkt mehr als 10 × s vom Mittelwert entfernt läge.
+ * Circle center of the IQ values of a zoom point in the window: Kåsa fit in Bullock form (algebraic, one 2×2 system).
+ * The phase of a point must be measured around the center of the circle that the breathing motion describes (fixed
+ * echo in the same point), not around the mean: with a breathing excursion with phase excursion β, the mean lies
+ * J0(β) × radius off and creates breathing harmonics in the pulse band (docs/VITAL_AUDIT.md, B2).
+ * Sums in float over (u, v) = (z − mean) / s with s = RMS of the distance to the mean, so that float suffices
+ * (the ESP32-S3 computes double in software).
+ * ring: [kHistoryLen][I, Q] of this point, window start .. start + N (modulo kHistoryLen).
+ * Returns false and (ci, cq) = mean if the system is poorly determined (det ≤ 10⁻⁶ · Suu · Svv, e.g. all
+ * points on a straight line) or the center would lie more than 10 × s from the mean.
  */
 inline bool circleCenter(const float *ring, uint16_t start, uint16_t N, float mean_i, float mean_q, float &ci, float &cq) {
     ci = mean_i;
@@ -534,8 +534,8 @@ inline bool circleCenter(const float *ring, uint16_t start, uint16_t N, float me
     ci = mean_i + uc * s;
     cq = mean_q + vc * s;
 #ifdef A121_DSP_CIRCLE_GN
-    /* Variante für den Vergleich an Aufnahmen (V1.1): 3 Gauß-Newton-Schritte auf den geometrischen Abstand, Radius
-     * eliminiert. Im Prüfstand ohne Unterschied zu Kåsa (ideale Kreisbögen), +8 % Rechenzeit. */
+    /* Variant for comparison on recordings (V1.1): 3 Gauss-Newton steps on the geometric distance, radius
+     * eliminated. No difference from Kåsa in the test bench (ideal circle arcs), +8 % compute time. */
     for (int it = 0; it < 3; it++) {
         float rs = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
@@ -561,9 +561,9 @@ inline bool circleCenter(const float *ring, uint16_t start, uint16_t N, float me
     return true;
 }
 
-/** Autokorrelation des Herzsignals (40–180 /min, V1.2): größtes echtes lokales Maximum mit r > 0,05, sonst
- *  out_peak = 0. Am kleinsten Abstand zählt nur eine Spitze, deren linker Nachbar mitgerechnet ist (vorher galt ein
- *  dort abfallender Verlauf als Spitze: Prüfstand meldete 189,5 /min). */
+/** Autocorrelation of the heart signal (40–180 /min, V1.2): largest true local maximum with r > 0.05, otherwise
+ *  out_peak = 0. At the smallest lag only a peak counts whose left neighbor is included in the computation (previously a
+ *  curve falling off there counted as a peak: the test bench reported 189.5 /min). */
 inline void cardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, float &out_peak) {
     float e0 = 1e-6f;
     for (uint16_t n = 0; n < N; n++) e0 += hr[n] * hr[n];
@@ -590,9 +590,9 @@ inline void cardiacAcf(const float *hr, uint16_t N, float fs, float &out_bpm, fl
     }
 }
 
-/** G·coef = r für die Oberwellen-Fits lösen (G symmetrisch positiv definit, nur untere Hälfte gefüllt; G und r werden
- *  überschrieben, r = coef). Cholesky G = L·Lᵀ mit kleiner Regularisierung gegen fast gleiche Frequenzen. false: G
- *  nicht positiv definit. */
+/** Solve G·coef = r for the harmonic fits (G symmetric positive definite, only the lower half filled; G and r are
+ *  overwritten, r = coef). Cholesky G = L·Lᵀ with a small regularization against nearly equal frequencies. false: G
+ *  not positive definite. */
 inline bool harmSolve(float (*G)[2U * kHarmMMax], float *r, uint8_t P) {
     float tr = 0.0f;
     for (uint8_t a = 0; a < P; a++) tr += G[a][a];
@@ -622,11 +622,11 @@ inline bool harmSolve(float (*G)[2U * kHarmMMax], float *r, uint8_t P) {
     return true;
 }
 
-/** Atem-Oberwellen m · f_breath (m = 1..kHarmMMax, unter fs/2) aus x abziehen: gemeinsamer Kleinste-Quadrate-Fit von
- *  cos und sin aller m, Hann-gewichtet (sonst sickert eine starke Oberwelle in die Nachbarn und in den Puls). m mit
- *  |m · f_breath − f_keep| < 0,1 Hz oder |m · f_breath − 2 f_keep| < 0,1 Hz bleiben, dort liegt der Puls (wie V3.3).
- *  f_breath ≤ 0: nichts tun. Für AKF und Einzelschläge auf dem breiten Band 0,6–5 Hz, in dem die 3. Atem-Oberwelle
- *  sonst den Herzschlag überdeckt (Prüfstand: AKF in 3 % der Reports beim Puls). */
+/** Subtract breathing harmonics m · f_breath (m = 1..kHarmMMax, below fs/2) from x: joint least-squares fit of
+ *  cos and sin of all m, Hann-weighted (otherwise a strong harmonic leaks into the neighbors and into the pulse). m with
+ *  |m · f_breath − f_keep| < 0.1 Hz or |m · f_breath − 2 f_keep| < 0.1 Hz stay, that is where the pulse lies (as in V3.3).
+ *  f_breath ≤ 0: do nothing. For ACF and individual beats on the wide 0.6–5 Hz band, in which the 3rd breathing harmonic
+ *  otherwise masks the heartbeat (test bench: ACF in 3 % of the reports at the pulse). */
 inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath, float f_keep) {
     if (f_breath <= 0.0f || N < 2U) return;
     constexpr uint8_t kP = 2U * kHarmMMax;
@@ -674,21 +674,21 @@ inline void removeBreathHarmonics(float *x, uint16_t N, float fs, float f_breath
 }
 
 #ifdef A121_DSP_HARM_REMOVE
-static constexpr uint16_t kGuideFft = 256U;  /* ≥ Fensterlänge nach Dezimierung (15 s · 15 Hz = 225) */
-static constexpr float    kGuideMinConf = 50.0f;  /* Konfidenz des vorigen Reports, ab der entfernt wird (%) */
+static constexpr uint16_t kGuideFft = 256U;  /* ≥ window length after decimation (15 s · 15 Hz = 225) */
+static constexpr float    kGuideMinConf = 50.0f;  /* confidence of the previous report from which removal applies (%) */
 
 /**
- * V3.3 (Variante): Atem-Oberwellen geführt von der Atemphase entfernen (wie project_out_respiration_harmonics() in den
- * PC-Skripten). Phase φ(n) = Winkel des analytischen Signals der Atem-Grundwelle aus disp: FFT, nur positive
- * Frequenzen, flach im Band 0,5–1,5 × f_breath, cos²-Flanken bis 0,2 bzw. 1,8 × f_breath, zurück. So folgt φ einer
- * Rate, die im Fenster schwankt oder vom vorigen Report abweicht (Rechnung bei ±23 % Ratenschwankung und Atemform mit
- * 2./3. Oberwelle: 0,05 rad Effektivwert; ein enges Band ±0,3 gab 0,12 rad, festes Mischen mit f_breath und Mittel
- * über eine Periode ±0,5 rad). Dann gemeinsamer Hann-gewichteter Kleinste-Quadrate-Fit von cos(mφ),
- * sin(mφ) für m = 1..kHarmMMax an x und abziehen. m bleibt, wenn f_keep oder 2 f_keep in m × [kleinste, größte
- * Atemfrequenz im Fenster] ± 0,1 Hz liegt: Die m-te Oberwelle streut um m × die Ratenschwankung, ihre Basis nähme dem
- * Puls sonst einen Teil weg (Rechnung: 40 % bei ±23 % Schwankung und m = 5 nahe am Puls). Oberwellen, die den Puls
- * überdecken, lassen sich so nicht entfernen, nur die abseits. f_breath ≤ 0: nichts tun.
- * work: Arbeitsspeicher mit 2 · kGuideFft Werten.
+ * V3.3 (variant): remove breathing harmonics guided by the breathing phase (like project_out_respiration_harmonics() in the
+ * PC scripts). Phase φ(n) = angle of the analytic signal of the breathing fundamental from disp: FFT, positive
+ * frequencies only, flat in the band 0.5–1.5 × f_breath, cos² flanks down to 0.2 and 1.8 × f_breath, back. So φ follows a
+ * rate that fluctuates within the window or differs from the previous report (computation at ±23 % rate fluctuation and a breathing shape with
+ * 2nd/3rd harmonic: 0.05 rad RMS; a narrow band ±0.3 gave 0.12 rad, fixed mixing with f_breath and averaging
+ * over one period ±0.5 rad). Then a joint Hann-weighted least-squares fit of cos(mφ),
+ * sin(mφ) for m = 1..kHarmMMax to x and subtract. m stays if f_keep or 2 f_keep lies in m × [smallest, largest
+ * breathing rate in the window] ± 0.1 Hz: the m-th harmonic scatters by m × the rate fluctuation, its basis would otherwise take
+ * part of the pulse away (computation: 40 % at ±23 % fluctuation and m = 5 near the pulse). Harmonics that
+ * mask the pulse cannot be removed this way, only those away from it. f_breath ≤ 0: do nothing.
+ * work: work memory with 2 · kGuideFft values.
  */
 inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N, float fs, float f_breath,
                                         float f_keep, const a121_fft::ComplexFft<kGuideFft> &cfft, float *work) {
@@ -702,7 +702,7 @@ inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N,
         ui[n] = 0.0f;
     }
     cfft.transform(ur, ui, false);
-    for (uint16_t k = 0; k < kGuideFft; k++) {  /* analytisch und Atem-Grundwelle: Gewicht 2 im Band, 0 sonst */
+    for (uint16_t k = 0; k < kGuideFft; k++) {  /* analytic and breathing fundamental: weight 2 in the band, 0 otherwise */
         const float rel = (k < kGuideFft / 2U) ? fabsf((float)k * fs / (float)kGuideFft / f_breath - 1.0f) : 9.0f;
         float g = 0.0f;
         if (rel <= 0.5f) g = 2.0f;
@@ -724,8 +724,8 @@ inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N,
             ui[n] = 0.0f;
         }
     }
-    /* Spanne der Atemfrequenz im Fenster: Phasenschritte über 1 s gemittelt, ohne die Ränder (dort ist die Phase des
-     * analytischen Signals unsicher). Die m-te Oberwelle streut über m × diese Spanne. */
+    /* Span of the breathing rate in the window: phase steps averaged over 1 s, without the edges (there the phase of the
+     * analytic signal is uncertain). The m-th harmonic scatters over m × this span. */
     float f_lo = f_breath, f_hi = f_breath;
     {
         const uint16_t W = (uint16_t)lroundf(fs);
@@ -753,7 +753,7 @@ inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N,
         ms[K++] = m;
     }
     if (K == 0) return;
-    /* Fit von Re/Im(u^m), m ∈ ms */
+    /* Fit of Re/Im(u^m), m ∈ ms */
     constexpr uint8_t kP = 2U * kHarmMMax;
     const uint8_t P = 2U * K;
     float G[kP][kP] = {}, r[kP] = {}, phi[kP];
@@ -790,9 +790,9 @@ inline void removeBreathHarmonicsGuided(float *x, const float *disp, uint16_t N,
 }
 #endif
 
-/** Atem-Amplitude (µm): Spitze-Spitze des gleitenden 1-s-Mittels über die letzten kBrAmpWinS von x, nach Abzug
- *  einer Geraden (Lage-Drift beim Anhalten). < 0: zu wenig Daten. Das 1-s-Mittel dämpft den Herzschlag (76 /min auf
- *  ≈ 20 %), die Atmung (15 /min) kaum. */
+/** Breathing amplitude (µm): peak-to-peak of the moving 1 s mean over the last kBrAmpWinS of x, after subtracting
+ *  a line (posture drift while holding the breath). < 0: too little data. The 1 s mean damps the heartbeat (76 /min to
+ *  ≈ 20 %), the breathing (15 /min) hardly. */
 inline float breathAmplitude(const float *x, uint16_t N, float fs) {
     const uint16_t W = (uint16_t)(fs + 0.5f);
     uint16_t L = (uint16_t)(kBrAmpWinS * fs + 0.5f);
@@ -822,11 +822,11 @@ inline float breathAmplitude(const float *x, uint16_t N, float fs) {
     return hi - lo;
 }
 
-/** Atemzustand je Report (V1.4): 0 normal, 1 keine Atemspitze (oder kein sauberes Echo, amp < 0), 2 angehalten /
- *  Apnoe (Amplitude < 10 % des Medians der letzten 60 Werte, kBrLowReports in Folge), 3 Bewegung (motion_pct > 50),
- *  4 flach (< 70 %, ebenso lange). Während 2 und 3 wächst der Bezug nicht mit: Ein langes Anhalten oder Bewegen
- *  verschöbe sonst den Median. Nach kBrEchoLostReports Reports ohne sauberes Echo gilt der Bezug nicht mehr (Person
- *  gegangen); er baut sich danach neu auf. */
+/** Breathing state per report (V1.4): 0 normal, 1 no breathing peak (or no clean echo, amp < 0), 2 held /
+ *  apnea (amplitude < 10 % of the median of the last 60 values, kBrLowReports in a row), 3 motion (motion_pct > 50),
+ *  4 shallow (< 70 %, same duration). During 2 and 3 the reference does not grow along: a long hold or movement
+ *  would otherwise shift the median. After kBrEchoLostReports reports without a clean echo the reference no longer applies (person
+ *  gone); it rebuilds afterwards. */
 class BreathStateTracker {
 public:
     void reset() {
@@ -877,9 +877,9 @@ private:
 };
 
 #ifdef A121_DSP_REACQ
-/** V6: Kurzzeit-Gedächtnis des Pulses. Gemerkt werden Puls (/min) und Schlagabstand (ms) samt Frame-Zähler der letzten
- *  gesicherten Messung. Es gilt kMemS Sekunden (Unterschied der uint32-Zähler, ein Überlauf schadet nicht) und
- *  erlischt, sobald das Echo fehlt oder das Ziel die Zoomzone verlässt (dann ist es wohl eine andere Lage/Person). */
+/** V6: short-term memory of the pulse. What is remembered: pulse (/min) and beat interval (ms) together with the frame counter of the last
+ *  secured measurement. It holds for kMemS seconds (difference of the uint32 counters, an overflow does no harm) and
+ *  expires as soon as the echo is missing or the target leaves the zoom zone (then it is probably another posture/person). */
 class ReacqMemory {
 public:
     void clear() { hr_ = ibi_ms_ = 0.0f; stored_frames_ = 0U; valid_ = false; }
@@ -889,16 +889,16 @@ public:
         stored_frames_ = tot_frames;
         valid_ = true;
     }
-    /** true, solange ein Wert gemerkt ist und gilt; ein abgelaufenes oder entwertetes Gedächtnis wird dabei gelöscht. */
+    /** true while a value is remembered and valid; an expired or invalidated memory is cleared in the process. */
     bool active(uint32_t tot_frames, bool echo_ok, bool target_in_zoom) {
         if (valid_ && (!echo_ok || !target_in_zoom || (uint32_t)(tot_frames - stored_frames_) >= kMemFrames)) clear();
         return valid_;
     }
     float hr() const { return hr_; }
-    float ibi_ms() const { return ibi_ms_; }  /* vorgehalten (Spec 4: mem_ibi_ms_), von der DSP noch nicht gelesen; für
-                                                 eine spätere Prüfung der Schlagabstand-Kontinuität (Tests lesen ihn) */
-    bool stored() const { return valid_; }  /* gemerkt, ohne Ablauf und Bedingungen zu prüfen (Tests) */
-    uint32_t storedAt() const { return stored_frames_; }  /* Frame-Zähler beim letzten store() (Tests) */
+    float ibi_ms() const { return ibi_ms_; }  /* kept (spec 4: mem_ibi_ms_), not yet read by the DSP; for
+                                                 a later check of beat-interval continuity (tests read it) */
+    bool stored() const { return valid_; }  /* remembered, without checking expiry and conditions (tests) */
+    uint32_t storedAt() const { return stored_frames_; }  /* frame counter at the last store() (tests) */
 
 private:
     static constexpr uint32_t kMemFrames = (uint32_t)(kMemS * kFsHz);
@@ -908,18 +908,18 @@ private:
 };
 #endif
 
-/** Ergebnis der Einzelschläge (V1.6). */
+/** Result of the individual beats (V1.6). */
 struct IbiResult {
-    float   bpm      = 0.0f;  /* 60000 / Median der gültigen IBI; 0 = kein Ergebnis (< 3 gültige IBI) */
+    float   bpm      = 0.0f;  /* 60000 / median of the valid IBI; 0 = no result (< 3 valid IBI) */
     float   ibi_ms   = 0.0f;
-    float   rmssd_ms = 0.0f;  /* 0 = nicht berechnet (< 90 % der erwarteten IBI gültig) */
+    float   rmssd_ms = 0.0f;  /* 0 = not computed (< 90 % of the expected IBI valid) */
     uint8_t n_beats  = 0;
-    uint8_t n_valid  = 0;     /* gültige IBI */
+    uint8_t n_valid  = 0;     /* valid IBI */
 };
 
-static constexpr uint8_t kIbiMaxPk = 48;  /* höchstens so viele Spitzen je Fenster (15 s × 180 /min = 45) */
+static constexpr uint8_t kIbiMaxPk = 48;  /* at most this many peaks per window (15 s × 180 /min = 45) */
 
-/** Spitzen über 0,35 × Effektivwert mit Sperrzeit 0,6 × 60 / hr_bpm (hr_bpm schon auf 40–180 begrenzt). */
+/** Peaks above 0.35 × RMS with a refractory time of 0.6 × 60 / hr_bpm (hr_bpm already limited to 40–180). */
 inline uint8_t findBeatPeaks(const float *hr, uint16_t N, float fs, float hr_bpm, uint16_t *pk) {
     float rms = 0.0f;
     for (uint16_t n = 0; n < N; n++) rms += hr[n] * hr[n];
@@ -940,7 +940,7 @@ inline uint8_t findBeatPeaks(const float *hr, uint16_t N, float fs, float hr_bpm
     return n_pk;
 }
 
-/** Lage der Spitzen parabolisch zwischen den Abtastwerten (in Abtastwerten). */
+/** Position of the peaks parabolically between the samples (in samples). */
 inline void refinePeaks(const float *hr, const uint16_t *pk, uint8_t n_pk, float *t) {
     for (uint8_t k = 0; k < n_pk; k++) {
         const uint16_t i = pk[k];
@@ -951,7 +951,7 @@ inline void refinePeaks(const float *hr, const uint16_t *pk, uint8_t n_pk, float
     }
 }
 
-/** IBI, Artefakt-Regeln und RMSSD aus Schlagzeiten t (Abtastwerte, V1.6). */
+/** IBI, artifact rules and RMSSD from beat times t (samples, V1.6). */
 inline IbiResult ibiFromTimes(const float *t, uint8_t n_pk, uint16_t N, float fs, float hr_bpm) {
     IbiResult res;
     res.n_beats = n_pk;
@@ -982,7 +982,7 @@ inline IbiResult ibiFromTimes(const float *t, uint8_t n_pk, uint16_t N, float fs
         }
         valid[k] = in_range[k] && fabsf(ibi[k] - ref) <= 0.2f * ref;
         if (valid[k]) tmp[n_valid++] = ibi[k];
-        if (in_range[k]) {  /* die 5 vorigen IBI im Bereich (gleitend) */
+        if (in_range[k]) {  /* the 5 previous IBI in range (sliding) */
             if (n_prev < 5) prev[n_prev++] = ibi[k];
             else { memmove(prev, prev + 1, 4 * sizeof(float)); prev[4] = ibi[k]; }
         }
@@ -1008,12 +1008,12 @@ inline IbiResult ibiFromTimes(const float *t, uint8_t n_pk, uint16_t N, float fs
 }
 
 /**
- * Einzelschläge im Herzsignal (V1.6, B7): Spitzen über 0,35 × Effektivwert, Sperrzeit 0,6 × 60 / hr_bpm (vorher fest
- * 360 ms), Lage parabolisch zwischen den Abtastwerten verfeinert (vorher auf 16,7 ms gerastert). Ein IBI gilt, wenn es
- * im Bereich 40–180 /min liegt und höchstens 20 % vom Median der 5 vorigen IBI abweicht (am Fensteranfang: Median
- * aller IBI im Bereich). RMSSD nur aus direkt aufeinanderfolgenden gültigen IBI und nur, wenn ≥ 90 % der erwarteten
- * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, VITAL_AUDIT.md 5.1); 15 s sind für HRV ohnehin kurz.
- * t_out (optional, kIbiMaxPk Werte): Schlagzeiten in Abtastwerten, n_beats gültig.
+ * Individual beats in the heart signal (V1.6, B7): peaks above 0.35 × RMS, refractory time 0.6 × 60 / hr_bpm (previously fixed
+ * 360 ms), position parabolically refined between the samples (previously quantized to 16.7 ms). An IBI counts if it lies
+ * in the range 40–180 /min and deviates at most 20 % from the median of the 5 previous IBI (at the start of the window: median of
+ * all IBI in range). RMSSD only from directly consecutive valid IBI and only if ≥ 90 % of the expected
+ * IBI are valid (artifact rules of the HRV literature, VITAL_AUDIT.md 5.1); 15 s is short for HRV anyway.
+ * t_out (optional, kIbiMaxPk values): beat times in samples, n_beats valid.
  */
 inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_bpm, float *t_out = nullptr) {
     hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
@@ -1026,14 +1026,14 @@ inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_b
 }
 
 #ifdef A121_DSP_IBI_TEMPLATE
-static constexpr float   kTplHalf = 0.3f;  /* Vorlage ±0,3 × Schlagabstand um die Spitze */
-static constexpr uint8_t kTplMaxW = 28U;   /* 0,3 × 1,5 s × 60 Hz = 27 Abtastwerte bei 40 /min */
+static constexpr float   kTplHalf = 0.3f;  /* template ±0.3 × beat interval around the peak */
+static constexpr uint8_t kTplMaxW = 28U;   /* 0.3 × 1.5 s × 60 Hz = 27 samples at 40 /min */
 
 /**
- * Einzelschläge mit Vorlage (V3.6): erste Spitzen wie V1.6, Vorlage = Mittel der Abschnitte ±kTplHalf × Schlagabstand
- * um sie (ohne Gleichanteil), Korrelationsfilter c[n] = Σ_j v[j] · x[n + j], Spitzen von c wie V1.6 gesucht und
- * parabolisch verfeinert, dann dieselben Artefakt-Regeln. x: Herzsignal (V3.6: Band 0,6–8 Hz), work: N Werte. Mit
- * weniger als 3 vollständigen Abschnitten: wie timeDomainIbi.
+ * Individual beats with a template (V3.6): first peaks as in V1.6, template = mean of the segments ±kTplHalf × beat interval
+ * around them (without DC), matched filter c[n] = Σ_j v[j] · x[n + j], peaks of c searched as in V1.6 and
+ * parabolically refined, then the same artifact rules. x: heart signal (V3.6: band 0.6–8 Hz), work: N values. With
+ * fewer than 3 complete segments: like timeDomainIbi.
  */
 inline IbiResult templateIbi(const float *x, uint16_t N, float fs, float hr_bpm, float *work, float *t_out = nullptr) {
     hr_bpm = hr_bpm < 40.0f ? 40.0f : (hr_bpm > 180.0f ? 180.0f : hr_bpm);
@@ -1069,14 +1069,14 @@ inline IbiResult templateIbi(const float *x, uint16_t N, float fs, float hr_bpm,
 }
 #endif
 
-#define A121_DSP_FRAME_FLAGS 1  /* pushFrame nimmt FrameFlags (für host/dsp_replay mit älteren Headern) */
+#define A121_DSP_FRAME_FLAGS 1  /* pushFrame takes FrameFlags (for host/dsp_replay with older headers) */
 
-/** Sensor-Flags eines Frames aus dem Server-Kopf (V1.5, B15, B16). */
+/** Sensor flags of a frame from the server header (V1.5, B15, B16). */
 struct FrameFlags {
     uint32_t tick      = 0;
     bool     have_tick = false;
     bool     saturated = false;  /* data_saturated */
-    bool     delayed   = false;  /* frame_delayed: der Server hat Frames nicht rechtzeitig geliefert */
+    bool     delayed   = false;  /* frame_delayed: the server did not deliver frames in time */
 };
 
 struct Complex16 {
@@ -1085,28 +1085,28 @@ struct Complex16 {
 };
 
 struct RoomTarget {
-    float dist_m;          /* parabolisch zwischen den 30-mm-Punkten verfeinert */
-    float amplitude;       /* geglättete Echo-Amplitude (Rohwert) */
-    float motion_energy;   /* geglättete Abweichung vom Standbild (Rohwert; reines Rauschen ≈ Rausch-Amplitude) */
-    bool  moving;          /* motion_energy ≥ kRoomMoveK × Bewegungs-Rauschpegel */
+    float dist_m;          /* parabolically refined between the 30 mm points */
+    float amplitude;       /* smoothed echo amplitude (raw value) */
+    float motion_energy;   /* smoothed deviation from the static image (raw value; pure noise ≈ noise amplitude) */
+    bool  moving;          /* motion_energy ≥ kRoomMoveK × motion noise level */
 };
 
-/** Eingänge der Konfidenz (V1.3). hr_fused_5s_ago ≤ 0 = unbekannt (kein Sprung-Abschlag). */
+/** Inputs of the confidence (V1.3). hr_fused_5s_ago ≤ 0 = unknown (no jump penalty). */
 struct QualityInputs {
-    float peak_db;          /* S an der verfolgten Frequenz über dem Median des kombinierten Spektrums */
-    bool  on_harmonic;      /* verfolgte Frequenz liegt auf einer Atem-Oberwelle */
+    float peak_db;          /* S at the tracked frequency above the median of the combined spectrum */
+    bool  on_harmonic;      /* tracked frequency lies on a breathing harmonic */
     float hr_spec, hr_acf, hr_ibi, hr_fused, hr_fused_5s_ago;
-    float motion_pct;       /* Anteil der 1-s-Blöcke mit Bewegung im Fenster */
-    float sat_pct = 0.0f;   /* Anteil gesättigter Frames im Fenster (V1.5) */
-    float win_frac = 1.0f;  /* Fensterlänge / 15 s, solange das Fenster noch wächst (V2.4) */
+    float motion_pct;       /* share of 1 s blocks with motion in the window */
+    float sat_pct = 0.0f;   /* share of saturated frames in the window (V1.5) */
+    float win_frac = 1.0f;  /* window length / 15 s while the window is still growing (V2.4) */
 };
 
 /**
- * Konfidenz 0–100 % aus unabhängigen Hinweisen statt aus der Einigkeit der 24 Zoom-Punkte (die sehen fast dasselbe
- * Signal, B4): 100 × clamp((peak_db − 3) / 12) × 0,5 auf einer Oberwelle × 1 / 0,7 / 0,5 bei 3 / 2 / ≤ 1 Schätzern
- * (Spektrum, Autokorrelation, Einzelschläge) innerhalb ±5 /min des Ergebnisses × (1 − Bewegungsanteil) × 0,7 bei einem
- * Sprung > 8 /min in 5 s × 0,5 ab 1 % gesättigter Frames (V1.5). Faktoren vorläufig (Prüfstand); an Tag A
- * abstimmen, danach festhalten.
+ * Confidence 0–100 % from independent cues instead of the agreement of the 24 zoom points (they see almost the same
+ * signal, B4): 100 × clamp((peak_db − 3) / 12) × 0.5 on a harmonic × 1 / 0.7 / 0.5 with 3 / 2 / ≤ 1 estimators
+ * (spectrum, autocorrelation, individual beats) within ±5 /min of the result × (1 − motion share) × 0.7 for a
+ * jump > 8 /min in 5 s × 0.5 from 1 % saturated frames (V1.5). Factors preliminary (test bench); tune on day A,
+ * then freeze.
  */
 inline float signalQuality(const QualityInputs &q) {
     float c = (q.peak_db - 3.0f) / 12.0f;
@@ -1124,10 +1124,10 @@ inline float signalQuality(const QualityInputs &q) {
 }
 
 /**
- * Zustand der Messung (V3.5) aus Raumprofil (bewegtes Ziel = Person im Raum), Zoom-Echo, Atmung, Gültigkeit,
- * Bewegungsanteil und Atemzustand. Vorrang: BEWEGUNG (nur mit sauberem Echo im Zoom: ohne Echo ist der Bewegungsanteil
- * Rauschen) > APNOE > GÜLTIG > ERFASSUNG (sauberes Echo im Zoom mit Atmung oder Person im Raum, Wert noch nicht
- * gültig) > SUCHE (Person im Raum, im Zoom kein sauberes Echo) > KEINE_PERSON.
+ * State of the measurement (V3.5) from room profile (moving target = person in the room), zoom echo, breathing, validity,
+ * motion share and breathing state. Priority: BEWEGUNG (motion; only with a clean echo in the zoom: without an echo the
+ * motion share is noise) > APNOE (apnea) > GÜLTIG (valid) > ERFASSUNG (acquiring: clean echo in the zoom with breathing or
+ * a person in the room, value not yet valid) > SUCHE (search: person in the room, no clean echo in the zoom) > KEINE_PERSON.
  */
 inline uint8_t measurementState(bool person, bool echo_ok, bool breath, bool valid, float motion_pct, uint8_t br_state) {
     if (echo_ok && (breath || person) && (motion_pct > kMaxMotionPct || br_state == kBrStateMotion)) return kStMotion;
@@ -1137,53 +1137,53 @@ inline uint8_t measurementState(bool person, bool echo_ok, bool breath, bool val
     return person ? kStSearch : kStNoPerson;
 }
 
-/** Tor für @BREATH (V3.4): nur in ERFASSUNG, GÜLTIG und APNOE. Ohne Person ist der Weg des Telemetrie-Strahls
- *  Rauschen (Prüfstand leer/niemand: 19–22 „Atemzüge" in 120 s), in BEWEGUNG Körperbewegung. */
+/** Gate for @BREATH (V3.4): only in ACQUIRING, VALID and APNEA. Without a person the path of the telemetry beam is
+ *  noise (test bench empty/nobody: 19–22 "breaths" in 120 s), in MOTION body movement. */
 inline bool breathGateOpen(uint8_t state) { return state == kStAcquire || state == kStValid || state == kStApnea; }
 
-#define A121_DSP_BREATH 1  /* Atemzug-Erkennung und @BREATH (V3.4; für host/dsp_replay mit älteren Headern) */
+#define A121_DSP_BREATH 1  /* breath detection and @BREATH (V3.4; for host/dsp_replay with older headers) */
 
-/** Ein erkannter Atemzug (V3.4): Spitze des gefilterten Wegs, Abstand zur vorigen Spitze im Band 4–42 /min. */
+/** A detected breath (V3.4): peak of the filtered path, distance to the previous peak in the band 4–42 /min. */
 struct BreathEvent {
-    uint32_t frame       = 0;     /* Frames seit reset() beim Erkennen (Spitze + Filterlaufzeit + Hysterese) */
-    uint32_t interval_ms = 0;     /* Abstand zur vorigen Spitze */
-    float    depth_um    = 0.0f;  /* Spitze − voriges Tal */
-    float    rate_cpm    = 0.0f;  /* 60 / Median der letzten (bis zu) kBrRateN Abstände */
+    uint32_t frame       = 0;     /* frames since reset() at detection (peak + filter delay + hysteresis) */
+    uint32_t interval_ms = 0;     /* distance to the previous peak */
+    float    depth_um    = 0.0f;  /* peak − previous trough */
+    float    rate_cpm    = 0.0f;  /* 60 / median of the last (up to) kBrRateN distances */
 };
 
-static constexpr uint32_t kBrMinIntervalFr = 86U;   /* 42 /min = 1,43 s */
+static constexpr uint32_t kBrMinIntervalFr = 86U;   /* 42 /min = 1.43 s */
 static constexpr uint32_t kBrMaxIntervalFr = 900U;  /* 4 /min = 15 s */
 static constexpr uint8_t  kBrRateN         = 4U;
-static constexpr float    kBrHystFrac      = 0.3f;    /* Hysterese = 30 % der Spitze-Spitze-Spanne der letzten 8 s */
-static constexpr float    kBrHystMinUm     = 200.0f;  /* darunter Puls-Restwelligkeit (Puls 100 µm → ≈ 40 µm) und
-                                                      * kleine Wellen beim Anhalten (Prüfstand 144–157 µm); echter
-                                                      * Atemhub sitzend 2,3–3,4 mm (M2, M3) */
-static constexpr uint8_t  kBrSpanBlocks    = 8U;      /* Spanne aus 8 Blöcken zu 1 s */
+static constexpr float    kBrHystFrac      = 0.3f;    /* hysteresis = 30 % of the peak-to-peak span of the last 8 s */
+static constexpr float    kBrHystMinUm     = 200.0f;  /* below this pulse residual ripple (pulse 100 µm → ≈ 40 µm) and
+                                                      * small waves while holding the breath (test bench 144–157 µm); real
+                                                      * breathing excursion seated 2.3–3.4 mm (M2, M3) */
+static constexpr uint8_t  kBrSpanBlocks    = 8U;      /* span from 8 blocks of 1 s */
 static_assert(kFsHz == 60.0f, "Bandpass-Koeffizienten der Atemzug-Erkennung gelten für 60 Hz");
 
 /**
- * Atmung Atemzug für Atemzug (V3.4) auf dem Weg des Telemetrie-Strahls (µm je Frame): Bandpass 0,05–0,8 Hz aus
- * Hochpass 1. Ordnung (ein Hochpass 2. Ordnung schwingt nach einem Atemstopp über und erzeugte einen falschen Atemzug;
- * Preis: Tiefe bei 6 /min ≈ 11 % zu klein) und Butterworth-Tiefpass 2. Ordnung, in double (die Pole liegen dicht an
- * z = 1), dann Spitzen und Täler mit Hysterese. Die Hysterese
- * folgt der Spanne (max − min) der letzten 8 s, damit nach tiefen Atemzügen auch flache wieder durchgehen; nach unten
- * begrenzt auf kBrHystMinUm gegen die Restwelligkeit des Pulses. Je Spitze ein Ereignis mit dem Abstand zur vorigen
- * Spitze, wenn er im Band 4–42 /min liegt; bei kürzeren Abständen ersetzt die neue Spitze die alte als Bezug (sonst
- * würde aus 45 /min jede zweite Spitze als 22 /min gezählt), längere beginnen die Rate neu, und erst die übernächste
- * Spitze wird Bezug.
+ * Breathing breath by breath (V3.4) on the path of the telemetry beam (µm per frame): bandpass 0.05–0.8 Hz from a
+ * 1st-order highpass (a 2nd-order highpass overshoots after a breath stop and produced a false breath;
+ * price: depth at 6 /min ≈ 11 % too small) and a 2nd-order Butterworth lowpass, in double (the poles lie close to
+ * z = 1), then peaks and troughs with hysteresis. The hysteresis
+ * follows the span (max − min) of the last 8 s, so that shallow breaths get through again after deep ones; limited
+ * from below to kBrHystMinUm against the residual ripple of the pulse. One event per peak with the distance to the previous
+ * peak if it lies in the band 4–42 /min; at shorter distances the new peak replaces the old one as the reference (otherwise
+ * every second peak of 45 /min would be counted as 22 /min), longer ones restart the rate, and only the peak after
+ * next becomes the reference.
  */
 class BreathDetector {
 public:
     void reset() { *this = BreathDetector(); }
 
-    /** Einen Wert einspeisen; true, wenn damit ein Atemzug erkannt ist (ev gefüllt). */
+    /** Feed one value; true if a breath is detected with it (ev filled). */
     bool push(float disp_um, BreathEvent &ev) {
-        static constexpr double kSos[2][5] = {  /* b0, b1, b2, a1, a2; scipy butter(1, 0.05, 'high') und butter(2, 0.8) */
+        static constexpr double kSos[2][5] = {  /* b0, b1, b2, a1, a2; scipy butter(1, 0.05, 'high') and butter(2, 0.8) */
             {0.9973888361673892, -0.9973888361673892, 0.0, -0.9947776723347783, 0.0},
             {0.0016556093437783469, 0.0033112186875566938, 0.0016556093437783469, -1.8816500461793153,
              0.8882724835544287}};
         double v = (double)disp_um;
-        for (int i = 0; i < 2; i++) {  /* Direktform II transponiert */
+        for (int i = 0; i < 2; i++) {  /* transposed direct form II */
             const double y = kSos[i][0] * v + s_[i][0];
             s_[i][0] = kSos[i][1] * v - kSos[i][3] * y + s_[i][1];
             s_[i][1] = kSos[i][2] * v - kSos[i][4] * y;
@@ -1192,7 +1192,7 @@ public:
         const float y = (float)v;
         const uint32_t n = n_++;
 
-        /* Spanne der letzten kBrSpanBlocks Sekunden (laufender Block eingeschlossen) */
+        /* span of the last kBrSpanBlocks seconds (current block included) */
         if (n % 60U == 0U) {
             blk_ = (uint8_t)((blk_ + 1U) % kBrSpanBlocks);
             bmax_[blk_] = bmin_[blk_] = y;
@@ -1208,7 +1208,7 @@ public:
         const float h = fmaxf(kBrHystMinUm, kBrHystFrac * (hi - lo));
 
         bool got = false;
-        if (dir_ == 0) {  /* Start: nur die Richtung festlegen; der Startwert ist keine Spitze und kein Tal */
+        if (dir_ == 0) {  /* start: only fix the direction; the start value is neither a peak nor a trough */
             if (n == 0 || y > ext_hi_) ext_hi_ = y;
             if (n == 0 || y < ext_lo_) ext_lo_ = y;
             if (y < ext_hi_ - h) {
@@ -1216,13 +1216,13 @@ public:
             } else if (y > ext_lo_ + h) {
                 dir_ = 1; ext_ = y; ext_n_ = n;
             }
-        } else if (dir_ > 0) {  /* Spitze suchen */
+        } else if (dir_ > 0) {  /* search for a peak */
             if (y > ext_) { ext_ = y; ext_n_ = n; }
             else if (y < ext_ - h) {
                 got = onPeak(ext_, ext_n_, n, ev);
                 dir_ = -1; ext_ = y; ext_n_ = n;
             }
-        } else {  /* Tal suchen */
+        } else {  /* search for a trough */
             if (y < ext_) { ext_ = y; ext_n_ = n; }
             else if (y > ext_ + h) {
                 trough_ = ext_; have_trough_ = true;
@@ -1241,11 +1241,11 @@ private:
         }
         const uint32_t d = at - peak_n_;
         peak_n_ = at;
-        if (d < kBrMinIntervalFr) return false;  /* zu kurz (> 42 /min): kein Ereignis, neue Spitze ist Bezug */
-        if (d > kBrMaxIntervalFr || !have_trough_) {  /* Pause oder Lücke (< 4 /min): Rate neu */
+        if (d < kBrMinIntervalFr) return false;  /* too short (> 42 /min): no event, new peak is the reference */
+        if (d > kBrMaxIntervalFr || !have_trough_) {  /* pause or gap (< 4 /min): restart rate */
             niv_ = 0;
-            /* die erste „Spitze" nach einer Pause ist oft nur die Ruhelage, bevor der Weg wieder fällt: erst die
-             * nächste Spitze wird Bezug */
+            /* the first "peak" after a pause is often just the resting position before the path falls again: only the
+             * next peak becomes the reference */
             have_peak_ = !(d > kBrMaxIntervalFr);
             return false;
         }
@@ -1255,7 +1255,7 @@ private:
         if (niv_ < kBrRateN) niv_++;
         uint32_t srt[kBrRateN];
         memcpy(srt, iv_, sizeof(srt));
-        for (uint8_t i = 1; i < niv_; i++)  /* Einfügesortierung, höchstens 4 Werte */
+        for (uint8_t i = 1; i < niv_; i++)  /* insertion sort, at most 4 values */
             for (uint8_t j = i; j > 0 && srt[j - 1] > srt[j]; j--) {
                 const uint32_t t = srt[j];
                 srt[j] = srt[j - 1];
@@ -1282,23 +1282,23 @@ private:
 };
 
 #ifdef A121_DSP_VITERBI
-/* V3.2 (Variante, A/B an Tag A): Puls-Verfolgung als Viterbi über die letzten kVitWin Reports */
-static constexpr uint16_t kVitMinBpm = 40U, kVitStates = 141U;  /* 40–180 /min in 1-/min-Schritten */
+/* V3.2 (variant, A/B on day A): pulse tracking as Viterbi over the last kVitWin reports */
+static constexpr uint16_t kVitMinBpm = 40U, kVitStates = 141U;  /* 40–180 /min in steps of 1 /min */
 static constexpr uint8_t  kVitWin    = 20U;
-static constexpr float    kVitSigma  = 3.0f;    /* Übergang: Gauß σ = 3 /min je Report (1 s) */
+static constexpr float    kVitSigma  = 3.0f;    /* transition: Gaussian σ = 3 /min per report (1 s) */
 static constexpr int16_t  kVitReach  = 12;      /* ±4 σ */
-static constexpr float    kVitJump   = 0.02f;   /* Anteil „Sprung irgendwohin" (sonst hielte ein Fehlgriff ewig) */
-static constexpr float    kVitFloor  = 0.1f;    /* Grundpegel der Emission (Report ohne Kandidat am wahren Puls) */
-static constexpr float    kVitEmSig  = 1.0f;    /* Breite je Kandidat in /min (FFT-Raster 0,88 /min) */
-static constexpr float    kVitGamma  = 3.0f;    /* Emission ∝ (Kandidatenwert / bester)^γ; mit γ = 1 hing der
-                                                   * Pfad im Prüfstand brady 9 Reports auf einem schwachen, aber
-                                                   * steten Kandidaten (75 statt 50); γ = 2: MAE 2,0, γ = 3: 1,5 */
+static constexpr float    kVitJump   = 0.02f;   /* share "jump anywhere" (otherwise a wrong pick would last forever) */
+static constexpr float    kVitFloor  = 0.1f;    /* base level of the emission (report without a candidate at the true pulse) */
+static constexpr float    kVitEmSig  = 1.0f;    /* width per candidate in /min (FFT grid 0.88 /min) */
+static constexpr float    kVitGamma  = 3.0f;    /* emission ∝ (candidate value / best)^γ; with γ = 1 the
+                                                   * path in the test bench brady stuck for 9 reports on a weak but
+                                                   * steady candidate (75 instead of 50); γ = 2: MAE 2.0, γ = 3: 1.5 */
 
 /**
- * Viterbi über ein festes Gitter 40–180 /min mit den Emissionen der letzten kVitWin Reports. Emission je Report aus
- * den Kandidaten (Gauß je Kandidat, Gewicht = Kandidatenwert mit Oberwellen-Abschlag und Oktav-Prüfung), normiert und
- * mit Grundpegel kVitFloor. update() rechnet den besten Pfad über das Fenster neu (Ergebnis = sein letzter Zustand)
- * und die Vorwärts-Wahrscheinlichkeit; mass = Anteil im Bereich ±5 /min um das Ergebnis.
+ * Viterbi over a fixed grid of 40–180 /min with the emissions of the last kVitWin reports. Emission per report from
+ * the candidates (Gaussian per candidate, weight = candidate value with harmonic penalty and octave check), normalized and
+ * with base level kVitFloor. update() recomputes the best path over the window (result = its last state)
+ * and the forward probability; mass = share in the range ±5 /min around the result.
  */
 class ViterbiTracker {
 public:
@@ -1315,7 +1315,7 @@ public:
 
     void reset() { n_ = 0; head_ = 0; }
 
-    /** Neuer Report mit n Kandidaten (bpm, Wert ≥ 0). Rückgabe: bpm am Ende des besten Pfads; mass ∈ [0, 1]. */
+    /** New report with n candidates (bpm, value ≥ 0). Returns: bpm at the end of the best path; mass ∈ [0, 1]. */
     float update(const float *cand_bpm, const float *cand_w, uint8_t n, float &mass) {
         float *e = em_[head_];
         float sum = 0.0f, wmax = 0.0f;
@@ -1335,7 +1335,7 @@ public:
         head_ = (uint8_t)((head_ + 1U) % kVitWin);
         if (n_ < kVitWin) n_++;
 
-        /* Viterbi (log) und Vorwärts (normiert) über das Fenster, ältester Report zuerst */
+        /* Viterbi (log) and forward (normalized) over the window, oldest report first */
         const float ljump = logf(kVitJump / (float)kVitStates);
         for (uint8_t t = 0; t < n_; t++) {
             const float *et = em_[(head_ + kVitWin - n_ + t) % kVitWin];
@@ -1383,27 +1383,27 @@ private:
 #endif
 
 #ifdef A121_DSP_COMBINE
-/* V3.1: Zoom-Punkte vor der Demodulation kombinieren statt Spektren nachträglich zu mitteln (Szmola et al. 2025;
- * Pi-ViMo 2023: kohärent ausgerichtet und gewichtet summieren, Maximum Ratio Combining). */
-static constexpr uint8_t kCombKMax = 16U;  /* Obergrenze für K (Akkumulatoren auf dem Stapel: 136 komplexe Werte) */
-static constexpr uint8_t kCombK    = (kZoomPoints < 12U) ? (uint8_t)kZoomPoints : 12U;  /* beste K Punkte (Plan 8–16) */
-static constexpr uint8_t kCombIter = 12U;  /* Potenz-Iterationen auf der K × K-Kovarianz */
+/* V3.1: combine zoom points before demodulation instead of averaging spectra afterwards (Szmola et al. 2025;
+ * Pi-ViMo 2023: sum coherently aligned and weighted, maximum ratio combining). */
+static constexpr uint8_t kCombKMax = 16U;  /* upper limit for K (accumulators on the stack: 136 complex values) */
+static constexpr uint8_t kCombK    = (kZoomPoints < 12U) ? (uint8_t)kZoomPoints : 12U;  /* best K points (plan 8–16) */
+static constexpr uint8_t kCombIter = 12U;  /* power iterations on the K × K covariance */
 static_assert(kCombK <= kCombKMax, "kCombK zu groß");
 
 /**
- * 1. Hauptkomponente von K Zoom-Punkten. u_j[n] = z_j[n] − c_j (Ring j wie hist_zoom_, ab start, N Werte, c_j =
- * Kreismittelpunkt). C = Σ_n u uᴴ (hermitesch), v = Eigenvektor zum größten Eigenwert (Potenz-Iteration ab der Spalte
- * mit der größten Leistung), y[n] = Σ_j conj(v_j) · u_j[n] (linear, [I,Q] × N). Bei gleichem Rauschen je Punkt ist das
- * Maximum Ratio Combining: v_j ∝ Amplitude_j · e^{iθ_j}, die Punkte addieren phasengleich. Rückgabe: effektive
- * Punktzahl N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²_F (≈ 1: alle sehen dieselbe Bewegung; ≈ K: nur Rauschen); dominant = j
- * mit dem größten |v_j|. Reihenfolge der Schleifen: n außen, damit jeder Ring (PSRAM) nur einmal gelesen wird.
+ * 1st principal component of K zoom points. u_j[n] = z_j[n] − c_j (ring j as hist_zoom_, from start, N values, c_j =
+ * circle center). C = Σ_n u uᴴ (Hermitian), v = eigenvector for the largest eigenvalue (power iteration starting from the column
+ * with the largest power), y[n] = Σ_j conj(v_j) · u_j[n] (linear, [I,Q] × N). With equal noise per point this is
+ * maximum ratio combining: v_j ∝ amplitude_j · e^{iθ_j}, the points add in phase. Returns: effective
+ * point count N_eff = (Σλ)² / Σλ² = (tr C)² / ‖C‖²_F (≈ 1: all see the same motion; ≈ K: noise only); dominant = j
+ * with the largest |v_j|. Loop order: n outside, so that each ring (PSRAM) is read only once.
  */
 inline float combinePrincipal(const float *const *rings, const float *ci, const float *cq, uint8_t K, uint16_t start,
                               uint16_t N, float *y, uint8_t &dominant) {
     dominant = 0;
     if (K == 0 || K > kCombKMax || N == 0) return 0.0f;
     constexpr uint16_t kPairs = (uint16_t)kCombKMax * (kCombKMax + 1U) / 2U;
-    float are[kPairs] = {}, aim[kPairs] = {};  /* C_jk für j ≤ k: Index j·K − j(j−1)/2 + (k − j) */
+    float are[kPairs] = {}, aim[kPairs] = {};  /* C_jk for j ≤ k: index j·K − j(j−1)/2 + (k − j) */
     float ur[kCombKMax], ui[kCombKMax];
     for (uint16_t n = 0; n < N; n++) {
         const size_t idx = (size_t)((start + n) % kHistoryLen) * 2U;
@@ -1418,7 +1418,7 @@ inline float combinePrincipal(const float *const *rings, const float *ci, const 
                 aim[pidx] += ui[j] * ur[k] - ur[j] * ui[k];
             }
     }
-    auto at = [&](uint8_t j, uint8_t k, float &re, float &im) {  /* C_jk, untere Hälfte = konjugiert */
+    auto at = [&](uint8_t j, uint8_t k, float &re, float &im) {  /* C_jk, lower half = conjugate */
         const bool sw = j > k;
         const uint8_t a = sw ? k : j, b = sw ? j : k;
         const uint16_t q = (uint16_t)(a * K - a * (a - 1) / 2 + (b - a));
@@ -1480,10 +1480,10 @@ inline float combinePrincipal(const float *const *rings, const float *ci, const 
 }
 #endif
 
-/* V6: Wert von VitalReport::reacq */
+/* V6: value of VitalReport::reacq */
 static constexpr uint8_t kReacqNone = 0U;    /* normal */
-static constexpr uint8_t kReacqShort = 1U;   /* kurzes Fenster nach Bewegung */
-static constexpr uint8_t kReacqMemory = 2U;  /* über das Gedächtnis wiedergefunden */
+static constexpr uint8_t kReacqShort = 1U;   /* short window after motion */
+static constexpr uint8_t kReacqMemory = 2U;  /* reacquired via the memory */
 
 struct VitalReport {
     bool     valid;
@@ -1494,46 +1494,46 @@ struct VitalReport {
     float    loopback_phase_std_mrad;
     float    target_dist_m;
     uint8_t  best_zoom_bin;
-    float    zoom_snr_db;      /* kombiniertes Pulsspektrum: Spitze/Median in dB */
+    float    zoom_snr_db;      /* combined pulse spectrum: peak/median in dB */
     float    resp_depth_um;
     float    heart_amp_um;
     float    br_bpm;
-    float    hr_spec_bpm;      /* stärkster Peak des kombinierten Spektrums (ungefiltert) */
-    float    hr_acf_bpm;       /* Autokorrelation, Punkt mit klarstem Puls */
-    float    hr_ibi_bpm;       /* Zeitbereich (Median-IBI), Punkt mit klarstem Puls */
-    float    hr_fused_bpm;     /* verfolgter, geglätteter Puls (Hauptausgabe) */
+    float    hr_spec_bpm;      /* strongest peak of the combined spectrum (unfiltered) */
+    float    hr_acf_bpm;       /* autocorrelation, point with the clearest pulse */
+    float    hr_ibi_bpm;       /* time domain (median IBI), point with the clearest pulse */
+    float    hr_fused_bpm;     /* tracked, smoothed pulse (main output) */
     float    ibi_median_ms;
     float    rmssd_ms;
-    float    confidence_pct;   /* signalQuality(): Spitzenhöhe, Oberwelle, Einigkeit der Schätzer, Bewegung, Sprung */
-    float    point_agree_pct;  /* frühere Konfidenz: gewichteter Anteil der Zoom-Punkte mit eigener Spitze ±5 /min */
-    uint8_t  br_state;         /* Atemzustand (BreathStateTracker): 0 normal, 1 keine Spitze, 2 angehalten, 3 Bewegung, 4 flach */
-    uint16_t n_delayed;        /* seit dem letzten Report: Frames mit frame_delayed (V1.5) */
-    uint16_t n_sat;            /* … mit data_saturated */
-    uint16_t n_tickgap;        /* … tick-Abstände > kTickGapMs (ohne Rezoom/Neubeginn) */
-    uint8_t  hr_bin;           /* Zoom-Punkt mit klarstem Puls */
-    uint32_t compute_us;       /* Rechenzeit dieses Reports */
-    bool     hr_harm;          /* stärkste Pulsspitze liegt auf einer Atem-Oberwelle (ein Sprung dorthin braucht 10 Reports) */
-    float    motion_pct;       /* Anteil gedämpfter 1-s-Blöcke im Fenster (Bewegung), über alle Zoom-Punkte */
+    float    confidence_pct;   /* signalQuality(): peak height, harmonic, agreement of the estimators, motion, jump */
+    float    point_agree_pct;  /* earlier confidence: weighted share of the zoom points with their own peak ±5 /min */
+    uint8_t  br_state;         /* breathing state (BreathStateTracker): 0 normal, 1 no peak, 2 held, 3 motion, 4 shallow */
+    uint16_t n_delayed;        /* since the last report: frames with frame_delayed (V1.5) */
+    uint16_t n_sat;            /* … with data_saturated */
+    uint16_t n_tickgap;        /* … tick distances > kTickGapMs (without rezoom/restart) */
+    uint8_t  hr_bin;           /* zoom point with the clearest pulse */
+    uint32_t compute_us;       /* compute time of this report */
+    bool     hr_harm;          /* strongest pulse peak lies on a breathing harmonic (a jump there needs 10 reports) */
+    float    motion_pct;       /* share of damped 1 s blocks in the window (motion), over all zoom points */
     uint8_t  num_room_targets;
-    RoomTarget room_targets[kMaxRoomTargets];  /* nach Stärke sortiert (Amplitude + 8 × Bewegung) */
-    float    room_noise_amp;                   /* Rauschpegel Amplitude (unteres Viertel der Raum-Punkte) */
-    float    room_noise_motion;                /* Rauschpegel Bewegung */
+    RoomTarget room_targets[kMaxRoomTargets];  /* sorted by strength (amplitude + 8 × motion) */
+    float    room_noise_amp;                   /* noise level amplitude (lower quarter of the room points) */
+    float    room_noise_motion;                /* noise level motion */
     bool     needs_rezoom;
     int32_t  recommended_zoom_start_pt;
-    bool     person_in_room;   /* bewegtes Ziel im geglätteten Raumprofil (Zoom-Ziel, V3.5) */
-    bool     target_in_zoom;   /* … und es liegt im Zoom-Fenster */
-    uint8_t  state;            /* Zustand der Messung kSt* (V3.5) */
-    uint32_t state_since_ms;   /* … seit (Frames × 1000 / 60) */
-    float    n_eff;            /* effektive Punktzahl des kombinierten Kanals (V3.1, nur mit A121_DSP_COMBINE) */
-    uint8_t  win_s;            /* Länge des Pulsfensters dieses Reports in s (V6, Ausgabe nur mit A121_DSP_REACQ) */
-    uint8_t  reacq;            /* Wiederfinden nach Bewegung (V6): kReacq* */
+    bool     person_in_room;   /* moving target in the smoothed room profile (zoom target, V3.5) */
+    bool     target_in_zoom;   /* … and it lies in the zoom window */
+    uint8_t  state;            /* state of the measurement kSt* (V3.5) */
+    uint32_t state_since_ms;   /* … since (frames × 1000 / 60) */
+    float    n_eff;            /* effective point count of the combined channel (V3.1, only with A121_DSP_COMBINE) */
+    uint8_t  win_s;            /* length of the pulse window of this report in s (V6, output only with A121_DSP_REACQ) */
+    uint8_t  reacq;            /* reacquisition after motion (V6): kReacq* */
 };
 
 /**
- * Stand der Historie für einen Report (V2.1). takeSnapshot() läuft im Frame-Takt direkt nach pushFrame(); der Report
- * rechnet danach (auf dem ESP32 im DSP-Task auf Kern 0) nur aus diesem Stand und dem Ring. pushFrame() darf dabei
- * bis kSnapMaxLag Frames weiterschreiben, ohne das Fenster des Schnappschusses zu berühren. Die Sensor-Zähler sind
- * Summen seit begin(); der Report meldet die Differenz zum zuletzt gerechneten Schnappschuss.
+ * State of the history for a report (V2.1). takeSnapshot() runs at the frame rate directly after pushFrame(); the report
+ * then computes (on the ESP32 in the DSP task on core 0) only from this state and the ring. pushFrame() may meanwhile
+ * keep writing up to kSnapMaxLag frames without touching the window of the snapshot. The sensor counters are
+ * sums since begin(); the report gives the difference to the last computed snapshot.
  */
 #define A121_DSP_SNAPSHOT 1
 struct ReportSnapshot {
@@ -1543,18 +1543,18 @@ struct ReportSnapshot {
     int16_t  temp_c;
     float    lb_amp;
     uint32_t tot_delayed, tot_sat, tot_tickgap;
-    uint32_t tot_frames;  /* Frames seit begin(), über Rezooms hinweg (V2.3) */
+    uint32_t tot_frames;  /* frames since begin(), across rezooms (V2.3) */
     float    room_amp[kRoomPoints], room_mot[kRoomPoints], room_amp_slow[kRoomPoints], room_mot_slow[kRoomPoints];
 };
 
-/** Report aus einem Schnappschuss, nach dem pushFrame() schon mehr als kSnapMaxLag Frames weiter war: Das Fenster ist
- *  teils überschrieben, der Report gilt nicht (ESP32 und Nachrechnung prüfen beim Ausgeben gleich). */
+/** Report from a snapshot after which pushFrame() has already moved on by more than kSnapMaxLag frames: the window is
+ *  partly overwritten, the report is not valid (ESP32 and replay check the same way on output). */
 inline bool snapshotStale(uint32_t snap_frame, uint32_t frame_now) { return frame_now - snap_frame > kSnapMaxLag; }
 
 #ifdef A121_DSP_REACQ
-/** V6: Index des stärksten FFT-Kandidaten, der nahe am gemerkten Puls liegt (|bpm − mem_hr| ≤ band) und mindestens
- *  min_rel × den besten Wert hat (cand_score absteigend sortiert, [0] = bester); sonst −1 (auch ohne Kandidaten oder
- *  Gedächtnis, ohne positiven besten Wert und für NaN: die Bedingungen sind positiv formuliert, NaN erfüllt keine). */
+/** V6: index of the strongest FFT candidate that lies near the remembered pulse (|bpm − mem_hr| ≤ band) and has at least
+ *  min_rel × the best value (cand_score sorted in descending order, [0] = best); otherwise −1 (also without candidates or
+ *  memory, without a positive best value and for NaN: the conditions are phrased positively, NaN satisfies none). */
 inline int8_t preferMemoryCandidate(const float *cand_bpm, const float *cand_score, uint8_t n, float mem_hr,
                                     float band = kMemBandBpm, float min_rel = 0.5f) {
     if (n == 0U || !(mem_hr > 0.0f) || !(cand_score[0] > 0.0f)) return -1;
@@ -1566,8 +1566,8 @@ inline int8_t preferMemoryCandidate(const float *cand_bpm, const float *cand_sco
     return best;
 }
 
-/** V6 (Ruling R15): true, wenn ein gemeldeter Puls hr_bpm die Atemspitze als Lebenszeichen ersetzen darf, d. h. ein
- *  Gedächtnis gilt (mem_hr > 0) und |hr_bpm − mem_hr| ≤ tol (kMemSubstBpm). NaN erfüllt die Bedingung nicht. */
+/** V6 (ruling R15): true if a reported pulse hr_bpm may replace the breathing peak as the sign of life, i.e. a
+ *  memory holds (mem_hr > 0) and |hr_bpm − mem_hr| ≤ tol (kMemSubstBpm). NaN does not satisfy the condition. */
 inline bool memSubstitutesBreath(float hr_bpm, float mem_hr, float tol = kMemSubstBpm) {
     return mem_hr > 0.0f && fabsf(hr_bpm - mem_hr) <= tol;
 }
@@ -1581,7 +1581,7 @@ public:
         zoom_start_pt_ = zoom_start_pt;
         room_start_pt_ = room_start_pt;
         room_step_     = room_step;
-        tot_delayed_ = tot_sat_ = tot_tickgap_ = tot_frames_ = 0;  /* neuer Stream */
+        tot_delayed_ = tot_sat_ = tot_tickgap_ = tot_frames_ = 0;  /* new stream */
         state_ = 0xFFU;
         state_since_tot_ = 0;
         breath_gate_ = false;
@@ -1605,7 +1605,7 @@ public:
             allocated_   = hist_zoom_ && hist_lb_phi_ && work_x_ && work_ext_ && best_x_ && best_h_ && br_x_ &&
                          dec_ && spec_ && sum_ && comb_ && scratch_ && br_comb_ && pen_;
 #ifdef A121_DSP_COMBINE
-            comb_y_      = allocFloat(2U * kHrWin);  /* kombinierter Kanal [I,Q] (V3.1) */
+            comb_y_      = allocFloat(2U * kHrWin);  /* combined channel [I,Q] (V3.1) */
             allocated_   = allocated_ && comb_y_;
 #endif
         }
@@ -1613,17 +1613,17 @@ public:
         return allocated_;
     }
 
-    /** Neubeginn ganz: Historie und Verfolgung (begin()). */
+    /** Complete restart: history and tracking (begin()). */
     void resetState() {
         resetHistory();
         resetTracking();
     }
 
     /**
-     * Neubeginn der Historie (Rezoom, Neu-Kalibrierung, Neuverbinden; V2.3, B11): Ring, Filter- und Raumzustand,
-     * Kreismittelpunkte und Atemzustand neu. Die Puls-Verfolgung bleibt, wenn der letzte gültige Report weniger als
-     * kKeepTrackS zurückliegt; der erste Report danach glättet dann gegen den bisherigen Wert statt neu zu beginnen.
-     * Nur aufrufen, während kein Report rechnet.
+     * Restart of the history (rezoom, recalibration, reconnect; V2.3, B11): ring, filter and room state,
+     * circle centers and breathing state anew. Pulse tracking stays if the last valid report is less than
+     * kKeepTrackS ago; the first report after that then smooths against the previous value instead of starting over.
+     * Call only while no report is computing.
      */
     void resetHistory() {
         if (!(have_valid_ && tot_frames_ - last_valid_tot_ < (uint32_t)(kKeepTrackS * kFsHz))) resetTracking();
@@ -1641,11 +1641,11 @@ public:
         best_zoom_bin_        = kZoomPoints / 2U;
         out_of_window_frames_ = 0;
         last_temp_c_          = 0;
-        person_run_           = 0;  /* Raumprofil beginnt neu */
+        person_run_           = 0;  /* room profile starts anew */
         br_track_.reset();
-        breath_det_.reset();  /* Weg beginnt bei 0: Filter und Spitzen neu (V3.4) */
+        breath_det_.reset();  /* path starts at 0: filter and peaks anew (V3.4) */
         breath_pending_       = false;
-        have_last_tick_       = false;  /* Rezoom/Neubeginn: der nächste tick-Abstand zählt nicht als Lücke */
+        have_last_tick_       = false;  /* rezoom/restart: the next tick distance does not count as a gap */
         memset(hist_sat_, 0, sizeof(hist_sat_));
 
         memset(zoom_clutter_i_, 0, sizeof(zoom_clutter_i_));
@@ -1660,7 +1660,7 @@ public:
         memset(have_good_, 0, sizeof(have_good_));
     }
 
-    /** Puls-Verfolgung neu (kein bisheriger Wert). */
+    /** Pulse tracking anew (no previous value). */
     void resetTracking() {
 #ifdef A121_DSP_VITERBI
         vit_.reset();
@@ -1676,7 +1676,7 @@ public:
         hr_hist_n_  = 0;
         have_valid_ = false;
 #ifdef A121_DSP_REACQ
-        mem_.clear();  /* V6: ohne Verfolgung kein Gedächtnis; resetHistory() mit beibehaltener Verfolgung behält es */
+        mem_.clear();  /* V6: no tracking, no memory; resetHistory() with tracking kept keeps it */
 #endif
     }
 
@@ -1686,10 +1686,10 @@ public:
     }
 
 #ifdef A121_DSP_REACQ
-    /** V6: Ist ein Puls gemerkt (ohne Ablauf und Bedingungen zu prüfen; die prüft der nächste Report)? Für Tests. */
+    /** V6: Is a pulse remembered (without checking expiry and conditions; the next report does that)? For tests. */
     bool reacqMemoryActive() const { return mem_.stored(); }
     const ReacqMemory &reacqMemory() const { return mem_; }
-    /** V6, für Tests: Verfolgungszustand (hr_prev_, hr_miss_, alt_count_, hr_hist_), der in Fall 4 unverändert bleibt. */
+    /** V6, for tests: tracking state (hr_prev_, hr_miss_, alt_count_, hr_hist_) that stays unchanged in case 4. */
     struct TrackState {
         float   hr_prev;
         uint8_t hr_miss, alt_count, hr_hist_n;
@@ -1703,9 +1703,9 @@ public:
 #endif
 
     int32_t zoomStartPoint() const { return zoom_start_pt_; }
-    uint32_t frameCount() const { return frame_count_; }  /* Frames seit begin()/Rezoom/Neubeginn */
+    uint32_t frameCount() const { return frame_count_; }  /* frames since begin()/rezoom/restart */
 
-    /** Atemzug aus dem letzten pushFrame() abholen (V3.4; im Frame-Takt, Kern 1); false = keiner oder Tor zu. */
+    /** Fetch the breath from the last pushFrame() (V3.4; at the frame rate, core 1); false = none or gate closed. */
     bool takeBreathEvent(BreathEvent &ev) {
         if (!breath_pending_) return false;
         breath_pending_ = false;
@@ -1715,27 +1715,27 @@ public:
     }
 
     /**
-     * Tor für @BREATH (V3.4) aus dem Zustand des letzten ausgegebenen Reports (breathGateOpen()). Im Frame-Takt setzen,
-     * wenn das Report-Ergebnis ausgegeben wird (ESP32: nach @STATE; Nachrechnung: bei @DSP), nicht im Report selbst:
-     * so sehen ESP32 und Nachrechnung das Tor ab demselben Frame. Erkannt wird auch bei geschlossenem Tor weiter.
+     * Gate for @BREATH (V3.4) from the state of the last output report (breathGateOpen()). Set at the frame rate
+     * when the report result is output (ESP32: after @STATE; replay: at @DSP), not in the report itself:
+     * so ESP32 and replay see the gate from the same frame. Detection continues even with the gate closed.
      */
     void setBreathGate(bool open) { breath_gate_ = open; }
 
-    /** Raumprofil (Subsweep 2): geglättete Amplitude und Bewegung je Punkt, kRoomPoints Werte. */
+    /** Room profile (subsweep 2): smoothed amplitude and motion per point, kRoomPoints values. */
     const float *roomAmp() const { return room_amp_ema_; }
     const float *roomMotion() const { return room_var_ema_; }
     float roomStartMm() const { return (float)room_start_pt_ * kPointStepM * 1000.0f; }
     float roomStepMm() const { return (float)room_step_ * kPointStepM * 1000.0f; }
 
     /**
-     * @brief Verarbeitet einen 3-Subsweep-Frame (105 komplexe Punkte).
-     * @param dt_s wird nicht mehr verwendet (Zeitbasis = kFsHz); bleibt für die Aufrufer-Kompatibilität.
-     * @param out_um_sample Auslenkung des Telemetrie-Strahls in µm (für `@IQ3`).
+     * @brief Processes a 3-subsweep frame (105 complex points).
+     * @param dt_s no longer used (time base = kFsHz); stays for caller compatibility.
+     * @param out_um_sample Displacement of the telemetry beam in µm (for `@IQ3`).
      */
     void pushFrame(const Complex16 *pts, uint16_t n_pts, int16_t temp_c, float dt_s, float &out_um_sample,
                    const FrameFlags &ff = FrameFlags()) {
         (void)dt_s;
-        /* Sensor-Flags zählen (je Report zurückgesetzt); tick-Lücke nur innerhalb einer Historie */
+        /* count sensor flags (reset per report); tick gap only within a history */
         if (ff.delayed) tot_delayed_++;
         if (ff.saturated) tot_sat_++;
         if (ff.have_tick) {
@@ -1749,7 +1749,7 @@ public:
         }
         last_temp_c_ = temp_c;
 
-        /* 1. Loopback-Phasenreferenz */
+        /* 1. Loopback phase reference */
         const float lb_i   = (float)pts[0].real;
         const float lb_q   = (float)pts[0].imag;
         const float lb_amp = sqrtf(lb_i * lb_i + lb_q * lb_q);
@@ -1761,7 +1761,7 @@ public:
         }
         last_lb_amp_ = lb_amp;
 
-        /* 2. Zoom-Punkte derotieren, speichern und Bewegungsenergie schätzen */
+        /* 2. Derotate zoom points, store them and estimate motion energy */
         float derot_i[kZoomPoints], derot_q[kZoomPoints];
         const Complex16 *zoom_pts = &pts[1];
         for (uint16_t b = 0; b < kZoomPoints; b++) {
@@ -1771,7 +1771,7 @@ public:
             const float zq = ri * rot_im + rq * rot_re;
             derot_i[b] = zi;
             derot_q[b] = zq;
-            float *slot = hist_zoom_ + ((size_t)b * kHistoryLen + hist_write_idx_) * 2U;  /* punktweise ablegen */
+            float *slot = hist_zoom_ + ((size_t)b * kHistoryLen + hist_write_idx_) * 2U;  /* store point by point */
             slot[0] = zi;
             slot[1] = zq;
             if (frame_count_ == 0) {
@@ -1787,8 +1787,8 @@ public:
             }
         }
 
-        /* Telemetrie-Strahl: Punkt mit größter Bewegung, Wechsel nur bei 1,5-fach besserem Wert (Hysterese).
-         * Ein Wechsel ohne Hysterese ließ das Wegsignal alle 0,5 s um bis zu 1 mm springen. */
+        /* Telemetry beam: point with the largest motion, switch only at a 1.5x better value (hysteresis).
+         * A switch without hysteresis made the path signal jump by up to 1 mm every 0.5 s. */
         if (frame_count_ >= 15 && (frame_count_ % 30 == 0)) {
             float best_score = -1.0f, cur_score = 0.0f;
             uint8_t best_bin = best_zoom_bin_;
@@ -1810,9 +1810,9 @@ public:
         float beam_i = 0.0f, beam_q = 0.0f, cl_i = 0.0f, cl_q = 0.0f;
         beamform(derot_i, derot_q, beam_i, beam_q, cl_i, cl_q);
 
-        /* 3. Zentrierung + Phasenabwicklung → µm (nur Telemetrie; der Puls wird aus den Einzelpunkten berechnet) */
+        /* 3. Centering + phase unwrapping → µm (telemetry only; the pulse is computed from the individual points) */
         if (frame_count_ == 0 || beam_switched_) {
-            dc_i_ = cl_i;  /* nach einem Strahlwechsel vom statischen Anteil des neuen Strahls starten */
+            dc_i_ = cl_i;  /* after a beam switch, start from the static part of the new beam */
             dc_q_ = cl_q;
             have_prev_iq_  = false;
             beam_switched_ = false;
@@ -1840,7 +1840,7 @@ public:
         hist_write_idx_ = (uint16_t)((hist_write_idx_ + 1U) % kHistoryLen);
         if (hist_count_ < kHistoryLen) hist_count_++;
 
-        /* 4. Raum-Scan (Subsweep 2) */
+        /* 4. Room scan (subsweep 2) */
         if (n_pts >= kTotal3SubPts) {
             const Complex16 *room_pts = &pts[1U + kZoomPoints];
             for (uint16_t r = 0; r < kRoomPoints; r++) {
@@ -1870,7 +1870,7 @@ public:
         tot_frames_++;
     }
 
-    /** Stand für einen Report festhalten (im Frame-Takt nach pushFrame(), V2.1). */
+    /** Capture the state for a report (at the frame rate after pushFrame(), V2.1). */
     void takeSnapshot(ReportSnapshot &s) const {
         s.write_idx     = hist_write_idx_;
         s.count         = hist_count_;
@@ -1889,8 +1889,8 @@ public:
     }
 
     /**
-     * @brief Report zum aktuellen Stand (Schnappschuss und Rechnung in einem, wie vor V2.1).
-     *        Etwa einmal pro Sekunde aufrufen (Verfolgung und Rezoom zählen in Reports).
+     * @brief Report for the current state (snapshot and computation in one, as before V2.1).
+     *        Call about once per second (tracking and rezoom count in reports).
      */
     bool computeVitalReport(VitalReport &rep) {
         takeSnapshot(snap_);
@@ -1898,10 +1898,10 @@ public:
     }
 
     /**
-     * @brief Raum-Ziele + Rezoom-Empfehlung immer; Vitalwerte (valid = true) ab kHrMinWin Frames. Liest außer dem
-     *        Schnappschuss nur den Ring im Fenster des Schnappschusses und Report-Zustand (Verfolgung, Kreismittelpunkte,
-     *        Arbeitspuffer); pushFrame() darf parallel laufen, solange es höchstens kSnapMaxLag Frames weiter ist und
-     *        zoom_start_pt_ nicht wechselt (setZoomStartPoint/begin erst nach dem Report).
+     * @brief Room targets + rezoom recommendation always; vital values (valid = true) from kHrMinWin frames. Besides the
+     *        snapshot it reads only the ring in the window of the snapshot and report state (tracking, circle centers,
+     *        work buffers); pushFrame() may run in parallel as long as it is at most kSnapMaxLag frames ahead and
+     *        zoom_start_pt_ does not change (setZoomStartPoint/begin only after the report).
      */
     bool computeVitalReport(const ReportSnapshot &s, VitalReport &rep) {
         const uint32_t t0 = micros();
@@ -1920,8 +1920,8 @@ public:
         rep.target_dist_m = (float)(zoom_start_pt_ + (int32_t)s.best_zoom_bin) * kPointStepM;
         extractRoomTargets(s, rep);
 
-        /* Person im Raum: Zoom-Ziel im geglätteten Profil in 2 Reports hintereinander (ohne Person flackerte es im
-         * Prüfstand von Report zu Report) */
+        /* Person in the room: zoom target in the smoothed profile in 2 reports in a row (without a person it flickered in the
+         * test bench from report to report) */
         person_run_ = rep.person_in_room ? (uint8_t)std::min(person_run_ + 1, 255) : 0U;
         const bool person = person_run_ >= 2U;
         if (s.count < kHrMinWin) {
@@ -1933,7 +1933,7 @@ public:
         const uint16_t N = (s.count > kHrWin) ? kHrWin : s.count;
         const uint16_t start = (uint16_t)((s.write_idx + kHistoryLen - N) % kHistoryLen);
 
-        /* Loopback-Phasenstabilität */
+        /* Loopback phase stability */
         float lb_mean = 0.0f, lb_var = 0.0f;
         for (uint16_t n = 0; n < N; n++) lb_mean += hist_lb_phi_[(start + n) % kHistoryLen];
         lb_mean /= (float)N;
@@ -1943,7 +1943,7 @@ public:
         }
         rep.loopback_phase_std_mrad = sqrtf(lb_var / (float)N) * 1000.0f;
 
-        /* Puls: Spektren aller Zoom-Punkte, gewichtet gemittelt */
+        /* Pulse: spectra of all zoom points, weighted average */
         const uint16_t M = (uint16_t)((N + kDecim - 1U) / kDecim);
         float peak_hz[kZoomPoints], weight[kZoomPoints];
         float br_best = -1.0f;
@@ -1954,11 +1954,11 @@ public:
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] = 0.0f;
         for (uint16_t k = 0; k < kBrNumF; k++) br_comb_[k] = 0.0f;
         const float *hann = hannWindow(M);
-        /* Breites Zoom-Fenster (V2.3): Atem-Stärke vorab als Streuung der IQ-Werte im Fenster (≈ Amplitude² ×
-         * Phasenhub², dieselbe Größe wie das Gewicht des Atem-Spektrums), nur die kSpecPoints stärksten rechnen. */
+        /* Wide zoom window (V2.3): breathing strength in advance as the scatter of the IQ values in the window (≈ amplitude² ×
+         * phase excursion², the same quantity as the weight of the breathing spectrum), compute only the kSpecPoints strongest. */
         bool use[kZoomPoints];
 #ifdef A121_DSP_COMBINE
-        constexpr uint16_t kSelPoints = kCombK;  /* V3.1: nur die K stärksten Punkte gehen in die Kombination */
+        constexpr uint16_t kSelPoints = kCombK;  /* V3.1: only the K strongest points go into the combination */
 #else
         constexpr uint16_t kSelPoints = kSpecPoints;
 #endif
@@ -1969,14 +1969,14 @@ public:
         } else {
             for (uint8_t b = 0; b < kZoomPoints; b++) use[b] = true;
         }
-        /* Pulsfenster: ohne A121_DSP_REACQ immer das ganze Fenster (Np = N) */
+        /* Pulse window: without A121_DSP_REACQ always the whole window (Np = N) */
         uint16_t Np = N;
 #ifdef A121_DSP_REACQ
-        /* V6: Bewegungskarte vor den Spektren (vor combineZoom: motionMap nutzt work_x_, in dem combineZoom den
-         * kombinierten Kanal ablegt). Kein bewegter Block: wie bisher. Bewegt und ruhiges Endstück ≥ kReacqMinS: Puls
-         * (Spektren, Kandidaten, AKF, Einzelschläge) nur auf dem Endstück, wie vorläufig (V2.4) mit Bestätigungspflicht;
-         * Atmung, Atemzustand, motion_pct und Raum weiter auf dem ganzen Fenster. Bewegt und Endstück kürzer: kein Puls,
-         * die Verfolgung bleibt unverändert (vorher lief sie durch die Bewegung weiter und sprang auf Artefakte). */
+        /* V6: motion map before the spectra (before combineZoom: motionMap uses work_x_, in which combineZoom stores the
+         * combined channel). No moving block: as before. Moving and quiet tail ≥ kReacqMinS: pulse
+         * (spectra, candidates, ACF, individual beats) only on the tail, as with preliminary values (V2.4) with a confirmation requirement;
+         * breathing, breathing state, motion_pct and room continue on the whole window. Moving and tail shorter: no pulse,
+         * tracking stays unchanged (before, it ran on through the motion and jumped to artifacts). */
         const MotionMap mm = motionMap(start, N, use);
         const bool moved = mm.mask != 0U;
         const bool pulse_off = moved && mm.clean_tail_blocks < kReacqMinS;
@@ -1985,17 +1985,17 @@ public:
         rep.win_s = pulse_off ? 0U : (uint8_t)(Np / 60U);
         rep.reacq = short_win ? kReacqShort : kReacqNone;
 #endif
-        const uint16_t start_p = (uint16_t)((start + (N - Np)) % kHistoryLen);  /* Beginn des Pulsfensters */
+        const uint16_t start_p = (uint16_t)((start + (N - Np)) % kHistoryLen);  /* start of the pulse window */
         const uint16_t Mp = (uint16_t)((Np + kDecim - 1U) / kDecim);
 #ifdef A121_DSP_REACQ
         const float *hann_p = (Np == N) ? hann : hannInto(hann_p_, hann_p_m_, Mp);
 #else
         const float *hann_p = hann;
 #endif
-        uint32_t moving_p = 0, total_p = 0;  /* Bewegungsblöcke im Pulsfenster (für die Konfidenz) */
+        uint32_t moving_p = 0, total_p = 0;  /* motion blocks in the pulse window (for the confidence) */
 #ifdef A121_DSP_COMBINE
-        /* V3.1: ein kombinierter Kanal statt Einzelspektren; die Schleife unten läuft einmal mit seinem Wegsignal und
-         * dem dominanten Punkt als hr_bin */
+        /* V3.1: one combined channel instead of single spectra; the loop below runs once with its path signal and
+         * the dominant point as hr_bin */
         bool comb_short = false;
         float comb_spread = 0.0f;
         float comb_amp    = 0.0f;
@@ -2012,21 +2012,21 @@ public:
             bool short_arc = false;
             float spread = 0.0f;
 #ifdef A121_DSP_COMBINE
-            short_arc = comb_short;  /* work_x_ hält schon das Wegsignal des kombinierten Kanals */
+            short_arc = comb_short;  /* work_x_ already holds the path signal of the combined channel */
             spread    = comb_spread;
             const float amp_c = comb_amp;
 #else
             const float amp_c = binDisplacement(b, start, N, work_x_, short_arc, spread);
 #endif
             removeLinearTrend(work_x_, N);
-            float *h = work_ext_ + kFiltPad;  /* gefiltertes Signal steht nach sosFiltFilt mittig in work_ext_ */
+            float *h = work_ext_ + kFiltPad;  /* filtered signal sits in the middle of work_ext_ after sosFiltFilt */
             sosFiltFilt(work_x_, N);
             const uint8_t moving_b = gateMotion(h, N);
             moving_blocks += moving_b;
-            /* Atem-Spektrum dieses Punkts (entzerrtes Wegsignal, dezimiert, Hann), gewichtet mit Amplitude² summiert.
-             * Schwache Punkte haben Phasenrauschen ~ 1/Amplitude, und Abwickel-Fehler wirken dort wie Stufen von 2,5 mm:
-             * Ungewichtet überdeckte ihr Tieftonanteil die Atmung (am Datensatz 2026-11-01 Punkte mit |z| 120–300,
-             * 140–240 Phasensprünge in 15 s, 8–11 mm "Hub"; die starken Punkte zeigten sauber 17 /min). */
+            /* Breathing spectrum of this point (detrended path signal, decimated, Hann), summed with amplitude² weighting.
+             * Weak points have phase noise ~ 1/amplitude, and unwrapping errors act there like steps of 2.5 mm:
+             * unweighted, their low-frequency part masked the breathing (on the 2026-11-01 dataset points with |z| 120–300,
+             * 140–240 phase jumps in 15 s, 8–11 mm "excursion"; the strong points showed a clean 17 /min). */
             const float wa = amp_c * amp_c;
             for (uint16_t m = 0; m < M; m++) dec_[m] = work_x_[(uint32_t)m * kDecim] * hann[m];
             fft_.power(dec_, M, spec_, kBrK0 + kBrNumF);
@@ -2036,24 +2036,24 @@ public:
                 br_comb_[k] += wa * pk;
                 br_energy += pk;
             }
-            /* Atem-Punkt: stärkste Atmung (Amplitude² × Atemband) unter den Punkten mit sauberem Echo. Reines Rauschen
-             * (kein Echo, Streuung ≈ 0,52) scheidet aus; dort läuft die Phase frei und täuscht Millimeter-Hub vor. */
+            /* Breathing point: strongest breathing (amplitude² × breathing band) among the points with a clean echo. Pure noise
+             * (no echo, scatter ≈ 0.52) is excluded; there the phase runs free and fakes millimeter excursion. */
             if (spread < kEchoSpreadMax && wa * br_energy > br_best) {
                 br_best = wa * br_energy;
                 br_bin  = (int16_t)b;
                 memcpy(br_x_, work_x_, N * sizeof(float));
             }
             total_blocks += N / kGateBlk;
-            /* Pulsteil auf dem Pulsfenster: xp = Wegsignal, h = gefiltert und gedämpft (ohne A121_DSP_REACQ das ganze
-             * Fenster wie bisher) */
+            /* Pulse part on the pulse window: xp = path signal, h = filtered and damped (without A121_DSP_REACQ the whole
+             * window as before) */
             float *xp = work_x_;
 #ifdef A121_DSP_REACQ
-            if (pulse_off) {  /* V6: kein Puls auf diesem Fenster; Atmung und Bewegung sind oben schon erfasst */
+            if (pulse_off) {  /* V6: no pulse on this window; breathing and motion are already captured above */
                 weight[b]  = 0.0f;
                 peak_hz[b] = 0.0f;
                 continue;
             }
-            if (Np != N) {  /* V6: Endstück nach Bewegung, Wegsignal neu entzerrt und gefiltert */
+            if (Np != N) {  /* V6: tail after motion, path signal detrended and filtered anew */
                 xp = work_x_ + (N - Np);
                 removeLinearTrend(xp, Np);
                 sosFiltFilt(xp, Np);
@@ -2065,12 +2065,12 @@ public:
                 moving_p += moving_b;
                 total_p += N / kGateBlk;
             }
-            /* dezimieren + Hann */
+            /* decimate + Hann */
 #ifdef A121_DSP_HARM_REMOVE
-            /* V3.3: Atem-Oberwellen geführt von der Atemphase dieses Punkts entfernen, mit Atem- und Pulsfrequenz des
-             * vorigen Reports. Nur, wenn der vorige Report sicher war: Verfolgte er einen falschen Puls (Prüfstand brady:
-             * 2 × Puls, Konfidenz ≈ 20 %), schonte die Regel den falschen und löschte den echten, der dicht an einer
-             * Atem-Oberwelle lag (MAE 2,8 → 3,7 /min). */
+            /* V3.3: remove breathing harmonics guided by the breathing phase of this point, with the breathing and pulse frequency of the
+             * previous report. Only if the previous report was safe: if it tracked a wrong pulse (test bench brady:
+             * 2 × pulse, confidence ≈ 20 %), the rule spared the wrong one and erased the real one, which lay close to a
+             * breathing harmonic (MAE 2.8 → 3.7 /min). */
             if (fb_prev_ > 0.0f && hr_prev_ > 0.0f && conf_prev_ >= kGuideMinConf) {
                 for (uint16_t m = 0; m < Mp; m++) {
                     dec_[m]        = h[(uint32_t)m * kDecim];
@@ -2082,8 +2082,8 @@ public:
             } else
 #endif
             for (uint16_t m = 0; m < Mp; m++) dec_[m] = h[(uint32_t)m * kDecim] * hann_p[m];
-            /* Oberwellen-Summe S(f) = P(f) + 0,5 · P(2f): Ein Herzschlag ist ein kurzer Impuls mit kräftiger 2. Oberwelle,
-             * eine Atem-Oberwelle m · f_Atem hat bei 2f kaum Leistung (V1.2). Im FFT-Raster liegt 2f genau auf Bin 2k. */
+            /* Harmonic sum S(f) = P(f) + 0.5 · P(2f): a heartbeat is a short impulse with a strong 2nd harmonic,
+             * a breathing harmonic m · f_breath has hardly any power at 2f (V1.2). On the FFT grid 2f lies exactly on bin 2k. */
             float pmax = 0.0f;
             uint16_t kmax = 0;
             fft_.power(dec_, Mp, spec_, kHr2MaxBin + 1U);
@@ -2096,7 +2096,7 @@ public:
             std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
             const float med = scratch_[kHrNumF / 2] + 1e-12f;
             const float q   = pmax / med;
-            const float w   = q * q * (short_arc ? 0.5f : 1.0f);  /* kurzer Bogen: Phase weniger sicher */
+            const float w   = q * q * (short_arc ? 0.5f : 1.0f);  /* short arc: phase less certain */
             for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] += w * (sum_[k] / med);
             wsum += w;
             weight[b]  = w;
@@ -2110,19 +2110,19 @@ public:
         }
         for (uint16_t k = 0; k < kHrNumF; k++) comb_[k] /= (wsum + 1e-12f);
 #ifdef A121_DSP_HARM_REMOVE
-        conf_prev_ = 0.0f;  /* verbraucht; gilt erst wieder, wenn dieser Report gültig endet */
+        conf_prev_ = 0.0f;  /* consumed; applies again only if this report ends valid */
 #endif
         rep.hr_bin     = hr_bin;
         rep.motion_pct = 100.0f * (float)moving_blocks / (float)(total_blocks ? total_blocks : 1U);
 
-        /* Atmung über alle Punkte: größtes echtes lokales Maximum (nicht am Bandrand), parabolisch verfeinert.
-         * Vorher zählte das größte Bin im Suchbereich; bei Lagewechseln (Stufen im Wegsignal) oder Rest-Drift steigt die
-         * Leistung zu tiefen Frequenzen weiter an, und das Ergebnis klebte am Rand bei 6,9 /min. Ohne echte Spitze
-         * bleibt fb = 0 (br_bpm = 0 heißt: keine Atemspitze). Vor der Pulssuche, weil die Oberwellen-Prüfung fb braucht. */
+        /* Breathing over all points: largest true local maximum (not at the band edge), parabolically refined.
+         * Previously the largest bin in the search range counted; with posture changes (steps in the path signal) or residual drift the
+         * power keeps rising toward low frequencies, and the result stuck at the edge at 6.9 /min. Without a true peak
+         * fb stays 0 (br_bpm = 0 means: no breathing peak). Before the pulse search, because the harmonic check needs fb. */
         float fb = 0.0f, br_q = 0.0f;
         int16_t kb = -1;
-        /* Schwelle für die Atemspitze wächst im kurzen Fenster mit (V2.4): Bei 6 s überdeckt die Hauptkeule fast das
-         * ganze Atemband, Spitze/Median lag im Prüfstand mit Person bei 1,5–1,7 (8 s: 2,0–4,3) */
+        /* Threshold for the breathing peak grows with the window in a short window (V2.4): at 6 s the main lobe covers almost the
+         * whole breathing band, peak/median in the test bench with a person was 1.5–1.7 (8 s: 2.0–4.3) */
         const float br_min_q = kBrMinQ * std::min(1.0f, (float)N / (float)kHrStableWin);
         for (uint16_t k = kBrEdgeBins; k + kBrEdgeBins < kBrNumF; k++)
             if (br_comb_[k] > br_comb_[k - 1] && br_comb_[k] >= br_comb_[k + 1] && (kb < 0 || br_comb_[k] > br_comb_[kb]))
@@ -2137,32 +2137,32 @@ public:
             std::nth_element(scratch_, scratch_ + kBrNumF / 2, scratch_ + kBrNumF);
             br_q = b / (scratch_[kBrNumF / 2] + 1e-12f);
         }
-        /* Atemzustand (V1.4) am Atem-Punkt; vor der Pulssuche, damit auch ein Report ohne Pulskandidat ihn trägt */
+        /* Breathing state (V1.4) at the breathing point; before the pulse search, so that a report without a pulse candidate also carries it */
         const bool echo_ok = br_bin >= 0;
         rep.br_state = br_track_.update(echo_ok ? breathAmplitude(br_x_, N, kFsHz) : -1.0f, br_q >= br_min_q && fb > 0.0f,
                                         rep.motion_pct);
         const bool breath_held = rep.br_state == kBrStateApnea;
-        /* Atemhub (Spitze-Spitze) am Atem-Punkt bei der Atemfrequenz aller Punkte (auf 15 Hz dezimiert, Hann); vor V1.3
-         * am Punkt mit klarstem Puls, der auch ein Rausch-Punkt sein konnte (B10, B19). Ohne sauberes Echo am Punkt mit
-         * klarstem Puls über dessen Pulsfenster (Wert dann bedeutungslos, der Report gilt ohne Echo nicht). */
+        /* Breathing excursion (peak-to-peak) at the breathing point at the breathing rate of all points (decimated to 15 Hz, Hann); before V1.3
+         * at the point with the clearest pulse, which could also be a noise point (B10, B19). Without a clean echo at the point with the
+         * clearest pulse over its pulse window (value then meaningless, the report is not valid without an echo). */
         {
             const uint16_t Mr = echo_ok ? M : Mp;
             const float *hr_w = echo_ok ? hann : hann_p;
             for (uint16_t m = 0; m < Mr; m++) dec_[m] = (echo_ok ? br_x_ : best_x_)[(uint32_t)m * kDecim] * hr_w[m];
             const float best_p = (fb > 0.0f) ? goertzelPower(dec_, Mr, kFsHz / kDecim, fb) : 0.0f;
-            const float norm   = 0.25f * (float)Mr;  /* Hann-Verstärkung → Amplitude in µm */
-            rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* angehalten: keine Atemfrequenz (vorher 15,9 /min) */
+            const float norm   = 0.25f * (float)Mr;  /* Hann gain → amplitude in µm */
+            rep.br_bpm        = breath_held ? 0.0f : fb * 60.0f;  /* held: no breathing rate (previously 15.9 /min) */
             rep.resp_depth_um = 2.0f * sqrtf(best_p) / norm;
         }
 #ifdef A121_DSP_REACQ
-        /* V6: Ohne Pulsteil (pulse_off) ist best_x_ vom Vorreport; ohne Echo also kein Atemhub */
+        /* V6: Without a pulse part (pulse_off) best_x_ is from the previous report; so without an echo no breathing excursion */
         if (pulse_off && !echo_ok) rep.resp_depth_um = 0.0f;
 #endif
         const bool breath_ok = echo_ok && br_q >= br_min_q && rep.resp_depth_um >= kBreathMinUm;
 #ifdef A121_DSP_REACQ
-        /* V6: Gedächtnis prüft jeden Report (abgelaufen, kein sauberes Echo oder Ziel nicht im Zoom-Fenster: gelöscht) */
+        /* V6: memory is checked every report (expired, no clean echo or target not in the zoom window: cleared) */
         const bool mem_on = mem_.active(s.tot_frames, echo_ok, rep.target_in_zoom);
-        if (pulse_off) {  /* V6: bewegt, ruhiges Endstück < kReacqMinS: kein Puls, Verfolgung unverändert */
+        if (pulse_off) {  /* V6: moving, quiet tail < kReacqMinS: no pulse, tracking unchanged */
             rep.valid = false;
             setState(s, rep, measurementState(person, echo_ok, breath_ok, false, rep.motion_pct, rep.br_state));
             rep.compute_us = micros() - t0;
@@ -2170,15 +2170,15 @@ public:
         }
 #endif
 #ifdef A121_DSP_HARM_REMOVE
-        fb_prev_ = (br_q >= br_min_q && fb > 0.0f && !breath_held) ? fb : 0.0f;  /* für den nächsten Report (V3.3) */
+        fb_prev_ = (br_q >= br_min_q && fb > 0.0f && !breath_held) ? fb : 0.0f;  /* for the next report (V3.3) */
 #endif
-        /* Atem-Oberwellen (m = 2..8) im Pulsband: Bei schneller Atmung (≈ 20 /min) lag die 3. Oberwelle bei 55–60 /min
-         * und überdeckte den Puls ganz. Kandidaten auf m ≥ 4 bekommen bei der Wahl S × 0,5 (der Puls kann darauf liegen,
-         * live 2026-11-01: Puls 78 ≈ 4 × Atmung 19,5), ein Sprung dorthin braucht kHoldHarm statt 3 Reports, und die
-         * Konfidenz halbiert sich (signalQuality). harmOrder: m, wenn f auf m · f_Atem liegt, sonst 0. Für m ≤ 3 gilt
-         * die ganze Hauptkeule (±kLowLobeHz) und S × 0,02: Diese Oberwellen sind 10–100 × stärker als der Puls, ein
-         * Puls darin ist spektral nicht zu trennen, und im ersten Report (8-s-Fenster) ist f_Atem bis 8 % ungenau
-         * (Prüfstand base/step/beweg: 3 × Atmung 4 s lang gemeldet). */
+        /* Breathing harmonics (m = 2..8) in the pulse band: with fast breathing (≈ 20 /min) the 3rd harmonic lay at 55–60 /min
+         * and masked the pulse completely. Candidates on m ≥ 4 get S × 0.5 in the selection (the pulse can lie on it,
+         * live 2026-11-01: pulse 78 ≈ 4 × breathing 19.5), a jump there needs kHoldHarm instead of 3 reports, and the
+         * confidence is halved (signalQuality). harmOrder: m if f lies on m · f_breath, otherwise 0. For m ≤ 3 the
+         * whole main lobe applies (±kLowLobeHz) and S × 0.02: these harmonics are 10–100 × stronger than the pulse, a
+         * pulse inside them cannot be separated spectrally, and in the first report (8 s window) f_breath is up to 8 % inaccurate
+         * (test bench base/step/beweg: 3 × breathing reported for 4 s). */
         auto harmOrder = [&](float f) -> uint8_t {
             if (br_q < br_min_q || fb <= 0.0f) return 0;
             for (uint8_t m = 2; m <= kHarmMMax; m++)
@@ -2191,16 +2191,16 @@ public:
             return m == 0 ? 1.0f : (m <= kHarmLowMax ? kHarmPenLow : kHarmPenalty);
         };
         auto binHz = [](int16_t k) { return kHrFMin + kHrFStep * (float)k; };
-        /* Abschlag je Spitze, nicht je Frequenzschritt: sonst entsteht in der Oberwellen-Spitze eine Kerbe, und ihre
-         * Flanke wird zum Scheinkandidaten (Prüfstand: 57 statt 54 /min). pen_ = S × Abschlag an lokalen Maxima von S. */
+        /* Penalty per peak, not per frequency step: otherwise a notch appears in the harmonic peak, and its
+         * flank becomes a spurious candidate (test bench: 57 instead of 54 /min). pen_ = S × penalty at local maxima of S. */
         for (uint16_t k = 0; k < kHrNumF; k++) {
             const bool peak = k > 0 && k + 1 < kHrNumF && comb_[k] >= comb_[k - 1] && comb_[k] >= comb_[k + 1];
             pen_[k] = peak ? comb_[k] * harmPenalty(binHz((int16_t)k)) : 0.0f;
         }
 
-        /* Kandidaten: Top 3 lokale Maxima nach pen_ mit ≥ 0,08 Hz Abstand, nicht am Bandrand (am Datensatz lag die
-         * häufigste Fehlspitze bei 54 /min = 0,90 Hz direkt über der Suchgrenze 0,88 Hz und wurde von vielen Punkten
-         * gestützt) */
+        /* Candidates: top 3 local maxima by pen_ with ≥ 0.08 Hz spacing, not at the band edge (on the dataset the
+         * most common false peak lay at 54 /min = 0.90 Hz right above the search limit 0.88 Hz and was supported by
+         * many points) */
         int16_t cand[3] = {-1, -1, -1};
         uint8_t n_cand  = 0;
         for (uint8_t c = 0; c < 3; c++) {
@@ -2222,13 +2222,13 @@ public:
             rep.compute_us = micros() - t0;
             return false;
         }
-        /* Oktav-Prüfung (B5) je Kandidat: Bei langsamem Puls ist die 2. Herz-Oberwelle oft stärker als die Grundwelle
-         * (Prüfstand: Puls 50 → 100 gemeldet), und die Verfolgung sprang sonst auch auf 2 × Puls (145 statt 72). Liegt
-         * bei f/2 (±0,02 Hz, im Suchband) eine Spitze mit S(f/2) ≥ kSubRel · S(f), steht der Kandidat für f/2; sein
-         * Wert ist der größere von beiden. S ohne Abschlag: Der Puls liegt oft auf einer Atem-Oberwelle m ≥ 4 (Prüfstand
-         * brady: 50 ≈ 4 × 12). Nicht, wenn f/2 in der Hauptkeule einer niedrigen Atem-Oberwelle (m ≤ 3, ±kLowLobeHz)
-         * liegt: Die ist 10–100 × stärker als der Puls, und S(f/2) enthält ohnehin 0,5 · P(f), sodass ihre Flanke dort
-         * eine Scheinspitze bildet (Prüfstand tachy: 120 → 60,6 bei 3 × 19 = 57). */
+        /* Octave check (B5) per candidate: with a slow pulse the 2nd heart harmonic is often stronger than the fundamental
+         * (test bench: pulse 50 → 100 reported), and tracking would otherwise also jump to 2 × pulse (145 instead of 72). If
+         * at f/2 (±0.02 Hz, in the search band) there is a peak with S(f/2) ≥ kSubRel · S(f), the candidate stands for f/2; its
+         * value is the larger of the two. S without penalty: the pulse often lies on a breathing harmonic m ≥ 4 (test bench
+         * brady: 50 ≈ 4 × 12). Not if f/2 lies in the main lobe of a low breathing harmonic (m ≤ 3, ±kLowLobeHz):
+         * that one is 10–100 × stronger than the pulse, and S(f/2) contains 0.5 · P(f) anyway, so that its flank there
+         * forms a spurious peak (test bench tachy: 120 → 60.6 at 3 × 19 = 57). */
         float cs[3] = {0.0f, 0.0f, 0.0f};
         for (uint8_t j = 0; j < n_cand; j++) {
             cs[j] = pen_[cand[j]];
@@ -2244,7 +2244,7 @@ public:
                 cand[j] = sub;
             }
         }
-        /* doppelte entfernen (≤ 0,08 Hz), nach Wert sortieren */
+        /* remove duplicates (≤ 0.08 Hz), sort by value */
         for (uint8_t j = 0; j < n_cand; j++)
             for (uint8_t i2 = j + 1U; i2 < n_cand;) {
                 if (fabsf((float)(cand[i2] - cand[j]) * kHrFStep) <= 0.08f) {
@@ -2260,7 +2260,7 @@ public:
                 std::swap(cs[r], cs[r - 1U]);
                 std::swap(cand[r], cand[r - 1U]);
             }
-        /* Kandidaten-Frequenz parabolisch zwischen den Bins verfeinert (V2.2; Kandidaten sind lokale Maxima von S) */
+        /* Candidate frequency parabolically refined between the bins (V2.2; candidates are local maxima of S) */
         float cf[3] = {0.0f, 0.0f, 0.0f};
         for (uint8_t j = 0; j < n_cand; j++) {
             const int16_t k = cand[j];
@@ -2272,10 +2272,10 @@ public:
             cf[j] = binHz(k) + kHrFStep * d;
         }
 #ifdef A121_DSP_PHASE_SLOPE
-        /* V6 Variante Phasensteigung (Experiment): Der gewählte Kandidat (cf[0]) kommt aus der Phase statt aus der
-         * Parabel. Signal = Herzsignal des klarsten Punkts (bzw. des kombinierten Kanals) auf dem Pulsfenster, dezimiert
-         * und gewichtet wie für die Spektren; dec_ ist hier frei (die Punkteschleife und der Atemhub sind fertig). Die
-         * Kandidatenwahl, die Oktav-Prüfung und die übrigen Kandidaten bleiben wie ohne Schalter. */
+        /* V6 phase slope variant (experiment): the chosen candidate (cf[0]) comes from the phase instead of from the
+         * parabola. Signal = heart signal of the clearest point (or of the combined channel) on the pulse window, decimated
+         * and weighted as for the spectra; dec_ is free here (the point loop and the breathing excursion are done). The
+         * candidate selection, the octave check and the other candidates stay as without the switch. */
         for (uint16_t m = 0; m < Mp; m++) dec_[m] = best_h_[(uint32_t)m * kDecim] * hann_p[m];
         cf[0] = phaseSlopeHz(dec_, Mp, kFsHz / kDecim, binHz(cand[0]), psl_fft_, psl_re_, psl_im_);
 #endif
@@ -2286,33 +2286,33 @@ public:
         std::nth_element(scratch_, scratch_ + kHrNumF / 2, scratch_ + kHrNumF);
         const float comb_med = scratch_[kHrNumF / 2] + 1e-12f;
         rep.zoom_snr_db = 10.0f * log10f(comb_[cand[0]] / comb_med);
-        auto sAtBpm = [&](float bpm) {  /* kombiniertes Spektrum (ohne Abschlag) am nächsten Frequenzschritt */
+        auto sAtBpm = [&](float bpm) {  /* combined spectrum (without penalty) at the nearest frequency step */
             int k = (int)lroundf((bpm / 60.0f - kHrFMin) / kHrFStep);
             k = k < 0 ? 0 : (k >= (int)kHrNumF ? (int)kHrNumF - 1 : k);
             return comb_[k];
         };
 
-        /* Verfolgung mit Haltezeit. Ein naher Kandidat (±12 /min) gewinnt nur mit ≥ 0,5 × dem besten Kandidatenwert
-         * (vorher 0,4 ohne Abschlag: die Verfolgung blieb an starken Fremdspitzen hängen, B6). Liegt der verfolgte Wert
-         * auf 2 × / 3 × Atmung und gibt es 3 Reports lang einen Kandidaten ohne Oberwelle mit ≥ 0,5 × dem Wert dort,
-         * wird gewechselt. Ein Abbruch der Haltezeit über die Punkt-Zustimmung wurde 2026-11-01 verworfen (rhythmische
-         * Bewegung stützen alle Punkte). */
-        /* Vorläufig (V2.4): Beginnt die Verfolgung in einem Fenster unter 8 s, gilt nur der rohe Wert dieses Reports; er
-         * wird nicht festgeschrieben (Prüfstand: im 6-s-Fenster lag die stärkste Spitze oft am Bandrand oder auf einer
-         * Atem-Oberwelle, und die Haltezeit hielt den Fehlwert bis zu 10 Reports). */
+        /* Tracking with hold time. A near candidate (±12 /min) wins only with ≥ 0.5 × the best candidate value
+         * (previously 0.4 without penalty: tracking stuck on strong foreign peaks, B6). If the tracked value lies
+         * on 2 × / 3 × breathing and for 3 reports there is a candidate without a harmonic with ≥ 0.5 × the value there,
+         * it switches. Aborting the hold time via point agreement was rejected on 2026-11-01 (rhythmic
+         * motion is supported by all points). */
+        /* Preliminary (V2.4): if tracking starts in a window under 8 s, only the raw value of this report counts; it
+         * is not committed (test bench: in the 6 s window the strongest peak often lay at the band edge or on a
+         * breathing harmonic, and the hold time kept the wrong value for up to 10 reports). */
         const bool prov = prov_ && N < kHrStableWin;
         if (!prov) prov_ = false;
 #ifdef A121_DSP_VITERBI
         float vit_mass = 0.0f;
 #endif
 #ifdef A121_DSP_REACQ
-        /* V6: Endstück nach Bewegung wie vorläufig: Die Verfolgung wird nicht fortgeschrieben (auch Viterbi nicht).
-         * Gemeldet wird der stärkste Kandidat, bei aktivem Gedächtnis zuerst der stärkste nahe am gemerkten Puls
-         * (preferMemoryCandidate); hr_prev_ bleibt nur, wenn der Wert unten bestätigt wird, sonst gilt wieder hr_keep.
-         * Offen (Final-Review): Mit A121_DSP_VITERBI (auch über A121_DSP_HEAVY) zusammen mit A121_DSP_REACQ bleibt vit_
-         * hier eingefroren; nach einem bestätigten Endstück kann der nächste volle Report den alten Viterbi-Pfad wählen und
-         * hr_prev_ auf den Wert vor der Bewegung zurückziehen. Keine ausgelieferte Build-Umgebung kombiniert das heute;
-         * vor einer solchen Kombination lösen (z. B. vit_ nach bestätigtem Endstück zurücksetzen) und am Prüfstand prüfen. */
+        /* V6: tail after motion as preliminary: tracking is not advanced (Viterbi neither).
+         * The strongest candidate is reported, with an active memory first the strongest one near the remembered pulse
+         * (preferMemoryCandidate); hr_prev_ stays only if the value is confirmed below, otherwise hr_keep applies again.
+         * Open (final review): with A121_DSP_VITERBI (also via A121_DSP_HEAVY) together with A121_DSP_REACQ, vit_
+         * stays frozen here; after a confirmed tail the next full report can choose the old Viterbi path and
+         * pull hr_prev_ back to the value before the motion. No shipped build environment combines this today;
+         * resolve before such a combination (e.g. reset vit_ after a confirmed tail) and check on the test bench. */
         const float hr_keep = hr_prev_;
         int8_t mem_j = -1;
         if (short_win) {
@@ -2323,13 +2323,13 @@ public:
             }
             hr_prev_ = cf[mem_j >= 0 ? mem_j : 0] * 60.0f;
 #ifdef A121_DSP_VITERBI
-            vit_mass = 1.0f;  /* keine Viterbi-Masse in diesem Report: Konfidenz nicht begrenzen */
+            vit_mass = 1.0f;  /* no Viterbi mass in this report: do not limit the confidence */
 #endif
         } else {
 #endif
 #ifdef A121_DSP_VITERBI
-        /* V3.2: Viterbi über die letzten 20 Reports statt Haltezeit/Wechselregeln; Ergebnis auf den nächsten Kandidaten
-         * (±3 /min, verfeinert) gezogen, nahe Werte wie bisher geglättet */
+        /* V3.2: Viterbi over the last 20 reports instead of hold time/switching rules; result pulled to the nearest candidate
+         * (±3 /min, refined), near values smoothed as before */
         {
             float cb[3], cw[3];
             for (uint8_t j = 0; j < n_cand; j++) {
@@ -2341,7 +2341,7 @@ public:
             for (uint8_t j = 0; j < n_cand; j++)
                 if (fabsf(cb[j] - tgt) <= 3.0f && (nj < 0 || fabsf(cb[j] - tgt) < fabsf(cb[nj] - tgt))) nj = (int16_t)j;
             if (nj >= 0) tgt = cb[nj];
-            if (hr_prev_ <= 0.0f || prov) hr_prev_ = raw_bpm;  /* vorläufig (V2.4): roher Wert, wie ohne Schalter */
+            if (hr_prev_ <= 0.0f || prov) hr_prev_ = raw_bpm;  /* preliminary (V2.4): raw value, as without the switch */
             else hr_prev_ = (fabsf(tgt - hr_prev_) < 12.0f) ? 0.7f * hr_prev_ + 0.3f * tgt : tgt;
         }
 #else
@@ -2363,9 +2363,9 @@ public:
                 hr_prev_ = raw_bpm;
                 hr_miss_ = 0;
             }
-            /* Vergleich mit Abschlag: Unbeschnitten bliebe die Verfolgung an einer starken Atem-Oberwelle hängen, weil
-             * deren Wert um die halbe Spitzenhöhe pendelt. Nur für m ≤ 3: Auf m ≥ 4 liegt oft der Puls selbst (Prüfstand
-             * harm4, brady), ein Wechsel ging dort auf die 3. Herz-Oberwelle (75 statt 50). */
+            /* Comparison with penalty: unclipped, tracking would stick to a strong breathing harmonic because
+             * its value oscillates around half the peak height. Only for m ≤ 3: on m ≥ 4 the pulse itself often lies (test bench
+             * harm4, brady), a switch there went to the 3rd heart harmonic (75 instead of 50). */
             int16_t alt = -1;
             if (harmOrder(hr_prev_ / 60.0f) != 0 && harmOrder(hr_prev_ / 60.0f) <= kHarmLowMax) {
                 const float s_tr = sAtBpm(hr_prev_) * harmPenalty(hr_prev_ / 60.0f);
@@ -2389,7 +2389,7 @@ public:
         }
 #endif
 
-        /* Herzsignal des klarsten Punkts (Pulsfenster): Amplitude, Autokorrelation, Einzelschläge */
+        /* Heart signal of the clearest point (pulse window): amplitude, autocorrelation, individual beats */
         float hr_rms = 0.0f;
         for (uint16_t n = 0; n < Np; n++) hr_rms += best_h_[n] * best_h_[n];
         rep.heart_amp_um = sqrtf(2.0f * hr_rms / (float)Np);
@@ -2397,8 +2397,8 @@ public:
         float acf_bpm = 0.0f, acf_peak = 0.0f;
         cardiacAcf(best_h_, Np, kFsHz, acf_bpm, acf_peak);
 #ifdef A121_DSP_IBI_TEMPLATE
-        /* V3.6: Einzelschläge mit Vorlage auf dem Band 0,6–8 Hz des klarsten Punkts; Bewegungsdämpfung und Abzug der
-         * Atem-Oberwellen wie für best_h_ */
+        /* V3.6: individual beats with a template on the 0.6–8 Hz band of the clearest point; motion damping and removal of the
+         * breathing harmonics as for best_h_ */
         sosFiltFiltSos(best_x_, Np, work_ext_, kBp8Sos);
         memcpy(work_x_, work_ext_ + kFiltPad, Np * sizeof(float));
         gateMotion(work_x_, Np);
@@ -2408,11 +2408,11 @@ public:
         const IbiResult ibi = timeDomainIbi(best_h_, Np, kFsHz, hr_prev_);
 #endif
         const float ibi_bpm = ibi.bpm;
-        const float acf_res = (acf_peak > 0.0f) ? acf_bpm : 0.0f;  /* 0 = kein AKF-Ergebnis */
-        /* Bestätigung eines kurzen Fensters (V2.4 vorläufig, V3.1; V6 Endstück): Autokorrelation oder Einzelschläge
-         * innerhalb ±5 /min des Kandidaten (f_hz) und nicht auf einer niedrigen Atem-Oberwelle (m ≤ 3): Die sehen AKF und
-         * Einzelschläge desselben Signals genauso, die Bestätigung zählt dort nicht (Prüfstand base mit
-         * A121_DSP_COMBINE: 46 statt 71 /min). */
+        const float acf_res = (acf_peak > 0.0f) ? acf_bpm : 0.0f;  /* 0 = no ACF result */
+        /* Confirmation of a short window (V2.4 preliminary, V3.1; V6 tail): autocorrelation or individual beats
+         * within ±5 /min of the candidate (f_hz) and not on a low breathing harmonic (m ≤ 3): ACF and
+         * individual beats of the same signal see these just the same, so the confirmation does not count there (test bench base with
+         * A121_DSP_COMBINE: 46 instead of 71 /min). */
         auto confirmedHz = [&](float f_hz) {
             const float bpm   = f_hz * 60.0f;
             const bool acf_ok = acf_res > 0.0f && fabsf(acf_res - bpm) <= 5.0f;
@@ -2421,8 +2421,8 @@ public:
             return (acf_ok || ibi_ok) && !(m != 0 && m <= kHarmLowMax);
         };
 #ifdef A121_DSP_REACQ
-        /* V6: Ein Gedächtnis-Kandidat ohne Bestätigung fällt auf die normale Suche (stärkster Kandidat) zurück; AKF und
-         * Einzelschläge bleiben dafür dieselben (Abstand ≤ kMemBandBpm). */
+        /* V6: a memory candidate without confirmation falls back to the normal search (strongest candidate); ACF and
+         * individual beats stay the same for that (distance ≤ kMemBandBpm). */
         bool short_ok = false;
         if (short_win) {
             if (mem_j > 0 && !confirmedHz(cf[mem_j])) {
@@ -2435,7 +2435,7 @@ public:
 #endif
         rep.hr_fused_bpm = hr_prev_;
 
-        /* frühere Konfidenz als Diagnosewert: gewichteter Anteil der Punkte mit eigener Spitze ±5 /min am Ergebnis */
+        /* earlier confidence as a diagnostic value: weighted share of the points with their own peak ±5 /min of the result */
         float agree = 0.0f;
         for (uint8_t b = 0; b < kZoomPoints; b++)
             if (fabsf(peak_hz[b] * 60.0f - hr_prev_) <= 5.0f) agree += weight[b];
@@ -2446,16 +2446,16 @@ public:
         rep.ibi_median_ms = (ibi_bpm > 0.0f) ? ibi.ibi_ms : 60000.0f / hr_prev_;
         rep.rmssd_ms      = ibi.rmssd_ms;
 
-        /* Konfidenz (V1.3) */
+        /* Confidence (V1.3) */
         QualityInputs qi;
         qi.peak_db         = 10.0f * log10f(sAtBpm(hr_prev_) / comb_med);
         qi.on_harmonic     = isHarmHz(hr_prev_ / 60.0f);
         qi.hr_spec         = rep.hr_spec_bpm;
-        qi.hr_acf          = acf_res;                             /* ohne Ergebnis keine Zustimmung (in @VITAL steht */
-        qi.hr_ibi          = ibi_bpm;                             /* dann wie bisher der verfolgte Wert)            */
+        qi.hr_acf          = acf_res;                             /* without a result no agreement (@VITAL then shows */
+        qi.hr_ibi          = ibi_bpm;                             /* the tracked value as before)                */
         qi.hr_fused        = hr_prev_;
         qi.hr_fused_5s_ago = (hr_hist_n_ >= 5) ? hr_hist_[(hr_hist_n_ - 5) % 5] : 0.0f;
-        qi.motion_pct      = 100.0f * (float)moving_p / (float)(total_p ? total_p : 1U);  /* Pulsfenster (= motion_pct) */
+        qi.motion_pct      = 100.0f * (float)moving_p / (float)(total_p ? total_p : 1U);  /* pulse window (= motion_pct) */
         {
             uint16_t n_sat_win = 0;
             for (uint16_t n = 0; n < Np; n++) n_sat_win += hist_sat_[(start_p + n) % kHistoryLen];
@@ -2464,28 +2464,28 @@ public:
         qi.win_frac = (float)Np / (float)kHrWin;
         rep.confidence_pct = signalQuality(qi);
 #ifdef A121_DSP_VITERBI
-        rep.confidence_pct = fminf(rep.confidence_pct, 100.0f * vit_mass);  /* V3.2: Masse ±5 /min */
+        rep.confidence_pct = fminf(rep.confidence_pct, 100.0f * vit_mass);  /* V3.2: mass ±5 /min */
 #endif
 #ifdef A121_DSP_REACQ
-        if (!prov && !short_win) pushHrHist(hr_prev_);  /* Endstück: erst nach Bestätigung (unten) */
+        if (!prov && !short_win) pushHrHist(hr_prev_);  /* tail: only after confirmation (below) */
 #else
         if (!prov) pushHrHist(hr_prev_);
 #endif
 
-        /* Lebenszeichen (B19): gültig nur mit sauberem Echo im Zoom-Fenster und Atmung (Atemspitze/Median ≥ kBrMinQ und
-         * ≥ 100 µm Hub am Atem-Punkt) oder bei angehaltenem Atem mit deutlicher Pulsspitze; dazu höchstens 30 %
-         * Bewegung im Fenster. Die Atemspitze allein reicht nicht: Rausch-Punkte erzeugen auch ohne Person Spitzen. */
+        /* Sign of life (B19): valid only with a clean echo in the zoom window and breathing (breathing peak/median ≥ kBrMinQ and
+         * ≥ 100 µm excursion at the breathing point) or with held breath and a clear pulse peak; additionally at most 30 %
+         * motion in the window. The breathing peak alone is not enough: noise points produce peaks even without a person. */
         const bool held_pulse = echo_ok && breath_held && qi.peak_db >= kPulseHeldDb;
 #ifdef A121_DSP_REACQ
-        /* V6: Statt der 30-%-Regel gilt die Fensterwahl (bewegt mit zu kurzem Endstück ist oben schon ungültig); als
-         * Lebenszeichen zählt auch der über das Gedächtnis wiedergefundene Puls (Atemspitze nach Unruhe oft verschmiert).
-         * Endstück: nur bestätigt; dann wird der Wert verfolgt, sonst bleibt die Verfolgung wie vor dem Report.
-         * Bewusste Abweichung von V2.4: Ein Endstück-Report im Start (short_win zusammen mit prov) schreibt den bestätigten
-         * Wert fest (hr_prev_ bleibt), statt ihn wie vorläufig zu verwerfen (Spec Punkt 3: hr_prev_ aus einem bestätigten
-         * Wert); der prov-Zweig unten gilt dann nicht.
-         * Ruling R15: Der Gedächtnis-Wert ersetzt die Atemspitze nur, wenn er höchstens kMemSubstBpm (5 /min) vom
-         * gemerkten Puls liegt (memSubstitutesBreath); weiter weg (Band ±kMemBandBpm) braucht er breath_ok wie jeder
-         * andere Report. mem_ ist hier unverändert seit mem_on (reacq = 2 nur mit aktivem Gedächtnis). */
+        /* V6: instead of the 30 % rule the window choice applies (moving with a too-short tail is already invalid above); the pulse
+         * reacquired via the memory also counts as a sign of life (breathing peak often smeared after unrest).
+         * Tail: only if confirmed; then the value is tracked, otherwise tracking stays as before the report.
+         * Deliberate deviation from V2.4: a tail report at the start (short_win together with prov) commits the confirmed
+         * value (hr_prev_ stays) instead of discarding it as preliminary (spec point 3: hr_prev_ from a confirmed
+         * value); the prov branch below then does not apply.
+         * Ruling R15: the memory value replaces the breathing peak only if it lies at most kMemSubstBpm (5 /min) from the
+         * remembered pulse (memSubstitutesBreath); farther away (band ±kMemBandBpm) it needs breath_ok like any
+         * other report. mem_ is unchanged here since mem_on (reacq = 2 only with an active memory). */
         const bool mem_ok = rep.reacq == kReacqMemory && memSubstitutesBreath(rep.hr_fused_bpm, mem_.hr());
         rep.valid = breath_ok || held_pulse || mem_ok;
         if (short_win) {
@@ -2503,7 +2503,7 @@ public:
         rep.valid      = (breath_ok || held_pulse) && rep.motion_pct <= kMaxMotionPct;
         const bool prov_check = prov;
 #endif
-        if (prov_check) {  /* vorläufig nur mit Bestätigung des Spektralwerts (confirmedHz) */
+        if (prov_check) {  /* preliminary only with confirmation of the spectral value (confirmedHz) */
             rep.valid = rep.valid && confirmedHz(cf[0]);
             hr_prev_  = 0.0f;
         }
@@ -2512,7 +2512,7 @@ public:
             last_valid_tot_ = s.tot_frames;
         }
 #ifdef A121_DSP_REACQ
-        /* V6: sicherer Wert (Konfidenz ≥ kMemMinConf, Pulsfenster ≥ 8 s) ins Gedächtnis */
+        /* V6: safe value (confidence ≥ kMemMinConf, pulse window ≥ 8 s) into the memory */
         if (rep.valid && rep.confidence_pct >= kMemMinConf && Np >= kHrStableWin)
             mem_.store(rep.hr_fused_bpm, rep.ibi_median_ms, s.tot_frames);
 #endif
@@ -2527,14 +2527,14 @@ public:
 private:
     static uint16_t sat16(uint32_t v) { return (v > 0xFFFFU) ? 0xFFFFU : (uint16_t)v; }
 
-    /** hr_fused der letzten 5 Reports (Sprung-Abschlag der Konfidenz) */
+    /** hr_fused of the last 5 reports (jump penalty of the confidence) */
     void pushHrHist(float hr) {
         hr_hist_[hr_hist_n_ % 5] = hr;
         if (hr_hist_n_ < 250) hr_hist_n_++;
         else hr_hist_n_ = 5 + (hr_hist_n_ % 5);
     }
 
-    /** Zustand der Messung eintragen; seit_ms zählt ab dem letzten Wechsel, über Rezooms hinweg (V3.5). */
+    /** Enter the state of the measurement; since_ms counts from the last change, across rezooms (V3.5). */
     void setState(const ReportSnapshot &s, VitalReport &rep, uint8_t st) {
         if (st != state_) {
             state_           = st;
@@ -2544,7 +2544,7 @@ private:
         rep.state_since_ms = (uint32_t)lroundf((float)(s.tot_frames - state_since_tot_) * 1000.0f / kFsHz);
     }
 
-    /** Hann-Fenster der Länge M (dezimierte Folge); neu gerechnet nur, wenn sich M ändert (Fensteraufbau), V2.2. */
+    /** Hann window of length M (decimated sequence); recomputed only when M changes (window growth), V2.2. */
     const float *hannWindow(uint16_t M) { return hannInto(hann_, hann_m_, M); }
 
     static const float *hannInto(float *w, uint16_t &w_m, uint16_t M) {
@@ -2564,7 +2564,7 @@ private:
         return (float *)p;
     }
 
-    /** Kohärenter 5-Punkt-Strahl um best_zoom_bin_ (für Telemetrie); cl_* = derselbe Strahl über die Clutter-Schätzung. */
+    /** Coherent 5-point beam around best_zoom_bin_ (for telemetry); cl_* = the same beam over the clutter estimate. */
     void beamform(const float *di, const float *dq, float &bi, float &bq, float &cli, float &clq) const {
         const uint8_t b0 = best_zoom_bin_;
         const float ref_ci = zoom_clutter_i_[b0], ref_cq = zoom_clutter_q_[b0];
@@ -2587,8 +2587,8 @@ private:
         bi /= w_sum; bq /= w_sum; cli /= w_sum; clq /= w_sum;
     }
 
-    /** Phase um (ci, cq) abwickeln → out[] in µm. Rückgabe: mittlerer Abstand zum Mittelpunkt (Radius);
-     *  span = überstrichene Phase (max − min, rad), spread = Streuung des Abstands relativ zum Radius. */
+    /** Unwrap the phase around (ci, cq) → out[] in µm. Returns: mean distance to the center (radius);
+     *  span = swept phase (max − min, rad), spread = scatter of the distance relative to the radius. */
     static float unwrapAround(const float *base, uint16_t start, uint16_t N, float ci, float cq, float *out, float &span,
                               float &spread) {
         float prev = 0.0f, acc = 0.0f, lo = 0.0f, hi = 0.0f, r_sum = 0.0f, r2_sum = 0.0f;
@@ -2619,14 +2619,14 @@ private:
         return r;
     }
 
-    /** Phase des Zoom-Punkts b um den Kreismittelpunkt (circleCenter) abwickeln → µm. Überstreicht die Phase weniger als
-     *  kArcMinRad, ist der Fit schlecht bestimmt (kurzer Bogen): Dann gilt der letzte gute Mittelpunkt dieses Punkts,
-     *  solange die IQ-Werte auf dessen Kreis liegen (Streuung höchstens doppelt so groß wie um den Fit), und short_arc
-     *  meldet dem Aufrufer, das Gewicht des Punkts zu halbieren. Rückgabe: mittlerer Abstand zum Mittelpunkt (Radius),
-     *  spread: Streuung des Abstands relativ zum Radius (klein = sauberes Echo, ≈ 0,5 = nur Rauschen). */
+    /** Unwrap the phase of zoom point b around the circle center (circleCenter) → µm. If the phase sweeps less than
+     *  kArcMinRad, the fit is poorly determined (short arc): then the last good center of this point applies,
+     *  as long as the IQ values lie on its circle (scatter at most twice as large as around the fit), and short_arc
+     *  tells the caller to halve the weight of the point. Returns: mean distance to the center (radius),
+     *  spread: scatter of the distance relative to the radius (small = clean echo, ≈ 0.5 = noise only). */
     float binDisplacement(uint8_t b, uint16_t start, uint16_t N, float *out, bool &short_arc, float &spread,
                           float *c_out = nullptr) {
-        const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* Ring dieses Punkts, fortlaufend im PSRAM */
+        const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;  /* ring of this point, contiguous in PSRAM */
         float mi = 0.0f, mq = 0.0f;
         for (uint16_t n = 0; n < N; n++) {
             const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
@@ -2655,10 +2655,10 @@ private:
                 ci     = good_ci_[b];
                 cq     = good_cq_[b];
             } else {
-                have_good_[b] = false;  /* Szene hat sich geändert: alter Mittelpunkt passt nicht mehr */
+                have_good_[b] = false;  /* scene has changed: old center no longer fits */
             }
         }
-        if (c_out) {  /* benutzter Mittelpunkt (V3.1) */
+        if (c_out) {  /* center used (V3.1) */
             c_out[0] = ci;
             c_out[1] = cq;
         }
@@ -2666,10 +2666,10 @@ private:
     }
 
 #ifdef A121_DSP_COMBINE
-    /** V3.1: Die gewählten Punkte (use) um ihre Kreismittelpunkte verschieben (binDisplacement, mit Rückfall auf den
-     *  letzten guten Mittelpunkt) und zur 1. Hauptkomponente kombinieren (combinePrincipal). Punkte mit Rauschen statt
-     *  Echo (Streuung ≥ kEchoSpreadMax) bleiben draußen, außer es gibt keinen anderen. Das Wegsignal des Kanals steht
-     *  danach in work_x_ (µm). Rückgabe: dominanter Zoom-Punkt; amp/short_arc/spread wie binDisplacement. */
+    /** V3.1: shift the chosen points (use) around their circle centers (binDisplacement, falling back to the
+     *  last good center) and combine into the 1st principal component (combinePrincipal). Points with noise instead of
+     *  echo (scatter ≥ kEchoSpreadMax) stay out unless there is no other. The path signal of the channel is
+     *  then in work_x_ (µm). Returns: dominant zoom point; amp/short_arc/spread as binDisplacement. */
     uint8_t combineZoom(uint16_t start, uint16_t N, const bool *use, float &amp, bool &short_arc, float &spread,
                         float &n_eff) {
         const float *rings[kCombKMax];
@@ -2689,7 +2689,7 @@ private:
             n_clean += clean[K];
             K++;
         }
-        if (n_clean > 0 && n_clean < K) {  /* nur saubere Punkte behalten */
+        if (n_clean > 0 && n_clean < K) {  /* keep only clean points */
             uint8_t w = 0;
             for (uint8_t j = 0; j < K; j++)
                 if (clean[j]) {
@@ -2710,14 +2710,14 @@ private:
     }
 #endif
 
-    /** Nullphasen-Bandpass 0,6–5 Hz (kBpSos) wie scipy `sosfiltfilt`. Ergebnis: work_ext_[kFiltPad .. kFiltPad + N). */
+    /** Zero-phase bandpass 0.6–5 Hz (kBpSos) like scipy `sosfiltfilt`. Result: work_ext_[kFiltPad .. kFiltPad + N). */
     void sosFiltFilt(const float *x, uint16_t N) { sosFiltFiltSos(x, N, work_ext_, kBpSos); }
 
-    /** Streuung der IQ-Werte jedes Zoom-Punkts im Fenster (≈ Amplitude² × Phasenhub², um den ersten Wert verschoben). */
+    /** Scatter of the IQ values of each zoom point in the window (≈ amplitude² × phase excursion², shifted by the first value). */
     void zoomStrength(uint16_t start, uint16_t N, float *strength) const {
         for (uint8_t b = 0; b < kZoomPoints; b++) {
             const float *base = hist_zoom_ + (size_t)b * kHistoryLen * 2U;
-            const float *z0 = base + (size_t)start * 2U;  /* um den ersten Wert verschoben (Auslöschung) */
+            const float *z0 = base + (size_t)start * 2U;  /* shifted by the first value (cancellation) */
             float mi = 0.0f, mq = 0.0f, p2 = 0.0f;
             for (uint16_t n = 0; n < N; n++) {
                 const float *z = base + (size_t)((start + n) % kHistoryLen) * 2U;
@@ -2733,10 +2733,10 @@ private:
     }
 
 #ifdef A121_DSP_REACQ
-    /** V6: Bewegungskarte des Fensters start .. start + N aus den kMotionPoints stärksten Punkten unter use: Wegsignal wie
-     *  in der Hauptschleife (binDisplacement, Trend, Bandpass), Effektivwert je 1-s-Block (ohne Dämpfung gateMotion),
-     *  dann motionMapFromRms. Nutzt work_x_ und work_ext_ als Arbeitsfeld (überschreibt das Wegsignal der Hauptschleife);
-     *  binDisplacement pflegt dabei good_ci_/good_cq_/have_good_ wie dort. Ohne Heap: 3 × kMaxBlocks Werte auf dem Stack. */
+    /** V6: motion map of the window start .. start + N from the kMotionPoints strongest points under use: path signal as
+     *  in the main loop (binDisplacement, trend, bandpass), RMS per 1 s block (without gateMotion damping),
+     *  then motionMapFromRms. Uses work_x_ and work_ext_ as a work array (overwrites the path signal of the main loop);
+     *  binDisplacement maintains good_ci_/good_cq_/have_good_ as there. No heap: 3 × kMaxBlocks values on the stack. */
     MotionMap motionMap(uint16_t start, uint16_t N, const bool *use) {
         const uint8_t nb = (uint8_t)std::min<uint16_t>(N / kGateBlk, kMaxBlocks);
         float strength[kZoomPoints];
@@ -2749,9 +2749,9 @@ private:
         uint8_t pts[kMotionPoints];
         uint8_t n_pts = 0;
         for (uint8_t b = 0; b < kZoomPoints && nb; b++)
-            if (sel[b] && use[b]) pts[n_pts++] = b;  /* selectStrongest füllt bei wenigen Punkten in use mit unbenutzten auf */
+            if (sel[b] && use[b]) pts[n_pts++] = b;  /* selectStrongest pads with unused points when use has few points */
 #ifdef A121_DSP_REACQ_PERIOD
-        /* der stärkste Punkt kommt zuletzt: sein gefiltertes Wegsignal bleibt in work_ext_ für die Periodizitätsprüfung */
+        /* the strongest point comes last: its filtered path signal stays in work_ext_ for the periodicity check */
         if (n_pts > 1U) {
             uint8_t top = 0;
             for (uint8_t i = 1; i < n_pts; i++)
@@ -2769,7 +2769,7 @@ private:
             sosFiltFilt(work_x_, N);
             const float *h = work_ext_ + kFiltPad;
             for (uint8_t k = 0; k < nb; k++) {
-                const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);  /* wie gateMotion */
+                const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);  /* as gateMotion */
                 float acc = 0.0f;
                 for (uint16_t n = a; n < e; n++) acc += h[n] * h[n];
                 rms[i * nb + k] = sqrtf(acc / (float)(e - a));
@@ -2777,10 +2777,10 @@ private:
         }
         MotionMap mm = motionMapFromRms(rms, n_pts, nb);
 #ifdef A121_DSP_REACQ_PERIOD
-        /* Variante: ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s am stärksten Punkt) nicht
-         * periodisch ist. Der Ausschnitt liegt in dec_ (wird in der Hauptschleife vor der Nutzung neu gefüllt). */
+        /* Variant: a block that is too strong counts as moving only if the signal around it (3 s at the strongest point) is not
+         * periodic. The segment is in dec_ (refilled in the main loop before use). */
         if (mm.mask) {
-            const float *h = work_ext_ + kFiltPad;  /* Weg des stärksten Punkts (zuletzt gerechnet) */
+            const float *h = work_ext_ + kFiltPad;  /* path of the strongest point (computed last) */
             for (uint8_t k = 0; k < mm.n_blocks; k++) {
                 if (!(mm.mask & ((uint32_t)1U << k))) continue;
                 const uint16_t a = k * kGateBlk, e = (k + 1U == nb) ? N : (uint16_t)(a + kGateBlk);
@@ -2796,11 +2796,11 @@ private:
     }
 #endif
 
-    /* Bewegungsdämpfung im Herzband: Effektivwert je 1-s-Block. Bezug ist das ruhige Viertel der Blöcke (nicht der
-     * Median: bei 8 s Bewegung in 15 s ist der Median selbst Bewegung). Blöcke über kGateK × Bezug bekommen die
-     * Verstärkung (Grenze/Effektivwert)^kGateP, linear zwischen den Blockmitten übergeblendet. Ein paar Sekunden
-     * Bewegung überdecken sonst 10 s sauberen Puls (am Datensatz mit eingefügter Bewegung geprüft).
-     * Rückgabe: Zahl der Blöcke über kMotionK × Bezug (Bewegung). */
+    /* Motion damping in the heart band: RMS per 1 s block. The reference is the quiet quarter of the blocks (not the
+     * median: with 8 s of motion in 15 s the median itself is motion). Blocks above kGateK × reference get the
+     * gain (limit/RMS)^kGateP, blended linearly between the block centers. A few seconds of
+     * motion would otherwise mask 10 s of clean pulse (checked on the dataset with inserted motion).
+     * Returns: number of blocks above kMotionK × reference (motion). */
     static uint8_t gateMotion(float *h, uint16_t N) {
         const uint8_t nb = (uint8_t)std::min<uint16_t>(N / kGateBlk, kMaxBlocks);
         if (nb < 3) return 0;
@@ -2823,7 +2823,7 @@ private:
         if (!gated) return 0;
         const float half = 0.5f * (float)kGateBlk;
         for (uint16_t n = 0; n < N; n++) {
-            const float pos = ((float)n - half) / (float)kGateBlk;  /* Blockmitten bei 0, 1, 2, ... */
+            const float pos = ((float)n - half) / (float)kGateBlk;  /* block centers at 0, 1, 2, ... */
             float g;
             if (pos <= 0.0f) g = gain[0];
             else if (pos >= (float)(nb - 1)) g = gain[nb - 1];
@@ -2837,7 +2837,7 @@ private:
         return moving;
     }
 
-    /** Goertzel-Leistung ohne Fenster (Fenster ist schon im Signal). */
+    /** Goertzel power without a window (the window is already in the signal). */
     static float goertzelPower(const float *x, uint16_t N, float fs, float freq_hz) {
         const float coeff = 2.0f * cosf(2.0f * (float)M_PI * freq_hz / fs);
         float s1 = 0.0f, s2 = 0.0f;
@@ -2850,7 +2850,7 @@ private:
         return power > 0.0f ? power : 0.0f;
     }
 
-    /** Unteres Viertel von 80 Werten (Rauschpegel; robust, solange weniger als drei Viertel des Raums Echos enthalten). */
+    /** Lower quartile of 80 values (noise level; robust as long as fewer than three quarters of the room contain echoes). */
     static float lowerQuartile(const float *v) {
         float tmp[kRoomPoints];
         memcpy(tmp, v, sizeof(tmp));
@@ -2858,8 +2858,8 @@ private:
         return tmp[kRoomPoints / 4];
     }
 
-    /** Lokale Maxima von max(Amplitude, Bewegung) relativ zum Rauschen ab kRoomDetK (bei gleich hohen Nachbarn zählt
-     *  der vordere). f(r, d, bewegt) je Spitze; d = parabolische Verfeinerung in Punkten (−0,5 … 0,5). */
+    /** Local maxima of max(amplitude, motion) relative to the noise from kRoomDetK (with equally high neighbors the earlier
+     *  one counts). f(r, d, moving) per peak; d = parabolic refinement in points (−0.5 … 0.5). */
     template <typename F>
     static void forEachRoomPeak(const float *amp, const float *mot, float noise_amp, float noise_mot, F f) {
         auto level = [&](uint16_t r) { return std::max(amp[r] / noise_amp, mot[r] / noise_mot); };
@@ -2878,23 +2878,23 @@ private:
 
     void extractRoomTargets(const ReportSnapshot &s, VitalReport &rep) {
         rep.num_room_targets = 0;
-        /* Rauschpegel getrennt für Amplitude und Bewegung. Reines Rauschen hat Bewegung ≈ Amplitude (das Standbild
-         * mittelt es weg); am Datensatz 2026-11-01 beide ≈ 55, die Person bis 3300 / 2600. +1 gegen Division durch 0
-         * in den ersten Frames. */
+        /* Noise level separately for amplitude and motion. Pure noise has motion ≈ amplitude (the static image
+         * averages it away); on the 2026-11-01 dataset both ≈ 55, the person up to 3300 / 2600. +1 against division by 0
+         * in the first frames. */
         const float noise_amp = lowerQuartile(s.room_amp) + 1.0f;
         const float noise_mot = lowerQuartile(s.room_mot) + 1.0f;
         rep.room_noise_amp    = noise_amp;
         rep.room_noise_motion = noise_mot;
 
-        /* Ziel = lokales Maximum von max(Amplitude, Bewegung) relativ zum Rauschen, ab kRoomDetK. So zählen feste Echos
-         * (Wand, Möbel: Amplitude hoch, Bewegung ≈ Rauschen) und schwache bewegte Echos. Behalten werden die
-         * kMaxRoomTargets stärksten nach Amplitude + 8 × Bewegung (Bewegung zählt stärker), egal in welcher Entfernung. */
+        /* Target = local maximum of max(amplitude, motion) relative to the noise, from kRoomDetK. So fixed echoes count
+         * (wall, furniture: amplitude high, motion ≈ noise) and weak moving echoes. The
+         * kMaxRoomTargets strongest by amplitude + 8 × motion are kept (motion counts more), regardless of distance. */
         auto key = [](const RoomTarget &t) { return t.amplitude + 8.0f * t.motion_energy; };
         forEachRoomPeak(s.room_amp, s.room_mot, noise_amp, noise_mot, [&](uint16_t r, float d, bool moving) {
             const RoomTarget t = {roomDistM(r, d), s.room_amp[r], s.room_mot[r], moving};
             uint8_t n = rep.num_room_targets;
             if (n == kMaxRoomTargets && key(t) <= key(rep.room_targets[n - 1])) return;
-            uint8_t pos = (n < kMaxRoomTargets) ? n : (uint8_t)(n - 1U);  /* volle Liste: schwächstes Ziel fällt raus */
+            uint8_t pos = (n < kMaxRoomTargets) ? n : (uint8_t)(n - 1U);  /* full list: weakest target drops out */
             while (pos > 0 && key(rep.room_targets[pos - 1]) < key(t)) {
                 rep.room_targets[pos] = rep.room_targets[pos - 1];
                 pos--;
@@ -2903,12 +2903,12 @@ private:
             if (n < kMaxRoomTargets) rep.num_room_targets++;
         });
 
-        /* Zoom-Ziel: stärkstes bewegtes Ziel (Amplitude + 8 × Bewegung) im geglätteten Profil (τ ≈ 3 s), nicht in der
-         * Momentaufnahme. Live 2026-11-01 lagen zwei bewegte Echos nah beieinander (Brust 0,66 m mit schwankender
-         * Amplitude 440–1220, zweites Echo 0,78 m gleichmäßig ≈ 950, aber halb so viel Bewegung); die Momentaufnahme bei
-         * t = 3 s wählte das hintere um 1 %, und dort war der Puls schlechter (Konfidenz 78 statt 99 %). Geglättet trifft
-         * die Wahl in allen vier Logs die Brust (τ = 1–8 s geprüft). Das stärkste Echo allein wäre falsch gewesen.
-         * Das Fenster hält nur dieses Ziel (±60 mm), nicht jedes bewegte Echo: Sonst blieb es 19 s am hinteren Echo. */
+        /* Zoom target: strongest moving target (amplitude + 8 × motion) in the smoothed profile (τ ≈ 3 s), not in the
+         * snapshot. Live 2026-11-01 two moving echoes lay close together (chest 0.66 m with fluctuating
+         * amplitude 440–1220, second echo 0.78 m steady ≈ 950, but half as much motion); the snapshot at
+         * t = 3 s chose the rear one by 1 %, and the pulse was worse there (confidence 78 instead of 99 %). Smoothed, the
+         * choice hits the chest in all four logs (τ = 1–8 s checked). The strongest echo alone would have been wrong.
+         * The window holds only this target (±60 mm), not every moving echo: otherwise it stayed on the rear echo for 19 s. */
         const float ns_amp = lowerQuartile(s.room_amp_slow) + 1.0f;
         const float ns_mot = lowerQuartile(s.room_mot_slow) + 1.0f;
         float best_m = -1.0f, best_key = 0.0f;
@@ -2920,12 +2920,12 @@ private:
             }
         });
 
-        /* Rezoom nur, wenn das Zoom-Ziel nicht im Zoom-Fenster ±60 mm (zwei Raum-Schritte) liegt, und erst nach
-         * 3 Reports in den ersten 10 s (Ziel suchen) bzw. 5 Reports danach. Jeder Rezoom löscht die 15-s-Historie.
-         * Abwägung am 2026-11-01: Ohne Toleranz wechselte der Zoom zwischen Körperstellen (Raum-Ziel 660 mm, bester
-         * Puls bei 620 mm); mit ±30 mm wollte er 20-mal von 570–630 auf 630–690 mm; mit ±150 mm bliebe ein Ziel bei
-         * 0,68 m neben einem Fenster bei 0,50–0,56 m hängen. Am Körperrand (Fenster 500–560 mm, Brust 580–620 mm)
-         * lieferte der Puls live trotzdem 100 % im Bereich ±8 /min. */
+        /* Rezoom only if the zoom target does not lie in the zoom window ±60 mm (two room steps), and only after
+         * 3 reports in the first 10 s (find the target) or 5 reports after that. Every rezoom clears the 15 s history.
+         * Trade-off on 2026-11-01: without tolerance the zoom switched between body locations (room target 660 mm, best
+         * pulse at 620 mm); with ±30 mm it wanted to go 20 times from 570–630 to 630–690 mm; with ±150 mm a target at
+         * 0.68 m would stay stuck next to a window at 0.50–0.56 m. At the body edge (window 500–560 mm, chest 580–620 mm)
+         * the pulse live still delivered 100 % within ±8 /min. */
         const float zoom_min_m = (float)(zoom_start_pt_ + 3) * kPointStepM - 0.06f;
         const float zoom_max_m = (float)(zoom_start_pt_ + (int32_t)kZoomPoints - 4) * kPointStepM + 0.06f;
         rep.needs_rezoom              = false;
@@ -2936,12 +2936,12 @@ private:
             out_of_window_frames_ = 0;
             return;
         }
-        /* Start (noch kein Neubeginn seit begin()): nach 2 s zoomen, also beim 2. Report (V2.4); sonst 3 bzw. 5 */
+        /* Start (no restart since begin() yet): zoom after 2 s, i.e. at the 2nd report (V2.4); otherwise 3 or 5 */
         const bool start = s.tot_frames == s.frame_count && s.frame_count <= kStartZoomFrames;
         const uint16_t needed = start ? 2U : ((s.frame_count < 600U) ? 3U : 5U);
         if (++out_of_window_frames_ >= needed) {
             int32_t new_start = (int32_t)roundf(best_m / kPointStepM) - (int32_t)(kZoomPoints / 2U);
-            if (new_start < 80) new_start = 80; /* ≥ 0,20 m */
+            if (new_start < 80) new_start = 80; /* ≥ 0.20 m */
             rep.needs_rezoom              = true;
             rep.recommended_zoom_start_pt = new_start;
             out_of_window_frames_         = 0;
@@ -2959,20 +2959,20 @@ private:
     float    last_lb_amp_          = 0.0f;
     float    cum_phase_rad_        = 0.0f;
 #ifdef A121_DSP_VITERBI
-    ViterbiTracker vit_;                                           /* V3.2, Report-Seite */
+    ViterbiTracker vit_;                                           /* V3.2, report side */
 #endif
 #ifdef A121_DSP_HARM_REMOVE
     static_assert(kHrWin / kDecim + 1U <= kGuideFft, "Fenster nach Dezimierung passt nicht in kGuideFft");
-    a121_fft::ComplexFft<kGuideFft> cfft_;                        /* V3.3, Report-Seite */
+    a121_fft::ComplexFft<kGuideFft> cfft_;                        /* V3.3, report side */
     float    guide_disp_[kGuideFft];
     float    guide_work_[2U * kGuideFft];
-    float    fb_prev_              = 0.0f;  /* Atemfrequenz des vorigen Reports (0 = keine Atemspitze) */
-    float    conf_prev_            = 0.0f;  /* Konfidenz des vorigen Reports (0 = ungültig) */
+    float    fb_prev_              = 0.0f;  /* breathing rate of the previous report (0 = no breathing peak) */
+    float    conf_prev_            = 0.0f;  /* confidence of the previous report (0 = invalid) */
 #endif
-    BreathDetector breath_det_;                                    /* V3.4, nur Push-Seite */
+    BreathDetector breath_det_;                                    /* V3.4, push side only */
     BreathEvent    breath_ev_;
     bool     breath_pending_       = false;
-    bool     breath_gate_          = false;  /* V3.4, Push-Seite */
+    bool     breath_gate_          = false;  /* V3.4, push side */
     float    prev_centered_i_      = 0.0f;
     float    prev_centered_q_      = 0.0f;
     bool     have_prev_iq_         = false;
@@ -2983,38 +2983,38 @@ private:
     uint16_t out_of_window_frames_ = 0;
     float    hr_prev_              = 0.0f;
     uint8_t  hr_miss_              = 0;
-    uint8_t  alt_count_            = 0;     /* Reports in Folge mit Alternative zur Oberwelle */
-    BreathStateTracker br_track_;           /* Atemzustand (V1.4) */
-    uint32_t tot_delayed_ = 0, tot_sat_ = 0, tot_tickgap_ = 0;    /* Sensor-Zähler seit begin() (V1.5, Summen seit V2.1) */
-    uint32_t prev_delayed_ = 0, prev_sat_ = 0, prev_tickgap_ = 0; /* … beim zuletzt gerechneten Report */
-    uint32_t tot_frames_ = 0;                                      /* Frames seit begin() (V2.3) */
-    uint32_t last_valid_tot_ = 0;                                  /* tot_frames des letzten gültigen Reports */
+    uint8_t  alt_count_            = 0;     /* reports in a row with an alternative to the harmonic */
+    BreathStateTracker br_track_;           /* breathing state (V1.4) */
+    uint32_t tot_delayed_ = 0, tot_sat_ = 0, tot_tickgap_ = 0;    /* sensor counters since begin() (V1.5, sums since V2.1) */
+    uint32_t prev_delayed_ = 0, prev_sat_ = 0, prev_tickgap_ = 0; /* … at the last computed report */
+    uint32_t tot_frames_ = 0;                                      /* frames since begin() (V2.3) */
+    uint32_t last_valid_tot_ = 0;                                  /* tot_frames of the last valid report */
     bool     have_valid_ = false;
-    bool     prov_ = true;                                         /* Verfolgung noch vorläufig (Fenster < 8 s, V2.4) */
-    uint8_t  state_ = 0xFFU;                                       /* letzter Zustand der Messung (V3.5) */
-    uint8_t  person_run_ = 0;                                      /* Reports in Folge mit Zoom-Ziel im Raumprofil */
+    bool     prov_ = true;                                         /* tracking still preliminary (window < 8 s, V2.4) */
+    uint8_t  state_ = 0xFFU;                                       /* last state of the measurement (V3.5) */
+    uint8_t  person_run_ = 0;                                      /* reports in a row with a zoom target in the room profile */
     uint32_t state_since_tot_ = 0;
-    ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
-    a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
+    ReportSnapshot snap_ = {};                                     /* for computeVitalReport(rep) without its own state */
+    a121_fft::RealFft<kFftN> fft_;                                  /* spectra per zoom point (V2.2) */
 #ifdef A121_DSP_PHASE_SLOPE
-    a121_fft::ComplexFft<kFftN> psl_fft_;                           /* V6 Phasensteigung, Report-Seite: 6 KB Drehfaktoren */
-    float    psl_re_[kFftN];                                        /* … Arbeitsspeicher 2 × 4 KB, nur im Report */
+    a121_fft::ComplexFft<kFftN> psl_fft_;                           /* V6 phase slope, report side: 6 KB twiddle factors */
+    float    psl_re_[kFftN];                                        /* … work memory 2 × 4 KB, only in the report */
     float    psl_im_[kFftN];
 #endif
     float    hann_[kHrWin / kDecim + 1U] = {};
     uint16_t hann_m_ = 0;
 #ifdef A121_DSP_REACQ
-    float    hann_p_[kHrWin / kDecim + 1U] = {};  /* V6: Hann für das kürzere Pulsfenster (Endstück nach Bewegung) */
+    float    hann_p_[kHrWin / kDecim + 1U] = {};  /* V6: Hann for the shorter pulse window (tail after motion) */
     uint16_t hann_p_m_ = 0;
-    ReacqMemory mem_;                              /* V6: zuletzt gesicherter Puls */
+    ReacqMemory mem_;                              /* V6: last secured pulse */
 #endif
     uint32_t last_tick_ = 0;
     bool     have_last_tick_ = false;
-    uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated je Frame der Historie */
-    float    hr_hist_[5]           = {};    /* hr_fused der letzten 5 Reports (Sprung-Abschlag) */
+    uint8_t  hist_sat_[kHistoryLen] = {};   /* data_saturated per frame of the history */
+    float    hr_hist_[5]           = {};    /* hr_fused of the last 5 reports (jump penalty) */
     uint8_t  hr_hist_n_            = 0;
 
-    float good_ci_[kZoomPoints]        = {};  /* letzter gut bestimmter Kreismittelpunkt je Zoom-Punkt (Bogen ≥ 2 rad) */
+    float good_ci_[kZoomPoints]        = {};  /* last well-determined circle center per zoom point (arc ≥ 2 rad) */
     float good_cq_[kZoomPoints]        = {};
     bool  have_good_[kZoomPoints]      = {};
     float zoom_clutter_i_[kZoomPoints] = {};
@@ -3024,36 +3024,36 @@ private:
     float room_clutter_q_[kRoomPoints] = {};
     float room_amp_ema_[kRoomPoints]   = {};
     float room_var_ema_[kRoomPoints]   = {};
-    float room_amp_slow_[kRoomPoints]  = {};  /* room_amp_ema_ zusätzlich geglättet (τ ≈ 3 s), für das Zoom-Ziel */
-    float room_mot_slow_[kRoomPoints]  = {};  /* room_var_ema_ zusätzlich geglättet (τ ≈ 3 s) */
+    float room_amp_slow_[kRoomPoints]  = {};  /* room_amp_ema_ additionally smoothed (τ ≈ 3 s), for the zoom target */
+    float room_mot_slow_[kRoomPoints]  = {};  /* room_var_ema_ additionally smoothed (τ ≈ 3 s) */
 
-    float *hist_zoom_   = nullptr;  /* [kZoomPoints][kHistoryLen][I,Q], derotiert, je Punkt ein Ring */
+    float *hist_zoom_   = nullptr;  /* [kZoomPoints][kHistoryLen][I,Q], derotated, one ring per point */
     float *hist_lb_phi_ = nullptr;
     float *work_x_      = nullptr;
-    float *work_ext_    = nullptr;  /* sosfiltfilt mit Rand: kHrWin + 2 * kFiltPad */
+    float *work_ext_    = nullptr;  /* sosfiltfilt with padding: kHrWin + 2 * kFiltPad */
 #ifdef A121_DSP_COMBINE
-    float *comb_y_      = nullptr;  /* kombinierter Kanal [I,Q] × kHrWin (V3.1) */
+    float *comb_y_      = nullptr;  /* combined channel [I,Q] × kHrWin (V3.1) */
 #endif
     float *best_x_      = nullptr;
     float *best_h_      = nullptr;
-    float *br_x_        = nullptr;  /* Wegsignal des Atem-Punkts (stärkste Atmung unter den Punkten mit sauberem Echo) */
+    float *br_x_        = nullptr;  /* path signal of the breathing point (strongest breathing among the points with a clean echo) */
     float *dec_         = nullptr;
-    float *spec_        = nullptr;  /* P(f) je Punkt */
-    float *sum_         = nullptr;  /* S(f) = P(f) + 0,5 · P(2f) je Punkt */
+    float *spec_        = nullptr;  /* P(f) per point */
+    float *sum_         = nullptr;  /* S(f) = P(f) + 0.5 · P(2f) per point */
     float *comb_        = nullptr;
     float *scratch_     = nullptr;
     float *br_comb_     = nullptr;
-    float *pen_         = nullptr;  /* comb_ mit Abschlag auf Atem-Oberwellen (Kandidatenwahl) */
+    float *pen_         = nullptr;  /* comb_ with penalty on breathing harmonics (candidate selection) */
 };
 
 /*
- * Ausgabezeilen für Raum-Ziele und Raumprofil (`iq3`). Firmware und PC-Prüfung (host/a121_esp_ultimate.py, verify-cpp)
- * nutzen dieselben Funktionen, damit das Format übereinstimmt. tick = Sensor-Zeitstempel in ms; er läuft lückenlos
- * weiter, auch über Rechenpausen und Rezooms. Rückgabe: Länge ohne Zeilenende (bei zu kleinem Puffer gekürzt).
- *   @ROOM,t_ms,tick,rausch_amp,rausch_bew,n,{dist_mm,amp,bew,bewegt}×n      (Ziele nach Stärke sortiert)
- *   @ROOMPROF,t_ms,tick,start_mm,step_mm,n,amp_0..amp_n-1,bew_0..bew_n-1    (Rohwerte, geglättet)
+ * Output lines for room targets and room profile (`iq3`). Firmware and PC check (host/a121_esp_ultimate.py, verify-cpp)
+ * use the same functions so that the format matches. tick = sensor timestamp in ms; it keeps running without
+ * gaps, also across compute pauses and rezooms. Returns: length without line ending (truncated if the buffer is too small).
+ *   @ROOM,t_ms,tick,rausch_amp,rausch_bew,n,{dist_mm,amp,bew,bewegt}×n      (targets sorted by strength)
+ *   @ROOMPROF,t_ms,tick,start_mm,step_mm,n,amp_0..amp_n-1,bew_0..bew_n-1    (raw values, smoothed)
  */
-static constexpr size_t kRoomLineMax = 1400U;  /* reicht für @ROOMPROF mit 2 × 80 Werten (≤ ~1100 Zeichen) */
+static constexpr size_t kRoomLineMax = 1400U;  /* enough for @ROOMPROF with 2 × 80 values (≤ ~1100 characters) */
 
 inline size_t formatRoomLine(char *buf, size_t cap, uint32_t t_ms, uint32_t tick, const VitalReport &rep) {
     int len = snprintf(buf, cap, "@ROOM,%lu,%lu,%.0f,%.0f,%u", (unsigned long)t_ms, (unsigned long)tick,
@@ -3076,23 +3076,23 @@ inline size_t formatRoomProfileLine(char *buf, size_t cap, uint32_t t_ms, uint32
 }
 
 /*
- * Report-Zeilen (`iq3`), gemeinsam für Firmware, PC-/Handy-Nachrechnung (host/dsp_replay) und Prüfstand
- * (host/vital_sim.py). Neue Felder nur hinten anhängen; @VITAL behält seine 15 Felder (docs/ANDROID_APP.md).
+ * Report lines (`iq3`), shared by firmware, PC/phone replay (host/dsp_replay) and test bench
+ * (host/vital_sim.py). Only append new fields at the end; @VITAL keeps its 15 fields (docs/ANDROID_APP.md).
  *   @DSP,t_ms,ok,hr_bin,konfidenz_pct,compute_us,motion_pct,hr_harm,point_agree_pct,br_state,n_delayed,n_sat,n_tickgap
- *        (+ mit A121_DSP_COMBINE n_eff als 15. Feld; + mit A121_DSP_REACQ: n_eff (ggf. leer), win_s, reacq)
+ *        (+ with A121_DSP_COMBINE n_eff as the 15th field; + with A121_DSP_REACQ: n_eff (possibly empty), win_s, reacq)
  *   @VITAL,t_ms,br,hr_fused,hr_spec,hr_acf,hr_ibi,ibi_ms,rmssd_ms,konfidenz,resp_um,heart_um,snr_db,lb_std_mrad,
  *          target_mm,n_room
  *   @REZOOM,zoom_start_mm,zoom_end_mm
- * compute_us getrennt, weil die Nachrechnung die Rechenzeit des ESP32 übernimmt.
+ * compute_us separate, because the replay takes over the compute time of the ESP32.
  */
-#define A121_DSP_FORMATS 1  /* host/dsp_replay erkennt daran Header ab V0.4 (ältere bekommen dort die alten Formate) */
+#define A121_DSP_FORMATS 1  /* host/dsp_replay uses this to recognize headers from V0.4 (older ones get the old formats there) */
 static constexpr size_t kReportLineMax = 256U;
 
 inline size_t clampLen(int len, size_t cap) { return (len < 0) ? 0U : std::min((size_t)len, cap - 1U); }
 
 inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const VitalReport &rep, uint32_t compute_us) {
 #ifdef A121_DSP_REACQ
-    /* V6: Feld 14 n_eff (Zahl mit A121_DSP_COMBINE, sonst leer), Feld 15 win_s, Feld 16 reacq; nur mit Schalter */
+    /* V6: field 14 n_eff (number with A121_DSP_COMBINE, otherwise empty), field 15 win_s, field 16 reacq; only with the switch */
     char n_eff[16] = "";
 #ifdef A121_DSP_COMBINE
     snprintf(n_eff, sizeof n_eff, "%.1f", rep.n_eff);
@@ -3105,7 +3105,7 @@ inline size_t formatDspLine(char *buf, size_t cap, uint32_t t_ms, bool ok, const
                              (unsigned)rep.reacq),
                     cap);
 #elif defined(A121_DSP_COMBINE)
-    /* V3.1: effektive Punktzahl als 15. Feld, nur mit Schalter (Standardzeile unverändert) */
+    /* V3.1: effective point count as the 15th field, only with the switch (standard line unchanged) */
     return clampLen(snprintf(buf, cap, "@DSP,%lu,%u,%u,%.1f,%lu,%.0f,%u,%.0f,%u,%u,%u,%u,%lu,%.1f", (unsigned long)t_ms,
                              (unsigned)ok, (unsigned)rep.hr_bin, rep.confidence_pct, (unsigned long)compute_us,
                              rep.motion_pct, (unsigned)rep.hr_harm, rep.point_agree_pct, (unsigned)rep.br_state,
@@ -3132,15 +3132,15 @@ inline size_t formatVitalLine(char *buf, size_t cap, uint32_t t_ms, const VitalR
 }
 
 #define A121_DSP_STATE 1
-/** @STATE,t_ms,zustand,seit_ms (V3.5): je Report nach @VITAL bzw. @ROOM. */
+/** @STATE,t_ms,zustand,seit_ms (V3.5): per report after @VITAL or @ROOM. */
 inline size_t formatStateLine(char *buf, size_t cap, uint32_t t_ms, const VitalReport &r) {
     return clampLen(snprintf(buf, cap, "@STATE,%lu,%u,%lu", (unsigned long)t_ms, (unsigned)r.state,
                              (unsigned long)r.state_since_ms),
                     cap);
 }
 
-/** @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4): je erkanntem Atemzug, direkt nach @IQ3/@RAW des Frames.
- *  rate = 60 / Median der letzten (bis zu) 4 Abstände, /min. */
+/** @BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4): per detected breath, directly after @IQ3/@RAW of the frame.
+ *  rate = 60 / median of the last (up to) 4 distances, /min. */
 inline size_t formatBreathLine(char *buf, size_t cap, uint32_t t_ms, uint32_t tick, const BreathEvent &ev) {
     return clampLen(snprintf(buf, cap, "@BREATH,%lu,%lu,%lu,%.0f,%.1f", (unsigned long)t_ms, (unsigned long)tick,
                              (unsigned long)ev.interval_ms, ev.depth_um, ev.rate_cpm),

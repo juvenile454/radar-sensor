@@ -1,17 +1,17 @@
 package de.timo.radarsensor.reference
 
-/** = BluetoothGatt.GATT_SUCCESS (hier ohne Android-Klassen, damit die Entscheidung am PC testbar bleibt). */
+/** = BluetoothGatt.GATT_SUCCESS (here without Android classes, so that the decision stays testable on the PC). */
 const val GATT_OK = 0
 
-/** Aufeinanderfolgende fehlgeschlagene Dienstsuchen, bis der Gurt als Fehler gemeldet wird. */
+/** Consecutive failed service discoveries until the chest strap is reported as an error. */
 const val MAX_DISCOVERY_FAILURES = 5
 
 enum class Discovery { Subscribe, NoHrService, Reconnect, GiveUp }
 
 /**
- * Was nach onServicesDiscovered geschieht. Nur eine erfolgreiche Suche ohne Heart Rate Service heißt „falsches
- * Gerät"; ein Fehlerstatus (z. B. 129/133 nach automatischem Wiederverbinden) trennt und verbindet wieder, bis
- * [MAX_DISCOVERY_FAILURES] Suchen in Folge fehlgeschlagen sind. failures: bisherige Fehlschläge in Folge.
+ * What happens after onServicesDiscovered. Only a successful discovery without Heart Rate Service means "wrong
+ * device"; an error status (e.g. 129/133 after automatic reconnecting) disconnects and reconnects, until
+ * [MAX_DISCOVERY_FAILURES] discoveries in a row have failed. failures: failures so far in a row.
  */
 fun discoveryAction(
     status: Int,

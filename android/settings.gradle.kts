@@ -17,7 +17,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // Nur für usb-serial-for-android (mik3y, MIT), das ausschließlich über JitPack verteilt wird.
+        // Only for usb-serial-for-android (mik3y, MIT), which is distributed exclusively via JitPack.
         maven("https://jitpack.io") {
             content { includeGroup("com.github.mik3y") }
         }

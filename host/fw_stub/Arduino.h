@@ -1,4 +1,4 @@
-// Syntax-Stub für firmware/esp32s3 (nur g++ -fsyntax-only am PC; KEIN Ersatz für einen ESP32-Build)
+// Syntax stub for firmware/esp32s3 (only g++ -fsyntax-only on the PC; NOT a substitute for an ESP32 build)
 #pragma once
 #include <math.h>
 #include <stdarg.h>

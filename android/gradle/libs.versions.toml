@@ -1,10 +1,10 @@
 [versions]
-# Werkzeuge wie in ~/Projects/Android/OrbitLens (JDK 17, Gradle 9.7.1, SDK 37, Build-Tools 37).
+# Tools as in ~/Projects/Android/OrbitLens (JDK 17, Gradle 9.7.1, SDK 37, Build-Tools 37).
 agp = "9.4.0"
-# AGP 9 bringt Kotlin selbst mit ("built-in Kotlin"); org.jetbrains.kotlin.android NICHT anwenden.
+# AGP 9 ships Kotlin itself ("built-in Kotlin"); do NOT apply org.jetbrains.kotlin.android.
 kotlin = "2.4.10"
 
-# Zielgerät: Galaxy S26 Ultra, Android 17 (API 37), live geprüft. Nur eigenes Gerät, daher minSdk 34.
+# Target device: Galaxy S26 Ultra, Android 17 (API 37), tested live. Own device only, hence minSdk 34.
 compileSdk = "37"
 minSdk = "34"
 targetSdk = "37"
@@ -36,7 +36,7 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 
-# USB-CDC (ESP32-S3 USB-Serial/JTAG 303a:1001), MIT-Lizenz, https://github.com/mik3y/usb-serial-for-android
+# USB-CDC (ESP32-S3 USB-Serial/JTAG 303a:1001), MIT license, https://github.com/mik3y/usb-serial-for-android
 usb-serial = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usbSerial" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }

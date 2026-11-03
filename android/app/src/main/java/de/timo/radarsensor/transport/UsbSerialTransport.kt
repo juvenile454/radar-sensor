@@ -10,10 +10,10 @@ import com.hoho.android.usbserial.util.SerialInputOutputManager
 import java.io.IOException
 
 /**
- * USB-CDC zum ESP32-S3 (nativer USB-Port, USB-Serial/JTAG `303a:1001`).
+ * USB-CDC to the ESP32-S3 (native USB port, USB-Serial/JTAG `303a:1001`).
  *
- * Reset-Falle: Der USB-Serial/JTAG-Block startet den Chip neu, wenn RTS gesetzt und DTR gelöscht ist (am PC mit
- * `@HELLO up_ms` geprüft, 2026-11-01). Deshalb nur DTR setzen und RTS nie anfassen.
+ * Reset trap: the USB-Serial/JTAG block restarts the chip when RTS is set and DTR is cleared (checked on the PC with
+ * `@HELLO up_ms`, 2026-11-01). Therefore only set DTR and never touch RTS.
  */
 class UsbSerialTransport(
     private val usb: UsbManager,
@@ -79,14 +79,14 @@ class UsbSerialTransport(
             UsbSerialProber(table)
         }
 
-        /** Alle seriellen USB-Geräte, ESP32 zuerst. */
+        /** All serial USB devices, ESP32 first. */
         fun findDrivers(usb: UsbManager): List<UsbSerialDriver> =
             prober.findAllDrivers(usb).sortedByDescending { it.device.vendorId == ESPRESSIF_VID }
 
         fun describe(d: UsbDevice): String =
             "%04x:%04x %s %s".format(d.vendorId, d.productId, d.productName ?: "", safeSerial(d)).trim()
 
-        /** Seriennummer lesen braucht die USB-Berechtigung, sonst SecurityException. */
+        /** Reading the serial number needs the USB permission, otherwise SecurityException. */
         fun safeSerial(d: UsbDevice): String =
             try {
                 d.serialNumber ?: ""

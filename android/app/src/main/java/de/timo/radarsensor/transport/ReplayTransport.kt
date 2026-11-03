@@ -5,9 +5,9 @@ import java.io.File
 import kotlin.concurrent.thread
 
 /**
- * Spielt eine Aufnahme (`stream.log`, optional `rxtime.csv`) im Originaltakt ab, mit [speed] beschleunigt.
- * Ohne rxtime.csv (alte PC-Logs) gilt 1/60 s je `@IQ3`-Zeile, alle anderen Zeilen sofort. Liest zeilenweise,
- * auch lange Aufnahmen mit Rohdaten passen so in den Speicher.
+ * Plays back a recording (`stream.log`, optionally `rxtime.csv`) at the original pace, sped up by [speed].
+ * Without rxtime.csv (old PC logs) 1/60 s per `@IQ3` line applies, all other lines immediately. Reads line by line,
+ * so even long recordings with raw data fit in memory.
  */
 class ReplayTransport(
     private val dir: File,
@@ -43,7 +43,7 @@ class ReplayTransport(
         rxFile: File?,
         listener: Transport.Listener,
     ) {
-        val rx: BufferedReader? = rxFile?.bufferedReader()?.also { it.readLine() } // Kopfzeile
+        val rx: BufferedReader? = rxFile?.bufferedReader()?.also { it.readLine() } // header line
         log.bufferedReader().use { r ->
             val t0 = System.nanoTime()
             var paced = 0.0

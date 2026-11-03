@@ -1,9 +1,9 @@
 package de.timo.radarsensor.reference
 
 /**
- * Eine Benachrichtigung der Characteristic Heart Rate Measurement (0x2A37, Bluetooth Heart Rate Service), z. B. vom
- * EKG-Gurt Polar H10 (V0.1). rrMs: RR-Intervalle seit der letzten Benachrichtigung in ms (Gurt-Auflösung 1/1024 s).
- * contact: Hautkontakt, null = vom Gurt nicht unterstützt.
+ * A notification of the Heart Rate Measurement characteristic (0x2A37, Bluetooth Heart Rate Service), e.g. from the
+ * ECG chest strap Polar H10 (V0.1). rrMs: RR intervals since the last notification in ms (strap resolution 1/1024 s).
+ * contact: skin contact, null = not supported by the strap.
  */
 data class HrMeasurement(
     val bpm: Int,
@@ -12,9 +12,9 @@ data class HrMeasurement(
 )
 
 /**
- * Flags (Byte 0): Bit 0 = Puls als uint16 (sonst uint8), Bit 2 = Hautkontakt unterstützt, Bit 1 = Kontakt erkannt,
- * Bit 3 = Energy Expended folgt (2 Byte, übersprungen), Bit 4 = RR-Werte folgen (je uint16 little-endian in 1/1024 s).
- * null, wenn die Nachricht kürzer als der Puls ist.
+ * Flags (byte 0): bit 0 = pulse as uint16 (else uint8), bit 2 = skin contact supported, bit 1 = contact detected,
+ * bit 3 = Energy Expended follows (2 bytes, skipped), bit 4 = RR values follow (each uint16 little-endian in 1/1024 s).
+ * null if the message is shorter than the pulse.
  */
 fun parseHrMeasurement(bytes: ByteArray): HrMeasurement? {
     if (bytes.size < 2) return null

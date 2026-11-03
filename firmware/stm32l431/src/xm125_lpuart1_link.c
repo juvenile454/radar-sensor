@@ -1,11 +1,11 @@
-// radar-sensor: Exploration Server auf LPUART1 über die SDA/SCL-Adern des Waveshare-A121-Steckers.
+// radar-sensor: Exploration Server on LPUART1 over the SDA/SCL wires of the Waveshare A121 connector.
 //
-// build_server.py legt diese Datei in eine Kopie des Acconeer-XM125-SDK (Src/integration/).
-// Pins laut ST-Pindaten (STM32_open_pin_data, STM32L431C(B-C)Tx) und Board-Schaltplan:
-//   PB11 = LPUART1_TX (AF8) -> SDA-Ader -> ESP32 GPIO15 (RX)
-//   PB10 = LPUART1_RX (AF8) <- SCL-Ader <- ESP32 GPIO16 (TX)
-// DMA (STM32L431, ohne DMAMUX): DMA2 Kanal 6 = LPUART1_TX, Kanal 7 = LPUART1_RX, jeweils Request 4.
-// An den Adern hängen auf dem Board nur R13/R14 (4,7 kOhm nach 3V3), kein CH342.
+// build_server.py puts this file into a copy of the Acconeer XM125 SDK (Src/integration/).
+// Pins per ST pin data (STM32_open_pin_data, STM32L431C(B-C)Tx) and board schematic:
+//   PB11 = LPUART1_TX (AF8) -> SDA wire -> ESP32 GPIO15 (RX)
+//   PB10 = LPUART1_RX (AF8) <- SCL wire <- ESP32 GPIO16 (TX)
+// DMA (STM32L431, no DMAMUX): DMA2 channel 6 = LPUART1_TX, channel 7 = LPUART1_RX, each request 4.
+// Only R13/R14 (4.7 kOhm to 3V3) hang on the wires on the board, no CH342.
 
 #include "main.h"
 
@@ -19,11 +19,11 @@ void LPUART1_IRQHandler(void);
 void DMA2_Channel6_IRQHandler(void);
 void DMA2_Channel7_IRQHandler(void);
 
-// Aufruf in main() direkt vor acconeer_main(), nach den CubeMX-Inits des SDK.
+// Called in main() right before acconeer_main(), after the SDK's CubeMX inits.
 void xm125_lpuart1_init(void)
 {
-	// PB10/PB11 gehören in diesem Build der UART: I2C2 aus MX_I2C2_Init() wieder freigeben
-	// (HAL_I2C_MspDeInit des SDK schaltet Takt, Pins und I2C2_EV_IRQn ab).
+	// PB10/PB11 belong to the UART in this build: release I2C2 from MX_I2C2_Init() again
+	// (the SDK's HAL_I2C_MspDeInit switches off clock, pins and I2C2_EV_IRQn).
 	if (HAL_I2C_DeInit(&hi2c2) != HAL_OK)
 	{
 		Error_Handler();
@@ -35,7 +35,7 @@ void xm125_lpuart1_init(void)
 	HAL_NVIC_SetPriority(DMA2_Channel7_IRQn, 0, 0);
 	HAL_NVIC_EnableIRQ(DMA2_Channel7_IRQn);
 
-	// Wie MX_USART2_UART_Init() des SDK, aber ohne RTS/CTS (die Adern gibt es nicht).
+	// Like the SDK's MX_USART2_UART_Init(), but without RTS/CTS (those wires do not exist).
 	hlpuart1.Instance                    = LPUART1;
 	hlpuart1.Init.BaudRate               = 115200;
 	hlpuart1.Init.WordLength             = UART_WORDLENGTH_8B;
@@ -52,8 +52,8 @@ void xm125_lpuart1_init(void)
 	}
 }
 
-// Die SDK-Versionen heißen im Build xm125_sdk_HAL_UART_Msp(De)Init (build_server.py benennt sie um);
-// alle anderen UARTs laufen unverändert dorthin.
+// In the build the SDK versions are called xm125_sdk_HAL_UART_Msp(De)Init (build_server.py renames them);
+// all other UARTs are forwarded there unchanged.
 void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 {
 	if (huart->Instance != LPUART1)
@@ -76,7 +76,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 	GPIO_InitTypeDef gpio = {0};
 	gpio.Pin       = SERVER_UART_RX_Pin | SERVER_UART_TX_Pin;
 	gpio.Mode      = GPIO_MODE_AF_PP;
-	gpio.Pull      = GPIO_PULLUP;  // Ruhepegel HIGH halten, auch ohne ESP32
+	gpio.Pull      = GPIO_PULLUP;  // keep idle level HIGH, even without an ESP32
 	gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
 	gpio.Alternate = GPIO_AF8_LPUART1;
 	HAL_GPIO_Init(SERVER_UART_RX_GPIO_Port, &gpio);

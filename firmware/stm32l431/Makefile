@@ -1,8 +1,8 @@
-# Makefile für die STM32L431CBT6 (XM125) Firmware auf dem Waveshare A121 Range Sensor Board
+# Makefile for the STM32L431CBT6 (XM125) firmware on the Waveshare A121 Range Sensor Board
 #
-# Die geflashte Server-Firmware entsteht über build_server.py aus dem offiziellen Acconeer-XM125-SDK
-# (siehe README.md). Dieses Makefile prüft nur noch main.c:
-#   `make verify-headers`  Syntaxprüfung von main.c (Cortex-M4F hard-float)
+# The flashed server firmware is built by build_server.py from the official Acconeer XM125 SDK
+# (see README.md). This Makefile now only checks main.c:
+#   `make verify-headers`  syntax check of main.c (Cortex-M4F hard-float)
 
 TOOLCHAIN_DIR ?= $(HOME)/.platformio/packages/toolchain-gccarmnoneeabi/bin
 CC            := $(TOOLCHAIN_DIR)/arm-none-eabi-gcc

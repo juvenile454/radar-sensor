@@ -1,8 +1,8 @@
 package de.timo.radarsensor.record
 
 /**
- * Takt der Metronom-Atmung (V0.2): Ton k liegt auf start + k · 60 / Takt, ohne Drift über lange Aufnahmen. Takte wie
- * im Messplan R3 (docs/EXPERIMENTS.md): 6 / 10 / 15 / 20 /min.
+ * Tempo of the metronome breathing (V0.2): tone k lies at start + k · 60 / tempo, without drift over long recordings.
+ * Tempos as in measurement plan R3 (docs/EXPERIMENTS.md): 6 / 10 / 15 / 20 /min.
  */
 class MetronomeSchedule(
     val startNanos: Long,
@@ -16,7 +16,7 @@ class MetronomeSchedule(
 
     fun tickNanos(k: Int): Long = startNanos + k.toLong() * periodNanos
 
-    /** Index des nächsten Tons nach nowNanos (Ton 0 = Start). */
+    /** Index of the next tone after nowNanos (tone 0 = start). */
     fun nextIndex(nowNanos: Long): Int = if (nowNanos < startNanos) 0 else ((nowNanos - startNanos) / periodNanos + 1).toInt()
 
     companion object {

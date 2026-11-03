@@ -1,10 +1,10 @@
 package de.timo.radarsensor.dsp
 
 /**
- * V5.2: Handy-DSP ein/aus und Zuführung der empfangenen Zeilen. Merkt sich `@IQ3_START` und den letzten `@REZOOM` des
- * laufenden Streams, damit Einschalten mitten im Stream gleich mit dem richtigen Zoom-Fenster rechnet (erster Wert
- * nach ≈ 6 s wie beim Start). Nicht threadsicher: alle Aufrufe aus einem Thread (RadarController: eigener
- * Rechen-Thread, damit der Empfang nicht wartet).
+ * V5.2: phone DSP on/off and feeding of the received lines. Remembers `@IQ3_START` and the last `@REZOOM` of the
+ * running stream, so that switching on mid-stream computes with the correct zoom window right away (first value
+ * after ≈ 6 s as at start). Not thread-safe: all calls from one thread (RadarController: own
+ * compute thread so that receiving does not wait).
  */
 class PhoneDsp(
     private val engine: DspEngine,
@@ -13,7 +13,7 @@ class PhoneDsp(
     var enabled = false
         private set
 
-    /** CPU-Anteil der Handy-DSP an einem Kern in % über die letzte Sekunde ([sampleCpu]); null = aus oder noch keiner. */
+    /** CPU share of the phone DSP on one core in % over the last second ([sampleCpu]); null = off or none yet. */
     var cpuPct: Float? = null
         private set
 
@@ -49,7 +49,7 @@ class PhoneDsp(
         if (enabled) feed(line)
     }
 
-    /** Einmal je Sekunde mit der Wanduhr (ns): CPU-Anteil seit dem letzten Aufruf in % eines Kerns. */
+    /** Once per second with the wall clock (ns): CPU share since the last call in % of one core. */
     fun sampleCpu(wallNs: Long): Float? {
         if (!enabled) return null
         val cpu = engine.cpuNanos()

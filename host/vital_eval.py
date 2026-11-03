@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Auswertung von iq3-Aufnahmen gegen eine Referenz (EKG-Brustgurt, Metronom, Marker); docs/VITAL_AUDIT.md, V0.4.
+"""Evaluation of iq3 recordings against a reference (ECG chest strap, metronome, markers); docs/VITAL_AUDIT.md, V0.4.
 
-Aufnahme-Ordner im Format der App bzw. host/esp_record.py (docs/ANDROID_APP.md):
-  stream.log   Zeilen wie vom ESP32 (@IQ3_START, @DSP, @VITAL, @REZOOM, @RECAL, …)
-  rxtime.csv   line,rx_ms (Empfangszeit je Zeile, ms seit Aufnahmebeginn)
-  ref_hr.csv   rx_ms,hr_bpm,rr_ms,contact (Brustgurt über BLE, eine Zeile je RR-Wert; ohne RR: rr_ms leer)
-  events.csv   rx_ms,text (Marker: ein, anhalten_start/_ende, bewegung_start/_ende, zaehl_start/_ende, metronom_<n>)
+Recording folder in the format of the app or host/esp_record.py (docs/ANDROID_APP.md):
+  stream.log   lines as from the ESP32 (@IQ3_START, @DSP, @VITAL, @REZOOM, @RECAL, …)
+  rxtime.csv   line,rx_ms (receive time per line, ms since recording start)
+  ref_hr.csv   rx_ms,hr_bpm,rr_ms,contact (chest strap via BLE, one line per RR value; without RR: rr_ms empty)
+  events.csv   rx_ms,text (markers: ein, anhalten_start/_ende, bewegung_start/_ende, zaehl_start/_ende, metronom_<n>)
 
-Ausgabe je Sitzung und gesamt: Puls (MAE, Anteil ±5/±10, Bland-Altman, Verfügbarkeit, Konfidenz-Kalibrierung),
-Atmung gegen Metronom, Apnoe-Erkennung gegen Marker (Verzug, Fehlalarme), Zeit bis zum ersten Wert (Start/Rezoom),
-Verzug gegenüber der Referenz.
+Output per session and in total: pulse (MAE, share within ±5/±10, Bland-Altman, availability, confidence calibration),
+breathing against metronome, apnea detection against markers (delay, false alarms), time to the first value (start/rezoom),
+delay relative to the reference.
 
   .venv/bin/python host/vital_eval.py <ordner>… [--md bericht.md]
-  .venv/bin/python host/vital_eval.py <ordner>… --replay firmware/esp32s3/src   # stream.log mit diesem Header neu rechnen
+  .venv/bin/python host/vital_eval.py <ordner>… --replay firmware/esp32s3/src   # recompute stream.log with this header
 
-Mit --replay wird stream.log (braucht @RAW, also `iq3 … raw`) mit host/dsp_replay/ und dem a121_esp_dsp.h aus dem
-angegebenen Ordner neu gerechnet; so lassen sich Header-Varianten auf denselben Daten vergleichen. Testdaten (Tag B)
-nur zur Abnahme einer Phase auswerten.
+With --replay, stream.log (needs @RAW, i.e. `iq3 … raw`) is recomputed with host/dsp_replay/ and the a121_esp_dsp.h from the
+given folder; this allows comparing header variants on the same data. Evaluate test data (day B)
+only for the acceptance of a phase.
 """
 
 from __future__ import annotations
@@ -35,12 +35,12 @@ HOST = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HOST))
 from a121_esp_ultimate import VITAL_FIELDS, run_replay_cpp  # noqa: E402
 
-# @DSP-Felder nach dem Tag; neue Felder kommen nur hinten dazu (fehlende = NaN)
+# @DSP fields after the tag; new fields are only appended at the end (missing = NaN)
 DSP_FIELDS = ["t_ms", "ok", "hr_bin", "conf", "compute_us", "motion_pct", "hr_harm",
               "point_agree_pct", "br_state", "n_delayed", "n_sat", "n_tickgap", "snap_frame",
               "n_eff", "win_s", "reacq"]
-# n_eff: effektive Punktzahl, nur mit Schalter A121_DSP_COMBINE (V3.1), sonst NaN; win_s (Pulsfenster in s) und reacq
-# (0 normal, 1 kurzes Fenster nach Bewegung, 2 über Gedächtnis wiedergefunden) nur mit A121_DSP_REACQ (V6), sonst NaN
+# n_eff: effective number of points, only with compile switch A121_DSP_COMBINE (V3.1), otherwise NaN; win_s (pulse window in s) and reacq
+# (0 normal, 1 short window after motion, 2 reacquired via memory) only with A121_DSP_REACQ (V6), otherwise NaN
 BR_STATE_APNEA = 2
 START_TAGS = ("@IQ3_START", "@REZOOM", "@RECAL")
 
@@ -50,20 +50,20 @@ class Recording:
     folder: pathlib.Path
     vital: dict[str, np.ndarray]     # rx_ms + VITAL_FIELDS
     dsp: dict[str, np.ndarray]       # rx_ms + DSP_FIELDS
-    beats_ms: np.ndarray             # Schlagzeiten der Referenz (rx-Zeitachse)
-    rr_ms: np.ndarray                # RR-Intervall, das am jeweiligen Schlag endet
+    beats_ms: np.ndarray             # beat times of the reference (rx time axis)
+    rr_ms: np.ndarray                # RR interval that ends at the respective beat
     events: list[tuple[float, str]]
-    starts_ms: list[float]           # rx_ms von @IQ3_START, @REZOOM, @RECAL (Neubeginn der Historie)
-    end_ms: float                    # letzte Empfangszeit
-    n_recal: int = 0                 # @RECAL-Zeilen (Neu-Kalibrierung, V1.5)
+    starts_ms: list[float]           # rx_ms of @IQ3_START, @REZOOM, @RECAL (restart of the history)
+    end_ms: float                    # last receive time
+    n_recal: int = 0                 # @RECAL lines (recalibration, V1.5)
     breath: dict | None = None       # @BREATH (V3.4): rx_ms, t_ms, interval_ms, depth_um, rate
-    # Pulswerte der Referenz (Spalte hr_bpm); genutzt nur ohne RR (Gurt/Uhr ohne RR-Intervalle)
+    # Pulse values of the reference (column hr_bpm); used only without RR (strap/watch without RR intervals)
     ref_rx_ms: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
     ref_bpm: np.ndarray = dataclasses.field(default_factory=lambda: np.empty(0))
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Einlesen
+# Reading in
 # ---------------------------------------------------------------------------------------------------------
 
 def _read_csv(path: pathlib.Path) -> list[list[str]]:
@@ -81,8 +81,8 @@ def _num(s: str) -> float:
 
 
 def beats_from_ref(rx_ms: np.ndarray, rr_ms: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Schlagzeiten aus ref_hr.csv: Zeilen mit gleichem rx_ms sind eine Benachrichtigung; ihr letzter Schlag liegt bei
-    rx_ms, die früheren rückwärts aufsummiert. Rückgabe (Schlagzeiten, RR je Schlag), sortiert."""
+    """Beat times from ref_hr.csv: lines with the same rx_ms are one notification; its last beat lies at
+    rx_ms, the earlier ones summed backwards. Returns (beat times, RR per beat), sorted."""
     beats, rrs = [], []
     i = 0
     while i < rx_ms.size:
@@ -100,9 +100,9 @@ def beats_from_ref(rx_ms: np.ndarray, rr_ms: np.ndarray) -> tuple[np.ndarray, np
 
 
 def parse_lines(lines: list[str], rx: np.ndarray) -> tuple[dict, dict, list[float]]:
-    """@VITAL und @DSP mit Empfangszeit; Zeitpunkte, an denen die Historie neu beginnt. dsp["state"]: Zustand aus der
-    ersten @STATE-Zeile nach dem @DSP (V3.5, derselbe Report; vor dem Abschluss-Review stempelte der ESP32 sie mit
-    eigenem millis(), die Zeit taugt daher nicht zur Zuordnung; ohne @STATE NaN)."""
+    """@VITAL and @DSP with receive time; points in time at which the history starts over. dsp["state"]: state from the
+    first @STATE line after the @DSP (V3.5, same report; before the final review the ESP32 stamped them with
+    its own millis(), so the time is not usable for assignment; without @STATE NaN)."""
     vital, dsp, starts, states = [], [], [], []
     for i, ln in enumerate(lines):
         t_rx = rx[i] if i < rx.size else math.nan
@@ -133,7 +133,7 @@ BREATH_FIELDS = ["t_ms", "tick", "interval_ms", "depth_um", "rate"]
 
 
 def parse_breath(lines: list[str], rx: np.ndarray) -> dict[str, np.ndarray]:
-    """@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4) mit Empfangszeit."""
+    """@BREATH,t_ms,tick,intervall_ms,tiefe_um,rate (V3.4) with receive time."""
     rows = []
     for i, ln in enumerate(lines):
         if ln.startswith("@BREATH,"):
@@ -145,7 +145,7 @@ def parse_breath(lines: list[str], rx: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def load_recording(folder: pathlib.Path, lines: list[str] | None = None) -> Recording:
-    """lines: statt stream.log neu gerechnete Zeilen (--replay); deren rx_ms kommt über t_ms aus dem Original."""
+    """lines: recomputed lines instead of stream.log (--replay); their rx_ms comes from the original via t_ms."""
     folder = pathlib.Path(folder)
     orig = (folder / "stream.log").read_text(errors="replace").splitlines()
     rx = np.array([_num(r[1]) for r in _read_csv(folder / "rxtime.csv")], float)
@@ -170,7 +170,7 @@ def load_recording(folder: pathlib.Path, lines: list[str] | None = None) -> Reco
 
 
 def _t_to_rx(lines: list[str], rx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Zuordnung ESP32-Zeit (t_ms der @DSP-Zeilen) → Empfangszeit, für neu gerechnete Zeilen."""
+    """Mapping ESP32 time (t_ms of the @DSP lines) → receive time, for recomputed lines."""
     t, r = [], []
     for i, ln in enumerate(lines):
         if ln.startswith("@DSP,") and i < rx.size:
@@ -180,13 +180,13 @@ def _t_to_rx(lines: list[str], rx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Referenzwerte
+# Reference values
 # ---------------------------------------------------------------------------------------------------------
 
 def ref_hr_at(beats_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, rr_ms: np.ndarray | None = None) -> float:
-    """Referenzpuls im Fenster (t_end − win, t_end] wie das Pulsfenster der DSP: 60 000 / mittleres IBI. Mit rr_ms
-    zählen die vom Gurt gemessenen Intervalle der Schläge im Fenster (unabhängig von der BLE-Latenz der Zeitpunkte),
-    sonst die Abstände der Schlagzeiten. NaN bei weniger als 3 Schlägen."""
+    """Reference pulse in the window (t_end − win, t_end] like the pulse window of the DSP: 60,000 / mean IBI. With rr_ms
+    the intervals of the beats in the window measured by the strap count (independent of the BLE latency of the timestamps),
+    otherwise the spacings of the beat times. NaN with fewer than 3 beats."""
     m = (beats_ms > t_end_ms - win_s * 1000.0) & (beats_ms <= t_end_ms)
     if m.sum() < 3:
         return math.nan
@@ -198,9 +198,9 @@ def ref_hr_at(beats_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, rr_ms:
 
 
 def ref_bpm_at(rx_ms: np.ndarray, bpm: np.ndarray, t_end_ms: float, win_s: float = 15.0, min_n: int = 2) -> float:
-    """Referenzpuls ohne Schläge (nur Pulswerte, z. B. Gurt ohne RR oder Uhr): Mittel der Werte im Fenster (t_end − win, t_end].
-    Solche Geräte glätten selbst über einige Sekunden; der Wert ist gröber als der aus Gurt-RR. NaN bei weniger als min_n
-    Werten im Fenster."""
+    """Reference pulse without beats (pulse values only, e.g. strap without RR or watch): mean of the values in the window (t_end − win, t_end].
+    Such devices smooth over a few seconds themselves; the value is coarser than the one from strap RR. NaN with fewer than min_n
+    values in the window."""
     m = (rx_ms > t_end_ms - win_s * 1000.0) & (rx_ms <= t_end_ms)
     if m.sum() < min_n:
         return math.nan
@@ -208,8 +208,8 @@ def ref_bpm_at(rx_ms: np.ndarray, bpm: np.ndarray, t_end_ms: float, win_s: float
 
 
 def ref_ibi_at(beats_ms: np.ndarray, rr_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0) -> tuple[float, float]:
-    """Gurt im Fenster (t_end − win, t_end] (V1.6/V3.6): Median der RR und RMSSD aufeinanderfolgender RR (ms). Das erste
-    RR im Fenster beginnt vor dem Fenster und zählt nicht (wie ref_hr_at). NaN bei weniger als 3 RR."""
+    """Strap in the window (t_end − win, t_end] (V1.6/V3.6): median of the RR and RMSSD of consecutive RR (ms). The first
+    RR in the window starts before the window and does not count (like ref_hr_at). NaN with fewer than 3 RR."""
     m = (beats_ms > t_end_ms - win_s * 1000.0) & (beats_ms <= t_end_ms)
     rr = rr_ms[m][1:]
     if rr.size < 3:
@@ -218,8 +218,8 @@ def ref_ibi_at(beats_ms: np.ndarray, rr_ms: np.ndarray, t_end_ms: float, win_s: 
 
 
 def br_ref_at(marks_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, tol: float = 0.05) -> float:
-    """Metronom-Atemfrequenz am Fensterende: Intervalle der Einatem-Marker im Fenster, mindestens die letzten zwei.
-    NaN, wenn die Intervalle um mehr als tol auseinanderliegen (Taktwechsel) oder zu wenige Marker da sind."""
+    """Metronome breathing rate at the window end: intervals of the inhale markers in the window, at least the last two.
+    NaN if the intervals differ by more than tol (tempo change) or too few markers are present."""
     before = marks_ms[marks_ms <= t_end_ms]
     if before.size < 2:
         return math.nan
@@ -234,7 +234,7 @@ def br_ref_at(marks_ms: np.ndarray, t_end_ms: float, win_s: float = 15.0, tol: f
 
 
 def intervals(events: list[tuple[float, str]], name: str, end_ms: float) -> list[tuple[float, float]]:
-    """Abschnitte aus <name>_start / <name>_ende; ein offener Abschnitt endet bei end_ms."""
+    """Sections from <name>_start / <name>_ende; an open section ends at end_ms."""
     out, start = [], None
     for t, text in sorted(events):
         if text == f"{name}_start" and start is None:
@@ -248,12 +248,12 @@ def intervals(events: list[tuple[float, str]], name: str, end_ms: float) -> list
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Kennzahlen
+# Key figures
 # ---------------------------------------------------------------------------------------------------------
 
 def metrics(est: np.ndarray, ref: np.ndarray, valid: np.ndarray) -> dict:
-    """Puls gegen Referenz. coverage_pct = Anteil gültiger Reports an allen; Fehler nur über gültige Reports mit
-    Referenz. Bland-Altman-Grenzen = bias ± 1,96 SD."""
+    """Pulse against reference. coverage_pct = share of valid reports among all; errors only over valid reports with
+    reference. Bland-Altman limits = bias ± 1.96 SD."""
     est, ref, valid = np.asarray(est, float), np.asarray(ref, float), np.asarray(valid, bool)
     use = valid & np.isfinite(ref) & np.isfinite(est)
     e = est[use] - ref[use]
@@ -275,14 +275,14 @@ def metrics(est: np.ndarray, ref: np.ndarray, valid: np.ndarray) -> dict:
 
 
 def count_jumps(hr: np.ndarray, valid: np.ndarray, thr: float = 15.0) -> int:
-    """Sprünge > thr /min zwischen aufeinanderfolgenden gültigen Reports (V3.2); ein ungültiger unterbricht."""
+    """Jumps > thr /min between consecutive valid reports (V3.2); an invalid one interrupts."""
     hr, valid = np.asarray(hr, float), np.asarray(valid, bool)
     both = valid[1:] & valid[:-1]
     return int(np.sum(both & (np.abs(np.diff(hr)) > thr)))
 
 
 def calibration(conf: np.ndarray, abs_err: np.ndarray, edges=(0, 30, 50, 70, 90, 101)) -> list[tuple]:
-    """Je Konfidenzklasse [lo, hi): (lo, hi, Anzahl, Anteil innerhalb ±5 /min in %). Leere Klasse: Anteil NaN."""
+    """Per confidence class [lo, hi): (lo, hi, count, share within ±5 /min in %). Empty class: share NaN."""
     conf, abs_err = np.asarray(conf, float), np.asarray(abs_err, float)
     out = []
     for lo, hi in zip(edges[:-1], edges[1:]):
@@ -293,9 +293,9 @@ def calibration(conf: np.ndarray, abs_err: np.ndarray, edges=(0, 30, 50, 70, 90,
 
 
 def apnea_eval(t_ms: np.ndarray, state: np.ndarray, holds: list[tuple[float, float]], grace_s: float = 10.0) -> dict:
-    """Atemzustand (br_state je Report) gegen Anhalte-Abschnitte. Erkannt = Zustand 2 innerhalb des Abschnitts
-    (bis grace_s danach); Verzug ab Abschnittsbeginn. Fehlalarm = zusammenhängende Folge mit Zustand 2, die keinen
-    Abschnitt (± grace_s) berührt."""
+    """Breathing state (br_state per report) against breath-hold sections. Detected = state 2 within the section
+    (up to grace_s after it); delay from the section start. False alarm = contiguous run with state 2 that touches no
+    section (± grace_s)."""
     t_ms, apn = np.asarray(t_ms, float), np.asarray(state) == BR_STATE_APNEA
     delays = []
     for a, b in holds:
@@ -319,8 +319,8 @@ def apnea_eval(t_ms: np.ndarray, state: np.ndarray, holds: list[tuple[float, flo
 
 
 def first_value_delays(starts_ms: list[float], vital_rx_ms: np.ndarray) -> list[float]:
-    """Je Start (iq3, Rezoom, Neu-Kalibrierung): Sekunden bis zum nächsten @VITAL, auch wenn dazwischen ein weiterer
-    Start liegt (so lange gab es keinen Wert). Starts ohne folgenden Wert fehlen in der Liste."""
+    """For each start (iq3, rezoom, recalibration): seconds until the next @VITAL, even if another
+    start lies in between (there was no value for that long). Starts without a following value are missing from the list."""
     out = []
     for s in starts_ms:
         v = vital_rx_ms[vital_rx_ms > s]
@@ -330,7 +330,7 @@ def first_value_delays(starts_ms: list[float], vital_rx_ms: np.ndarray) -> list[
 
 
 def best_lag_s(t_ms: np.ndarray, est: np.ndarray, ref_fn, max_lag_s: float = 20.0, step_s: float = 0.5) -> float:
-    """Verzug der Schätzung gegenüber der Referenz: Verschiebung, bei der MAE(est(t), ref(t − lag)) am kleinsten ist."""
+    """Delay of the estimate relative to the reference: shift at which MAE(est(t), ref(t − lag)) is smallest."""
     best, best_err = math.nan, math.inf
     for lag in np.arange(0.0, max_lag_s + 1e-9, step_s):
         r = np.asarray(ref_fn(t_ms - lag * 1000.0), float)
@@ -344,14 +344,14 @@ def best_lag_s(t_ms: np.ndarray, est: np.ndarray, ref_fn, max_lag_s: float = 20.
 
 
 # ---------------------------------------------------------------------------------------------------------
-# Bericht
+# Report
 # ---------------------------------------------------------------------------------------------------------
 
 def beats_vs_strap(rec: Recording, t: np.ndarray, ok: np.ndarray, win_s: float) -> dict:
-    """IBI-Median (@VITAL ibi_ms) und RMSSD (rmssd_ms, 0 = nicht berechnet) je gültigem Report gegen den Gurt im selben
-    Fenster. Ohne Einzelschläge schreibt die DSP 60 000 / Puls als IBI und den Puls als hr_ibi; solche Reports zählen
-    nicht. Rückgabe: Zahl der Reports, Median |IBI − Gurt| (ms), Zahl mit RMSSD, Median |RMSSD − Gurt| und Median
-    RMSSD / Gurt."""
+    """IBI median (@VITAL ibi_ms) and RMSSD (rmssd_ms, 0 = not computed) per valid report against the strap in the same
+    window. Without individual beats the DSP writes 60,000 / pulse as IBI and the pulse as hr_ibi; such reports do not
+    count. Returns: number of reports, median |IBI − strap| (ms), number with RMSSD, median |RMSSD − strap| and median
+    RMSSD / strap."""
     v = rec.vital
     ibi, rms, hr_ibi, hr = (np.full(t.size, math.nan) for _ in range(4))
     if t.size and v["rx_ms"].size:
@@ -371,11 +371,11 @@ def beats_vs_strap(rec: Recording, t: np.ndarray, ok: np.ndarray, win_s: float) 
 
 
 def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
-    """Alle Kennzahlen einer Sitzung. Bezugszeit eines Reports = Empfang seiner @DSP-Zeile (Ende des Fensters)."""
+    """All key figures of a session. Reference time of a report = receipt of its @DSP line (end of the window)."""
     d = rec.dsp
     t = d["rx_ms"]
     ok = d["ok"] > 0
-    # Pulswert je Report: @VITAL gehört zur vorangehenden @DSP-Zeile
+    # Pulse value per report: @VITAL belongs to the preceding @DSP line
     hr = np.full(t.size, math.nan)
     br = np.full(t.size, math.nan)
     if t.size and rec.vital["rx_ms"].size:
@@ -385,12 +385,12 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         br[idx[good]] = rec.vital["br"][good]
     ok &= np.isfinite(hr)
     rr = rec.rr_ms if rec.rr_ms.size == rec.beats_ms.size else None
-    if rec.beats_ms.size >= 3:  # Gurt mit RR: Schläge
+    if rec.beats_ms.size >= 3:  # strap with RR: beats
         ref_kind = "rr"
 
         def ref_fn(x):
             return ref_hr_at(rec.beats_ms, x, win_s, rr)
-    elif rec.ref_bpm.size >= 3:  # nur Pulswerte (ohne RR): keine Einzelschläge, kein IBI/RMSSD-Vergleich
+    elif rec.ref_bpm.size >= 3:  # pulse values only (without RR): no individual beats, no IBI/RMSSD comparison
         ref_kind, rr = "bpm", None
 
         def ref_fn(x):
@@ -407,9 +407,9 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
     if have_ref:
         err = np.abs(hr - ref)
         res["calibration"] = calibration(np.where(ok, d["conf"], math.nan), np.where(ok, err, math.nan))
-        if np.nanmax(ref) - np.nanmin(ref) >= 15.0:  # Verzug nur, wenn sich der Puls deutlich ändert (R4)
+        if np.nanmax(ref) - np.nanmin(ref) >= 15.0:  # delay only if the pulse changes markedly (R4)
             res["lag_s"] = best_lag_s(t[ok], hr[ok], lambda tt: np.array([ref_fn(x) for x in tt]))
-    if have_ref and rr is not None:  # V1.6/V3.6 (Tag A): Einzelschläge gegen Gurt-RR je Report
+    if have_ref and rr is not None:  # V1.6/V3.6 (day A): individual beats against strap RR per report
         res["ibi_ref"] = beats_vs_strap(rec, t, ok, win_s)
     marks = np.array([tm for tm, text in rec.events if text == "ein"], float)
     if marks.size >= 3:
@@ -420,7 +420,7 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
                      "p1": 100.0 * float(np.mean(e <= 1.0)) if e.size else math.nan}
     holds = intervals(rec.events, "anhalten", rec.end_ms)
     b = rec.breath
-    if b is not None and b["rx_ms"].size:  # V3.4: Rate je Atemzug gegen das Metronom (R3)
+    if b is not None and b["rx_ms"].size:  # V3.4: rate per breath against the metronome (R3)
         bt = b["rx_ms"]
         be = {"n": int(bt.size), "n_ref": 0, "mae": math.nan, "p1": math.nan,
               "first_s": first_value_delays(rec.starts_ms, bt),
@@ -438,7 +438,7 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         else:
             res["apnea"] = "kein br_state in @DSP (Firmware vor V1.4)"
     moves = intervals(rec.events, "bewegung", rec.end_ms)
-    if moves and np.isfinite(d["state"]).any():  # V3.5: Bewegungsabschnitte als BEWEGUNG (bis 15 s danach im Fenster)
+    if moves and np.isfinite(d["state"]).any():  # V3.5: motion sections as BEWEGUNG (motion; up to 15 s afterwards in the window)
         in_mot = np.zeros(t.size, bool)
         for a, b in moves:
             in_mot |= (t > a) & (t <= b + win_s * 1000.0)
@@ -446,7 +446,7 @@ def evaluate(rec: Recording, win_s: float = 15.0) -> dict:
         res["motion_state"] = {"reports_in": int(in_mot.sum()), "motion_in": int((st4 & in_mot).sum()),
                                "motion_out": int((st4 & ~in_mot).sum())}
     res["first_s"] = first_value_delays(rec.starts_ms, rec.vital["rx_ms"])
-    # Sensor-Flags (V1.5): Summen der Zähler je Report; ältere Firmware ohne die Felder → None
+    # Sensor flags (V1.5): sums of the counters per report; older firmware without the fields → None
     if any(np.isfinite(d[k]).any() for k in ("n_delayed", "n_sat", "n_tickgap")):
         res["sensor"] = {k: int(np.nansum(d[k])) for k in ("n_delayed", "n_sat", "n_tickgap")}
         res["sensor"]["recal"] = rec.n_recal
@@ -524,7 +524,7 @@ def format_report(name: str, r: dict) -> str:
 
 
 def replay_lines(folder: pathlib.Path, header_dir: pathlib.Path) -> list[str]:
-    """stream.log mit dem Header aus header_dir neu rechnen (host/dsp_replay); Rückgabe: neue Zeilen."""
+    """Recompute stream.log with the header from header_dir (host/dsp_replay); returns: new lines."""
     with tempfile.TemporaryDirectory() as d:
         out = pathlib.Path(d) / "neu"
         run_replay_cpp(folder / "stream.log", out, header_dir)

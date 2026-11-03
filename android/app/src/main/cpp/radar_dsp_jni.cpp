@@ -1,4 +1,4 @@
-// JNI-Anbindung für de.timo.radarsensor.dsp.DspReplay (A5).
+// JNI binding for de.timo.radarsensor.dsp.DspReplay (A5).
 #include <jni.h>
 
 #include <mutex>
@@ -7,7 +7,7 @@
 
 namespace {
 std::mutex g_mutex;
-a121_dsp::UltimateEspDsp g_dsp;  // eine Instanz für alle Läufe (der Header gibt Speicher nicht frei)
+a121_dsp::UltimateEspDsp g_dsp;  // one instance for all runs (the header does not free memory)
 
 struct Utf {
     JNIEnv *env;
@@ -20,7 +20,7 @@ struct Utf {
 };
 }  // namespace
 
-/** Rückgabe: 0 = bitgleich, 1 = Abweichung, 2 = Datei nicht lesbar/schreibbar. */
+/** Returns: 0 = bit-identical, 1 = deviation, 2 = file not readable/writable. */
 extern "C" JNIEXPORT jint JNICALL Java_de_timo_radarsensor_dsp_DspReplay_nativeRun(JNIEnv *env, jobject, jstring in,
                                                                                     jstring out, jstring report) {
     Utf in_path(env, in), out_path(env, out), rep_path(env, report);
