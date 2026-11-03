@@ -314,8 +314,9 @@ static constexpr float    kMemBandBpm  = 15.0f;  /* Kandidat gilt als "nah am Ge
 static constexpr float    kMemMinConf  = 50.0f;  /* Puls wird nur ab dieser Konfidenz gemerkt (Speicherbedingung, Task 6) */
 /* Ruling R15: Ein über das Gedächtnis wiedergefundener Wert (reacq = 2) ersetzt die Atemspitze als Lebenszeichen nur,
  * wenn er höchstens so weit vom gemerkten Puls liegt. Gleiche Toleranz wie die Bestätigung durch AKF/Einzelschläge
- * (±5 /min), enger als die Fehlergrenze des Prüfstands (10 /min): Im Band ±kMemBandBpm lag im Prüfstand lang ein
- * Bewegungsartefakt (84,7 statt 72,5 /min), das AKF und Einzelschläge auf denselben bewegten Daten bestätigten. */
+ * (±5 /min), enger als die Fehlergrenze des Prüfstands (10 /min). Anlass war das Bewegungsartefakt im Prüfstand lang
+ * (84,7 statt 72,5 /min im Band ±kMemBandBpm); diese Reports sind aber über die Atemspitze gültig, die Regel ändert
+ * dort nichts (docs/EXPERIMENTE.md, V6). */
 static constexpr float    kMemSubstBpm = 5.0f;
 
 /** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */

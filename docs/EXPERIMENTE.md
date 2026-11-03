@@ -438,7 +438,7 @@ nur berichtet); `nie_gefunden_n` ist überall 0; Stand nach dem Final-Review-Fix
 
 Ohne Schalter meldet `bench --check` „OK (alle Grenzwerte eingehalten)“. Mit dem Schalter endet es mit Exit 1 („VERSCHLECHTERT“) und genau fünf
 Verletzungen (`lang` falsch danach 2 und falsch in der Bewegung 2; `tippen` falsch danach 4, falsch in der Bewegung 7, Abschnitt-MAE 4,4); vor dem
-Final-Review waren es drei, die zwei neuen kommen allein von der neuen Kennzahl `falsch_in_beweg_n` (die Reports sind dieselben). In `lang` liegen
+Final-Review waren es drei, die zwei neuen kommen allein von der neuen Kennzahl `falsch_in_beweg_n` (das Verhalten ist unverändert, nur anders gezählt). In `lang` liegen
 die vier Fehlwerte bei 60, 63 s (in der Bewegung) und 71, 72 s (danach), 83–85 statt ≈ 72,5 /min, alle mit `reacq` = 2: Die Bewegungskarte sieht die
 zweite Hälfte der 20-s-Bewegung nicht, das Endstück liegt noch in der Bewegung, der stärkste Kandidat liegt im Band ± 15 um das Gedächtnis (≈ 73)
 und AKF/Einzelschläge auf denselben bewegten Daten bestätigen ihn. Alle vier haben eine Atemspitze (`breath_ok`, Atmung auf dem vollen

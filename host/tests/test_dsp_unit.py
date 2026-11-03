@@ -1416,7 +1416,8 @@ class PreferMemoryTest(unittest.TestCase):
 
 class MemSubstituteTest(unittest.TestCase):
     """V6 (Ruling R15): Ein Gedächtnis-Wert ersetzt die Atemspitze nur bis kMemSubstBpm = 5 /min vom gemerkten Puls; das
-    Kandidatenband kMemBandBpm (15 /min) bleibt breiter (Prüfstand lang: 84,7 gegen gemerkt ≈ 73 war sonst gültig)."""
+    Kandidatenband kMemBandBpm (15 /min) bleibt breiter. Anlass: Prüfstand lang, 84,7 gegen gemerkt ≈ 73; dort sind die
+    Reports allerdings über die Atemspitze gültig, die Regel ändert sie nicht."""
     FLAGS = ("-DA121_DSP_REACQ",)
 
     def test_rule(self):
