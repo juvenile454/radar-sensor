@@ -263,9 +263,10 @@ In der Werks-Server-Firmware (`acc_exploration_server_a121.bin`) läuft der Expl
 
 Um dem ESP32-S3 über das vorhandene 10-Pin-Kabel **100 % Zugriff auf alle A121-Hardwarefunktionen** (rohe komplexe 16-Bit Sparse-IQ-Daten, bis zu 4 Subsweeps pro Frame, On-Chip Loopback, Profile 1–5, PRF 19,5–5,2 MHz, HWAAS 1–511, Phase Enhancement, IQ Imbalance Compensation, Continuous Sweep Mode & Double Buffering, Idle-States) zu geben, stehen ab sofort bereit:
 
-1. **STM32L431 `USART1`-Exploration-Server-Firmware (`firmware/stm32l431/` & `host/build_stm32_usart1_server.py`):**
-   - Erzeugt deterministisch `~/Data/radar-sensor/acc_exploration_server_a121_usart1_esp32.bin` (`109 008` Bytes, SHA256 `dd1226c4ac60d73fc6488f6ebd1447302a06d17c19d0312f8a2a209dffda2fc6`, 25 verifizierte Instruktions-/Vektor-Patches).
-   - Legt den Exploration Server mit voller DMA-Unterstützung (`DMA1_Channel5` RX / `DMA1_Channel4` TX, `IRQ 14/15/37`, `GPIO_PULLUP` auf `PA9`/`PA10`, `UART_HWCONTROL_NONE`) direkt auf `USART1` (`GPIO5`/`GPIO4` am ESP32-S3) und unterstützt Baudraten von `115 200` bis `2 000 000` Baud sowie Soft-Reset per UART-Break.
+1. **STM32L431 `USART1`-Exploration-Server-Firmware (historisch, abgelöst durch den SDK-Neubau in `firmware/stm32l431/`):**
+   - Entstand anfangs über einen Binär-Patcher; der ist aus dem Repo entfernt, der Weg ist `build_server.py` mit dem
+     offiziellen SDK.
+   - Legte den Exploration Server mit voller DMA-Unterstützung (`DMA1_Channel5` RX / `DMA1_Channel4` TX, `IRQ 14/15/37`, `GPIO_PULLUP` auf `PA9`/`PA10`, `UART_HWCONTROL_NONE`) direkt auf `USART1` (`GPIO5`/`GPIO4` am ESP32-S3) und unterstützte Baudraten von `115 200` bis `2 000 000` Baud sowie Soft-Reset per UART-Break.
 2. **ESP32-S3 Dual-Stack-Firmware (`firmware/esp32s3/src/main.cpp`, `a121_server_client.h`, `a121_esp_dsp.h`):**
    - **Umgestellt am 2026-10-31 (Abend), am Gerät geprüft am 2026-11-01:** Der Server-Link läuft über `Serial2` auf den
      SDA/SCL-Adern (`GPIO15` RX ← PB11, `GPIO16` TX → PB10) und braucht die geplante LPUART1-Server-Firmware aus dem SDK

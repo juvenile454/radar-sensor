@@ -83,5 +83,5 @@ Schritte 1–4 erledigt am 2026-11-01 (Ergebnisse in `docs/HARDWARE.md`).
 - `xm125_waveshare_bsp.h` – Pin-Notizen zum Board (I2C2-Pins am 2026-10-31 korrigiert, LPUART1 ergänzt).
 - `main.c`, `a121_universal_protocol.h` – Entwurf einer eigenen Streamer-Firmware mit eigenem Protokoll.
   Nicht der gewählte Weg; der ESP32-Client spricht das Exploration-Server-Protokoll.
-- `Makefile` – `verify-headers` (Syntaxprüfung von `main.c`), `patch-server` (erzeugt die derzeit geflashte
-  USART1-Variante über `host/build_stm32_usart1_server.py`; wird nicht weiterentwickelt).
+- `Makefile` – nur `verify-headers` (Syntaxprüfung von `main.c`). Ein früherer Binär-Patcher für die USART1-Variante
+  ist entfernt; der Weg ist der SDK-Neubau mit `build_server.py`.

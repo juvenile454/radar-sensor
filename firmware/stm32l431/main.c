@@ -15,10 +15,7 @@
  * Hinweis:
  * Zum Kompilieren aus dem C-Quelltext wird das Acconeer XM125 C-SDK (`libacconeer_a121.a` + Header)
  * unter `../../vendor/acconeer_sdk/` benötigt (Lizenz: nicht ins Git einchecken, siehe AGENTS.md).
- * Steht das proprietäre C-SDK lokal nicht zur Verfügung, erzeugt `make patch-server` (bzw.
- * `python3 ../../host/build_stm32_usart1_server.py`) deterministisch die funktionsgleiche
- * USART1-Server-Firmware `acc_exploration_server_a121_usart1_esp32.bin` aus dem vorhandenen
- * `acc_exploration_server_a121.bin` Image.
+ * Die geflashte Server-Firmware entsteht über build_server.py aus dem offiziellen SDK (README.md).
  */
 
 #include <stdbool.h>
