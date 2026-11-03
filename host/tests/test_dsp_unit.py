@@ -1235,6 +1235,58 @@ class SegmentPeriodicTest(unittest.TestCase):
         self.assertEqual(out.split(), ["45", "45", "45", "25"])
 
 
+class PhaseSlopeTest(unittest.TestCase):
+    """V6 Variante Phasensteigung (A121_DSP_PHASE_SLOPE): Frequenz aus der Steigung der abgewickelten Phase der
+    3-Bin-Rekonstruktion (phaseSlopeHz), Eingang wie in der Pulssuche: 15 Hz, Hann, nullaufgefüllt auf 1024."""
+    FLAGS = ("-DA121_DSP_PHASE_SLOPE",)
+
+    def slope(self, signal: str, m: int, f0: str, fs: str = "15.0f") -> float:
+        """C++: signal füllt x[0 .. m) (Hann wird danach angewendet); Rückgabe phaseSlopeHz in Hz."""
+        out = run_cpp(f"""
+        static a121_fft::ComplexFft<1024> cfft;
+        static float x[2048], re[1024], im[1024];
+        const uint16_t m = {m};
+        for (uint16_t n = 0; n < m; n++) {{ const float t = n / 15.0f; (void)t; {signal} }}
+        for (uint16_t n = 0; n < m; n++) x[n] *= 0.5f * (1.0f - cosf(6.2832f * n / (m - 1)));
+        printf("%.5f", phaseSlopeHz(x, m, {fs}, {f0}, cfft, re, im));""", self.FLAGS)
+        return float(out)
+
+    def test_sine_6_s(self):
+        # 1,23 Hz, 6 s (90 Werte), Start 1,2 Hz: Fehler unter 0,01 Hz (0,6 /min)
+        f = self.slope("x[n] = sinf(6.2832f * 1.23f * t);", 90, "1.2f")
+        self.assertAlmostEqual(f, 1.23, delta=0.01)
+
+    def test_sine_with_breath_harmonic(self):
+        # Puls 1,2 Hz plus 4 × stärkere Komponente bei 0,75 Hz (Atem-Oberwelle), 6 s: Fehler unter 0,02 Hz
+        f = self.slope("x[n] = sinf(6.2832f * 1.2f * t) + 4.0f * sinf(6.2832f * 0.75f * t + 0.7f);", 90, "1.2f")
+        self.assertAlmostEqual(f, 1.2, delta=0.02)
+
+    def test_silent_returns_start(self):
+        self.assertEqual(self.slope("x[n] = 0.0f;", 90, "1.2f"), 1.2)
+
+    def test_edges_return_start(self):
+        # Start an der Bandgrenze (Bin 0 / Nyquist), m über der FFT-Länge, zu kurzes Signal: Rückgabe = Start
+        sig = "x[n] = sinf(6.2832f * 1.23f * t);"
+        self.assertEqual(self.slope(sig, 90, "0.0f"), 0.0)
+        self.assertEqual(self.slope(sig, 90, "7.5f"), 7.5)
+        self.assertEqual(self.slope(sig, 90, "7.49f"), 7.49)
+        self.assertEqual(self.slope(sig, 2000, "1.2f"), 1.2)
+        self.assertEqual(self.slope(sig, 3, "1.2f"), 1.2)
+
+    def test_sine_grid_and_lengths(self):
+        # unabhängig von der Lage zum 1024-Raster (0,0146 Hz) und der Fensterlänge 6 / 10 / 15 s
+        worst = 0.0
+        for f_true in (0.9, 1.0, 1.0073, 1.2, 1.5, 2.0, 2.5):
+            for m in (90, 150, 225):
+                f = self.slope(f"x[n] = sinf(6.2832f * {f_true}f * t + 1.0f);", m, f"{f_true - 0.02:.4f}f")
+                worst = max(worst, abs(f - f_true))
+        self.assertLess(worst, 0.02)
+
+    def test_without_switch_not_available(self):
+        with self.assertRaises(AssertionError):
+            run_cpp("static a121_fft::ComplexFft<1024> c; float x[8] = {}, r[1024], i[1024]; phaseSlopeHz(x, 8, 15.0f, 1.0f, c, r, i);")
+
+
 class ReacqMemoryTest(unittest.TestCase):
     """V6: Kurzzeit-Gedächtnis des Pulses (ReacqMemory): gilt 60 s, erlischt mit dem Echo oder wenn das Ziel die Zone verlässt."""
     FLAGS = ("-DA121_DSP_REACQ",)

@@ -59,6 +59,13 @@
  *      (Spitze < 5 × Mittel der Bins außerhalb der Hauptkeule; segmentPeriodic). Bench (Simulation): hält die Grenzen
  *      nicht (beweg hr_mae, kurz, zappel, beweg_weg falsch nach Bewegung), tippen bleibt bei 4 falschen Werten; die
  *      simulierte Bewegung ist ein Sinus, also periodisch. Zahlen in docs/EXPERIMENTE.md (V6).
+ *      Variante A121_DSP_PHASE_SLOPE (unabhängig von A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
+ *      Der gewählte Kandidat (cf[0]) kommt aus der Steigung der abgewickelten Phase des 3-Bin-Schmalbands (phaseSlopeHz,
+ *      1024er FFT, Herzsignal des klarsten Punkts) statt aus der Parabel. Bench (Simulation): schlechter als die Parabel
+ *      (auf dem 1024er Raster liegen die drei Bins auf dem flachen Gipfel der Hauptkeule, die Steigung rastet auf den
+ *      Mittenbin ein: Fehler bis 0,007 Hz statt < 0,0001 Hz), Puls-MAE in 12 von 19 Szenarien höher (1 niedriger), 7 neue
+ *      Verletzungen (allein), im 10-s-Fenster ebenfalls schlechter. Zahlen in docs/EXPERIMENTE.md (V6). Kosten mit Schalter: 14 KB RAM, zwei
+ *      komplexe FFT (1024) je Report.
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
@@ -397,6 +404,81 @@ inline bool segmentPeriodic(const float *x, uint16_t n, a121_fft::RealFft<kFftN>
     return peak >= k * (sum / (float)cnt);
 }
 #endif
+#endif
+
+#ifdef A121_DSP_PHASE_SLOPE
+static constexpr uint8_t kPhaseSlopeWalk = 4U;  /* höchstens so viele Bins von der Startfrequenz bergauf zur Spitze */
+
+/**
+ * V6, Variante Feinschätzung über die Phasensteigung (Experiment, VERWORFEN, siehe Kopfkommentar und docs/EXPERIMENTE.md; nach
+ * Vital-Radio, Adib et al. 2015): Frequenz einer Spektrumsspitze aus der Steigung der abgewickelten Phase, statt aus der
+ * parabolischen Verfeinerung der Spitze.
+ * x: m Werte (dezimiert auf fs, gefenstert), werden auf NF mit Nullen aufgefüllt (m ≤ NF). Vorwärts-FFT, nur der Bin
+ * k0 = round(f0 / fs · NF) und seine Nachbarn k0 ± 1 bleiben (alle anderen, auch die negativen Frequenzen, werden 0),
+ * inverse FFT: komplexes Schmalband-Signal der Spitze. Phase der ersten m Werte abwickeln (Sprünge über ±π auflösen),
+ * Gerade per kleinsten Quadraten, Steigung in rad/Wert · fs / 2π → Hz.
+ * re, im: je NF Werte Arbeitsspeicher (Inhalt danach ungültig). cfft: Drehfaktoren, wird nur gelesen.
+ * Rückgabe f0_hz unverändert, wenn k0 am Rand liegt (k0 < 1 oder k0 + 1 ≥ NF/2), m < 4 oder m > NF, fs ≤ 0, das Signal
+ * keine Leistung hat (mittlere Amplitude des Schmalbands < 1e-9) oder das Ergebnis nicht endlich ist.
+ */
+template <uint16_t NF>
+inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, const a121_fft::ComplexFft<NF> &cfft,
+                          float *re, float *im) {
+    if (m < 4U || m > NF || !(fs > 0.0f) || !(f0_hz >= 0.0f)) return f0_hz;
+    const int32_t k0 = (int32_t)lroundf(f0_hz / fs * (float)NF);
+    if (k0 < 1 || k0 + 1 >= (int32_t)(NF / 2U)) return f0_hz;
+    for (uint16_t n = 0; n < NF; n++) {
+        re[n] = (n < m) ? x[n] : 0.0f;
+        im[n] = 0.0f;
+    }
+    cfft.transform(re, im, false);
+    /* Spitze suchen: von k0 bergauf im Betrag, höchstens kPhaseSlopeWalk Schritte (der Start kann ein paar Bins neben
+     * der Spitze liegen, die Grobwahl der Pulssuche ist ein anderes Spektrum als das dieses Signals) */
+    int32_t kp = k0;
+    for (uint8_t i = 0; i < kPhaseSlopeWalk; i++) {
+        const auto pw = [&](int32_t k) { return re[k] * re[k] + im[k] * im[k]; };
+        const float here = pw(kp);
+        if (kp + 2 < (int32_t)(NF / 2U) && pw(kp + 1) > here && pw(kp + 1) >= pw(kp - 1)) kp++;
+        else if (kp - 1 >= 1 && pw(kp - 1) > here) kp--;
+        else break;
+    }
+    for (uint16_t k = 0; k < NF; k++)
+        if (k + 1 < kp || k > kp + 1) {  /* außer kp − 1 .. kp + 1 */
+            re[k] = 0.0f;
+            im[k] = 0.0f;
+        }
+    cfft.transform(re, im, true);
+    /* Phase abwickeln (in re, nach dem Lesen von re[n], im[n]); Amplitudensumme für die Stille-Prüfung */
+    float amp_sum = 0.0f, prev = 0.0f, cum = 0.0f;
+    for (uint16_t n = 0; n < m; n++) {
+        amp_sum += sqrtf(re[n] * re[n] + im[n] * im[n]);
+        const float ph = fastAtan2(im[n], re[n]);
+        if (n == 0) {
+            cum = ph;
+        } else {
+            float d = ph - prev;
+            if (d > (float)M_PI) d -= 2.0f * (float)M_PI;
+            else if (d < -(float)M_PI) d += 2.0f * (float)M_PI;
+            cum += d;
+        }
+        prev  = ph;
+        re[n] = cum;
+    }
+    if (amp_sum < 1e-9f * (float)m) return f0_hz;
+    /* Gerade durch (n, Phase) per kleinsten Quadraten: Steigung = Σ(n − n̄)(φ − φ̄) / Σ(n − n̄)² */
+    const float half = 0.5f * (float)(m - 1U);
+    float mean = 0.0f;
+    for (uint16_t n = 0; n < m; n++) mean += re[n];
+    mean /= (float)m;
+    float sxy = 0.0f, sxx = 0.0f;
+    for (uint16_t n = 0; n < m; n++) {
+        const float dn = (float)n - half;
+        sxy += dn * (re[n] - mean);
+        sxx += dn * dn;
+    }
+    const float f = sxy / sxx * fs / (2.0f * (float)M_PI);
+    return std::isfinite(f) ? f : f0_hz;
+}
 #endif
 
 /**
@@ -2174,6 +2256,14 @@ public:
             }
             cf[j] = binHz(k) + kHrFStep * d;
         }
+#ifdef A121_DSP_PHASE_SLOPE
+        /* V6 Variante Phasensteigung (Experiment): Der gewählte Kandidat (cf[0]) kommt aus der Phase statt aus der
+         * Parabel. Signal = Herzsignal des klarsten Punkts (bzw. des kombinierten Kanals) auf dem Pulsfenster, dezimiert
+         * und gewichtet wie für die Spektren; dec_ ist hier frei (die Punkteschleife und der Atemhub sind fertig). Die
+         * Kandidatenwahl, die Oktav-Prüfung und die übrigen Kandidaten bleiben wie ohne Schalter. */
+        for (uint16_t m = 0; m < Mp; m++) dec_[m] = best_h_[(uint32_t)m * kDecim] * hann_p[m];
+        cf[0] = phaseSlopeHz(dec_, Mp, kFsHz / kDecim, binHz(cand[0]), psl_fft_, psl_re_, psl_im_);
+#endif
         rep.hr_harm = isHarmHz(cf[0]);
         const float raw_bpm = cf[0] * 60.0f;
         rep.hr_spec_bpm = raw_bpm;
@@ -2883,6 +2973,11 @@ private:
     uint32_t state_since_tot_ = 0;
     ReportSnapshot snap_ = {};                                     /* für computeVitalReport(rep) ohne eigenen Stand */
     a121_fft::RealFft<kFftN> fft_;                                  /* Spektren je Zoom-Punkt (V2.2) */
+#ifdef A121_DSP_PHASE_SLOPE
+    a121_fft::ComplexFft<kFftN> psl_fft_;                           /* V6 Phasensteigung, Report-Seite: 6 KB Drehfaktoren */
+    float    psl_re_[kFftN];                                        /* … Arbeitsspeicher 2 × 4 KB, nur im Report */
+    float    psl_im_[kFftN];
+#endif
     float    hann_[kHrWin / kDecim + 1U] = {};
     uint16_t hann_m_ = 0;
 #ifdef A121_DSP_REACQ

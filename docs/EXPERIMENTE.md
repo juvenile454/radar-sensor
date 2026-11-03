@@ -349,6 +349,67 @@ unverändert; `kPeriodK` = 100 ist zeilengleich zu REACQ allein. **Verworfen**: 
 kommen laut Task 6 aus der normalen Verfolgung). Der Code bleibt hinter dem Schalter als Experiment; ein Bench-Test dafür gibt es
 nicht. Rechenzeit: je als bewegt gezählter Block eine FFT (1024) des vorhandenen `fft_`, höchstens 15 je Report.
 
+### V6 Variante Phasensteigung (`A121_DSP_PHASE_SLOPE`): verworfen
+
+Idee (Vital-Radio, Adib et al. 2015): Die Frequenz des gewählten Kandidaten (`cf[0]`) kommt nicht aus der Parabel um die
+Spektrumsspitze, sondern aus der Steigung der abgewickelten Phase des Schmalbands: Herzsignal des klarsten Punkts
+(`best_h_`, bzw. kombinierter Kanal) auf dem Pulsfenster, 15 Hz, Hann, auf 1024 aufgefüllt, komplexe FFT, nur die Spitze und ihre
+beiden Nachbar-Bins behalten, inverse FFT, Phase der ersten `m` Werte abwickeln, Gerade (kleinste Quadrate) → Hz
+(`phaseSlopeHz`, eigene `ComplexFft<1024>`). Kandidatenwahl, Oktav-Prüfung und die übrigen Kandidaten bleiben. Die Spitze wird vom
+Startbin aus bergauf gesucht (höchstens 4 Bins), weil die Spitze des Einzelpunkt-Signals neben der des kombinierten Spektrums liegen
+kann (der Einheitentest startet mit 1,2 Hz bei wahren 1,23 Hz). Messung: `.venv/bin/python host/vital_sim.py bench --check
+[--hr-win 600] [--define A121_DSP_REACQ] --define A121_DSP_PHASE_SLOPE`, nur Simulation (PC-Rechnung, kein Lauf am Gerät). Ohne den Schalter
+ist die Ausgabe zeilengleich zum Stand davor, mit nur `A121_DSP_REACQ` ebenfalls.
+
+Ergebnis je Szenario (Puls-MAE in /min / Anteil ≤ 5 /min in %; PS = Phasensteigung; 10 s = `--hr-win 600`):
+
+| Szenario | ohne | PS | REACQ | REACQ+PS | 10 s ohne | 10 s PS |
+|---|---|---|---|---|---|---|
+| base | 0.4 / 99 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 | 0.4 / 99 | 0.6 / 100 |
+| harm4 | 0.3 / 100 | 0.4 / 100 | 0.3 / 100 | 0.4 / 100 | 0.4 / 100 | 0.5 / 100 |
+| step | 0.7 / 100 | 0.8 / 100 | 0.7 / 100 | 0.8 / 100 | 0.5 / 100 | 0.8 / 100 |
+| brady | 2.8 / 95 | 3.1 / 95 | 2.8 / 95 | 3.1 / 95 | 2.0 / 96 | 2.8 / 96 |
+| tachy | 0.9 / 100 | 0.9 / 100 | 0.9 / 100 | 0.9 / 100 | 0.9 / 100 | 0.9 / 100 |
+| flach | 0.5 / 100 | 0.5 / 100 | 0.5 / 100 | 0.5 / 100 | 0.6 / 100 | 0.6 / 100 |
+| tief | 0.6 / 99 | 0.6 / 99 | 0.6 / 99 | 0.6 / 99 | 0.6 / 99 | 0.7 / 99 |
+| beweg | 0.8 / 98 | 1.0 / 98 | 0.4 / 100 | 0.7 / 99 | 1.5 / 95 | 1.8 / 94 |
+| anhalt | 0.4 / 100 | 0.5 / 99 | 0.7 / 98 | 0.9 / 97 | 1.1 / 96 | 1.3 / 95 |
+| tachy6 | 1.0 / 100 | 1.0 / 100 | 1.0 / 100 | 1.0 / 100 | 1.2 / 100 | 1.2 / 100 |
+| takt6 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 | 0.3 / 100 |
+| weg | 0.4 / 100 | 0.5 / 100 | 0.4 / 100 | 0.5 / 100 | 0.5 / 100 | 0.7 / 100 |
+| kurz | 0.9 / 98 | 1.0 / 97 | 0.4 / 100 | 0.5 / 99 | 1.2 / 97 | 1.8 / 94 |
+| zappel | 3.9 / 89 | 4.0 / 88 | 3.1 / 96 | 3.3 / 95 | 5.2 / 93 | 6.0 / 91 |
+| lang | 1.5 / 90 | 1.5 / 90 | 0.8 / 97 | 0.9 / 97 | 2.4 / 89 | 2.4 / 90 |
+| lage | 0.3 / 100 | 0.4 / 100 | 0.3 / 100 | 0.3 / 100 | 0.4 / 100 | 0.6 / 100 |
+| beweg_hr | 0.4 / 100 | 0.5 / 100 | 0.4 / 100 | 0.5 / 100 | 0.7 / 99 | 0.9 / 100 |
+| beweg_weg | 0.8 / 96 | 1.2 / 94 | 0.3 / 100 | 0.6 / 100 | 0.7 / 98 | 1.1 / 98 |
+| tippen | 2.6 / 92 | 3.1 / 90 | 2.7 / 91 | 3.3 / 88 | 2.0 / 92 | 1.9 / 90 |
+
+(`leer`, `niemand` ohne Pulswert; Summe der MAE über die 19 Szenarien: 19,5 → 21,6 allein, 16,9 → 19,4 mit REACQ.)
+
+| Vergleich | Verletzungen vorher → nachher | neu |
+|---|---|---|
+| PS allein gegen ohne Schalter (15 s) | 0 → 7 | `erst_ok_s` 7 s (Grenze ≤ 6) bei `anhalt`, `weg`, `kurz`; `weg` `erst_s` 7 s; `zappel` `erst_ok_s` 11 s (≤ 7); `lang` `falsch_nach_beweg_n` 5 (≤ 3); `tippen` `falsch_nach_beweg_n` 6 (≤ 4) |
+| REACQ+PS gegen REACQ allein (15 s) | 3 → 9 | wie oben (`erst_ok_s` bei `anhalt`, `weg`, `kurz`, `zappel`, `weg` `erst_s`); `tippen` falsch 4 → 6, `abschnitt_mae` 4,4 → 4,9 |
+| PS gegen ohne bei 10 s | 9 → 15 (Grenzen gelten für 15 s) | `beweg` `hr_p5` 93,6 (≥ 95), `anhalt` `hr_p5` 94,9, `erst_ok_s` bei `anhalt`/`weg`/`kurz`/`zappel` 7–16 s, `kurz` falsch 5 (≤ 2), `zappel` `frueh_falsch_n` 8 (≤ 3), `alle` `konf_richtig` 66 (≥ 70) |
+
+Ursache: Auf dem 1024er Raster (0,0146 Hz) liegen die drei behaltenen Bins auf dem flachen Gipfel der Hann-Hauptkeule (±0,33 Hz bei 6 s).
+Das Schmalband ist `e^{j·2π·k0·n/1024}` mal einer fast reellen, langsam veränderlichen Hüllkurve; die Steigung ist deshalb im Wesentlichen
+die Frequenz des Mittenbins, nur eine kleine Korrektur kommt aus dem Unterschied der Nachbar-Bins (Überlegung, nicht einzeln gemessen). Der Schätzwert rastet auf das Raster ein: Auf
+einem sauberen Sinus (Einheitentest, 6 / 10 / 15 s) liegt der Fehler bei bis zu 0,007 Hz (0,4 /min, halber Bin), unabhängig von der
+Fensterlänge; die Parabel über die Leistung erreicht auf demselben Signal 0,0001 Hz. Die erhoffte feinere Frequenz im kurzen Fenster
+tritt nicht ein; ein weiterer Grund kann sein, dass das Signal vom klarsten Punkt stammt, die Kandidaten aber aus dem kombinierten Spektrum aller Punkte (nicht getrennt untersucht).
+Zur Orientierung (nicht übernommen, an `kPhaseSlopeWalk` = 0, also ohne Spitzensuche vom Startbin aus, gemessen): PS allein
+0 → 3 Verletzungen (`brady` `erst_ok_s` 15 s / `frueh_falsch_n` 7, `tippen` falsch 5), Summe MAE 19,5 → 20,2; im 10-s-Fenster 9 → 9, Summe MAE
+49,0 → 50,0; auch dort ist es nicht besser als die Parabel.
+
+**Verworfen**: Der Prüfstand wird in beiden Fensterlängen schlechter (Puls-MAE in 12 von 19 Szenarien höher, in einem niedriger; neue
+Verletzungen), die Übernahmeregel (MAE und alle Grenzen nicht schlechter) ist nicht erfüllt. Der Code bleibt hinter dem Schalter als
+Experiment; einen Bench-Test dafür gibt es nicht (`PhaseSlopeTest` in `host/tests/test_dsp_unit.py` prüft nur die Funktion). Kosten mit
+Schalter: 14 KB RAM (`ComplexFft<1024>` 6 KB, zwei Arbeitsfelder je 4 KB), zwei komplexe FFT (1024) und höchstens 225 Phasen je Report
+(geschätzt unter 2 ms auf dem ESP32-S3, nicht gemessen); ohne Schalter nichts davon. Alle Zahlen sind Simulation; Aussagen über die Genauigkeit
+am Menschen sind erst mit einer Pulsreferenz möglich.
+
 ## Nicht möglich mit einem Sensor
 
 - `bilateration` braucht zwei Sensoren.
