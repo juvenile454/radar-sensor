@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auswertung von iq3-Aufnahmen gegen eine Referenz (EKG-Brustgurt, Metronom, Marker); docs/AUDIT_VITAL.md, V0.4.
+"""Auswertung von iq3-Aufnahmen gegen eine Referenz (EKG-Brustgurt, Metronom, Marker); docs/VITAL_AUDIT.md, V0.4.
 
 Aufnahme-Ordner im Format der App bzw. host/esp_record.py (docs/ANDROID_APP.md):
   stream.log   Zeilen wie vom ESP32 (@IQ3_START, @DSP, @VITAL, @REZOOM, @RECAL, …)

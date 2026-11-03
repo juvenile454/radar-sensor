@@ -1,8 +1,8 @@
 # Agent instructions
 
 Alles zum Radarprojekt liegt in diesem Ordner (inkl. Android-App unter `android/`).
-Stand und Phasen: `docs/KONZEPT.md`. Pins/Verdrahtung: `docs/HARDWARE.md`.
-Messplan/Ergebnisse: `docs/EXPERIMENTE.md`. App-Plan: `docs/ANDROID_APP.md`. Vital-Audit und Plan: `docs/AUDIT_VITAL.md`.
+Stand und Phasen: `docs/CONCEPT.md`. Pins/Verdrahtung: `docs/HARDWARE.md`.
+Messplan/Ergebnisse: `docs/EXPERIMENTS.md`. App-Plan: `docs/ANDROID_APP.md`. Vital-Audit und Plan: `docs/VITAL_AUDIT.md`.
 Pico und SAR-Scanner sind zurückgestellt.
 
 ## Regeln

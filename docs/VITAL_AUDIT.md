@@ -389,7 +389,7 @@ Nutzung prüfen; Daten nach `~/Data/radar-sensor/public/`, nicht ins Repo.
   https://link.springer.com/10.1007/s00421-019-04142-5
 - Schellenberger et al. 2020, *Sci Data* 7:291. https://www.nature.com/articles/s41597-020-00629-5
 - Adib et al. 2015, Vital-Radio, *ACM CHI*. https://doi.org/10.1145/2702123.2702200 (Periodizitätstest, Feinschätzung
-  über die Phasensteigung; ausgewertet in `docs/superpowers/specs/2026-11-02-puls-wiederfinden-design.md`)
+  über die Phasensteigung; ausgewertet in `docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md`)
 - Lund-Abschlussarbeit (A111): https://lup.lub.lu.se/student-papers/record/9094792 ·
   KTU-Abschlussarbeit (A121): https://epubl.ktu.edu/object/elaba:199466836/index.html
 
@@ -406,18 +406,18 @@ Alle Zahlen zu Varianten stammen aus dem Prüfstand **[Sim]**; ob sie an echten 
 
 | Phase | umgesetzt (am PC geprüft) | offen (Gerät, Gurt, Aufnahmen, Freigabe) |
 |---|---|---|
-| V0 | V0.1/V0.2 Gurt (BLE), Marker, Metronom in der App; V0.4 `vital_eval.py`; V0.5 Prüfstand `--check`, Szenario `leer`; V0.3 Messplan M5 (`EXPERIMENTE.md`) | Gurt am Handy, Aufnahmen Tag A/B (V0.3), Basislinie (V0.6) |
+| V0 | V0.1/V0.2 Gurt (BLE), Marker, Metronom in der App; V0.4 `vital_eval.py`; V0.5 Prüfstand `--check`, Szenario `leer`; V0.3 Messplan M5 (`EXPERIMENTS.md`) | Gurt am Handy, Aufnahmen Tag A/B (V0.3), Basislinie (V0.6) |
 | V1 | V1.1–V1.7 im Header (Kreisfit, Pulsband 40–180, Kandidaten/Verfolgung/Konfidenz/Lebenszeichen, Atemzustand, Sensor-Flags und `@RECAL`, IBI/RMSSD, Aufräumen) | Abnahmen an Tag A/B, Live-Lauf |
 | V2 | V2.1 Report auf Kern 0 aus Schnappschuss, V2.2 FFT, V2.3 Rezoom ohne Verlust, V2.4/V2.5 schneller Start und Reaktion | Empfangspause und Rechenzeit am ESP32 messen, 30-min-Lauf, V2.3 Schritt 3 (nach V4.4) |
 | V3 | V3.4 Atemzüge (`@BREATH`) und V3.5 Zustand (`@STATE`) im Standard; V3.1 Kombination, V3.2 Viterbi, V3.3 Oberwellen-Abzug, V3.6 Vorlage für Einzelschläge als Schalter, Standard aus; V3.7 nicht begonnen (Voraussetzung fehlt) | A/B an Tag A, Übernahme nur nach Tag B |
-| V4 | Messplan (`EXPERIMENTE.md`, „V4 Sensor-Konfiguration"), `host/noise_floor.py` (Weg-Rauschen, Aufnahme über `bridge`), iq3-Preset als Übersetzungsschalter, Kennung in `@HELLO` | alle Messungen V4.1–V4.4 |
+| V4 | Messplan (`EXPERIMENTS.md`, „V4 Sensor-Konfiguration"), `host/noise_floor.py` (Weg-Rauschen, Aufnahme über `bridge`), iq3-Preset als Übersetzungsschalter, Kennung in `@HELLO` | alle Messungen V4.1–V4.4 |
 | V5 | V5.1 Gütezustand und Abweichung gegen den Gurt, V5.2 Handy-DSP live aus `@RAW` (`A121_DSP_HEAVY`), V5.3 alte PC-Skripte als Archiv | Screenshots je Zustand, 30 min live mit CPU ≤ 20 %, NDK-Build |
-| V6 (2026-11-03) | Puls nach Bewegung wiederfinden hinter `A121_DSP_REACQ` (Standard aus): Bewegungskarte, Puls auf dem ruhigen Endstück, Gedächtnis; `@DSP` mit `win_s`/`reacq`; `host/reacq_eval.py`; Prüfstand-Szenarien `kurz`…`tippen`; Firmware-Umgebung `esp32s3-n16r8-reacq` (`pio run` übersetzt, `-reacq` in `@HELLO`); Varianten `A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE` gemessen und verworfen; Final-Review-Fix: Gedächtnis-Wert ersetzt die Atemspitze nur bis 5 /min vom gemerkten Wert (`kMemSubstBpm`), Kennzahl `falsch_in_beweg_n`, `reacq_eval.py --ohne-karte`. Zahlen: `EXPERIMENTE.md`, „V6“ | Lauf am Gerät (nicht geflasht), dabei Stack-Reserve der DSP-Task einmal messen (`uxTaskGetStackHighWaterMark`), Handzählung, Polar H9 Tag A; Prüfstand **[Sim]** mit Schalter 5 Verletzungen (`lang` 2 falsche Werte in und 2 nach der Bewegung, `tippen` 7 in und 4 nach dem Abschnitt, Abschnitt-MAE 4,4); T1 **[Replay]** nach gleicher Zählregel mit Schalter **schlechter**: gültig 20,7 → 13,4 %, Ausfallzeit gesamt 660 → 729 s, Median der Bewegungs-Ausfälle 23,7 → 35,9 s (Ziel ≤ 15 s nicht erreicht), nur Sprünge 13 → 9 besser; Echo nach Bewegung oft unsauber; Gedächtnis überlebt einen Rezoom auf ein anderes Ziel nur, wenn alle Reports davor in den ersten 6 s nach einem vorigen Rezoom lagen |
+| V6 (2026-11-03) | Puls nach Bewegung wiederfinden hinter `A121_DSP_REACQ` (Standard aus): Bewegungskarte, Puls auf dem ruhigen Endstück, Gedächtnis; `@DSP` mit `win_s`/`reacq`; `host/reacq_eval.py`; Prüfstand-Szenarien `kurz`…`tippen`; Firmware-Umgebung `esp32s3-n16r8-reacq` (`pio run` übersetzt, `-reacq` in `@HELLO`); Varianten `A121_DSP_REACQ_PERIOD`, `A121_DSP_PHASE_SLOPE` gemessen und verworfen; Final-Review-Fix: Gedächtnis-Wert ersetzt die Atemspitze nur bis 5 /min vom gemerkten Wert (`kMemSubstBpm`), Kennzahl `falsch_in_beweg_n`, `reacq_eval.py --ohne-karte`. Zahlen: `EXPERIMENTS.md`, „V6“ | Lauf am Gerät (nicht geflasht), dabei Stack-Reserve der DSP-Task einmal messen (`uxTaskGetStackHighWaterMark`), Handzählung, Polar H9 Tag A; Prüfstand **[Sim]** mit Schalter 5 Verletzungen (`lang` 2 falsche Werte in und 2 nach der Bewegung, `tippen` 7 in und 4 nach dem Abschnitt, Abschnitt-MAE 4,4); T1 **[Replay]** nach gleicher Zählregel mit Schalter **schlechter**: gültig 20,7 → 13,4 %, Ausfallzeit gesamt 660 → 729 s, Median der Bewegungs-Ausfälle 23,7 → 35,9 s (Ziel ≤ 15 s nicht erreicht), nur Sprünge 13 → 9 besser; Echo nach Bewegung oft unsauber; Gedächtnis überlebt einen Rezoom auf ein anderes Ziel nur, wenn alle Reports davor in den ersten 6 s nach einem vorigen Rezoom lagen |
 
 Zeile V6 (Nachtrag 2026-11-03): Firmware beider Umgebungen (`esp32s3-n16r8`, `esp32s3-n16r8-reacq`) mit `pio run` gebaut, Python-Suite, Prüfstand
 und Android-Unit-Tests am PC gelaufen; **nichts davon ist am Gerät gelaufen** und keine Zahl hat eine Referenz.
 
-Einzelergebnisse und Befehle je Aufgabe: `docs/EXPERIMENTE.md` (Prüfstand, Messpläne), `docs/ANDROID_APP.md` (App,
+Einzelergebnisse und Befehle je Aufgabe: `docs/EXPERIMENTS.md` (Prüfstand, Messpläne), `docs/ANDROID_APP.md` (App,
 offene Gerätetests), `docs/HARDWARE.md` (Befehle, Schalter).
 
 **Abschluss-Review (2026-11-01), behoben und am PC geprüft:** Puls in der App grau bei ungültigem oder veraltetem
@@ -528,7 +528,7 @@ Eine bekannte Atemfrequenz ist die einfachste Atemreferenz: Die App gibt den Tak
 
 #### V0.3 Messplan Referenzdatensatz
 
-In `docs/EXPERIMENTE.md` als **M5** eintragen. Jede Sitzung mit Gurt, `iq3 0 raw`, Markern; Ablage
+In `docs/EXPERIMENTS.md` als **M5** eintragen. Jede Sitzung mit Gurt, `iq3 0 raw`, Markern; Ablage
 `~/Data/radar-sensor/ref/<datum>_<sitzung>/`.
 
 | Sitzung | Inhalt | Dauer | prüft |
@@ -580,7 +580,7 @@ In `docs/EXPERIMENTE.md` als **M5** eintragen. Jede Sitzung mit Gurt, `iq3 0 raw
 #### V0.6 Basislinie
 
 - Heutige Firmware (`2026-11-01-app1`) auf Tag A und Tag B auswerten, Ergebnis als „Basislinie" in M5.
-- **Fertig, wenn:** Tabelle mit MAE, ±5-Anteil, Verfügbarkeit, Kalibrierung je Sitzung in `docs/EXPERIMENTE.md`.
+- **Fertig, wenn:** Tabelle mit MAE, ±5-Anteil, Verfügbarkeit, Kalibrierung je Sitzung in `docs/EXPERIMENTS.md`.
 
 #### V0.7 (optional) Öffentliche Datensätze
 
@@ -784,7 +784,7 @@ Datenrate bleibt unter 50 % der Link-Grenze (≈ 100 kB/s), sonst nicht überneh
 | 6 | V4.1, V4.2 (kann ab Schritt 2 parallel laufen) | 2 Sitzungen | 1 |
 | 7 | V3.x nach Bedarf, V5.x | offen | 3–5 |
 
-Abnahme jeder Phase: Tag-B-Auswertung in `docs/EXPERIMENTE.md` (M5), Gerätetest getrennt vom Build ausgewiesen.
+Abnahme jeder Phase: Tag-B-Auswertung in `docs/EXPERIMENTS.md` (M5), Gerätetest getrennt vom Build ausgewiesen.
 
 ## 7. Offene Fragen und Risiken
 

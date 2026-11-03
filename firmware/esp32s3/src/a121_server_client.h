@@ -40,7 +40,7 @@
 
 namespace a121_srv {
 
-/* iq3-Preset (V4, Messung V4.1/V4.2 in docs/EXPERIMENTE.md): Zoom- und Loopback-Einstellung als Übersetzungsschalter,
+/* iq3-Preset (V4, Messung V4.1/V4.2 in docs/EXPERIMENTS.md): Zoom- und Loopback-Einstellung als Übersetzungsschalter,
  * Standard wie bisher. Die DSP rechnet nur mit 60 Hz (Filter), deshalb ist die Frame-Rate kein Schalter. */
 #ifndef A121_IQ3_ZOOM_PROFILE
 #define A121_IQ3_ZOOM_PROFILE 1

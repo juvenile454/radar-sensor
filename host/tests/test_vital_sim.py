@@ -424,7 +424,7 @@ class ReacqBenchTest(unittest.TestCase):
     1,4–2,9 ×), das 6-s-Endstück bei 71–72 s liegt noch in der Bewegung (83 statt 72 /min, von AKF/Einzelschlägen
     bestätigt). tippen: Stöße überschreiten 3 × Bezug kaum, die normale Verfolgung springt bei 114 s auf 99 /min (wie
     ohne Schalter: falsch 4, MAE 4,0); die Variante A121_DSP_REACQ_PERIOD (Task 7) hilft nicht und ist verworfen (docs/
-    EXPERIMENTE.md, V6). Kleinere Schwelle (2,5 / 2)
+    EXPERIMENTS.md, V6). Kleinere Schwelle (2,5 / 2)
     oder Nachlauf im bewegten Abschnitt verletzen andere Grenzen (Start, weg, beweg_weg).
 
     Final-Review (Ruling R15): falsch_in_beweg_n zählt auch die Fehlwerte mitten in der Bewegung. lang: 60 und 63 s

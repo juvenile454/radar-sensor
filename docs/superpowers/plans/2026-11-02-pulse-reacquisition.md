@@ -12,7 +12,7 @@ Bewegungsmodelle, Szenarien und Kennzahlen; neues Werkzeug `host/reacq_eval.py` 
 **Tech Stack:** C++17 (Header, am PC mit g++ über `host/dsp_replay` und Stub-Headern), Python 3.12 + numpy (`.venv`),
 unittest, Kotlin/JUnit (App-Parser), PlatformIO (`pio run`).
 
-**Spec:** `docs/superpowers/specs/2026-11-02-puls-wiederfinden-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md`
 
 ## Global Constraints
 
@@ -160,7 +160,7 @@ class MotionModelTest(unittest.TestCase):
 ```bash
 .venv/bin/python host/reacq_eval.py ~/Data/radar-sensor/phone/2026-11-01_164043_usb_iq3raw_bildschirmaus ~/Data/radar-sensor/phone/2026-11-02_171254_livetest_vital1 ~/Data/radar-sensor/app-fixtures/2026-11-02_vital1_iq3raw_60s --replay firmware/esp32s3/src
 ```
-Erwartet an T1 (Stand Spec): Bewegungs-Ausfälle 18, Median ≈ 40 s, Summe ≈ 1627 s; Zahlen in `docs/EXPERIMENTE.md` unter neuem Abschnitt „V6 Wiederfinden (Basislinie)“ eintragen.
+Erwartet an T1 (Stand Spec): Bewegungs-Ausfälle 18, Median ≈ 40 s, Summe ≈ 1627 s; Zahlen in `docs/EXPERIMENTS.md` unter neuem Abschnitt „V6 Wiederfinden (Basislinie)“ eintragen.
 
 - [ ] **Step 5: Commit** — `git commit -m "reacq_eval.py: Ausfälle nach Bewegung auf Aufnahmen messen (V6), Basislinie T1"`
 
@@ -261,7 +261,7 @@ Erwartet an T1 (Stand Spec): Bewegungs-Ausfälle 18, Median ≈ 40 s, Summe ≈ 
 - [ ] **Step 1: Failing tests** — `test_sine_is_periodic` (1,2 Hz), `test_noise_is_not_periodic` (fester Seed), `test_impulses_irregular_not_periodic` (Stöße in zufälligen Abständen).
 - [ ] **Step 2: Laufen lassen** → FAIL.
 - [ ] **Step 3: Implementieren**.
-- [ ] **Step 4: Vergleich** — `bench --check --define A121_DSP_REACQ` und `bench --check --define A121_DSP_REACQ --define A121_DSP_REACQ_PERIOD`; übernehmen (Schalter bleibt, Ergebnis in `docs/EXPERIMENTE.md`) nur, wenn alle Grenzen halten und `tippen` besser wird; sonst Ergebnis eintragen und Variante als verworfen kennzeichnen. Test `test_period_variant_within_limits` nur hinzufügen, wenn übernommen.
+- [ ] **Step 4: Vergleich** — `bench --check --define A121_DSP_REACQ` und `bench --check --define A121_DSP_REACQ --define A121_DSP_REACQ_PERIOD`; übernehmen (Schalter bleibt, Ergebnis in `docs/EXPERIMENTS.md`) nur, wenn alle Grenzen halten und `tippen` besser wird; sonst Ergebnis eintragen und Variante als verworfen kennzeichnen. Test `test_period_variant_within_limits` nur hinzufügen, wenn übernommen.
 - [ ] **Step 5: Commit** — `git commit -m "DSP V6: Variante Periodizität in der Bewegungskarte"`
 
 ---
@@ -279,7 +279,7 @@ Erwartet an T1 (Stand Spec): Bewegungs-Ausfälle 18, Median ≈ 40 s, Summe ≈ 
 - [ ] **Step 1: Failing tests** — `test_sine_6_s` (1,23 Hz, 6 s bei 15 Hz, Start 1,2 → |Fehler| < 0,01 Hz), `test_sine_with_breath_harmonic` (Puls 1,2 Hz + 4 × stärkere Komponente 0,75 Hz → |Fehler| < 0,02 Hz), `test_silent_returns_start`.
 - [ ] **Step 2: Laufen lassen** → FAIL.
 - [ ] **Step 3: Implementieren**.
-- [ ] **Step 4: Vergleich** — `bench --check` mit `--define A121_DSP_PHASE_SLOPE` allein, mit `A121_DSP_REACQ`, und mit `--hr-win 600`; übernehmen nur, wenn MAE und alle Grenzen nicht schlechter; Ergebnis (auch 10-s-Fenster) in `docs/EXPERIMENTE.md`.
+- [ ] **Step 4: Vergleich** — `bench --check` mit `--define A121_DSP_PHASE_SLOPE` allein, mit `A121_DSP_REACQ`, und mit `--hr-win 600`; übernehmen nur, wenn MAE und alle Grenzen nicht schlechter; Ergebnis (auch 10-s-Fenster) in `docs/EXPERIMENTS.md`.
 - [ ] **Step 5: Commit** — `git commit -m "DSP V6: Variante Feinschätzung über die Phasensteigung"`
 
 ---
@@ -287,13 +287,13 @@ Erwartet an T1 (Stand Spec): Bewegungs-Ausfälle 18, Median ≈ 40 s, Summe ≈ 
 ### Task 9: Gesamtprüfung, Firmware-Build, Doku
 
 **Files:**
-- Modify: `firmware/esp32s3/platformio.ini` (neue Umgebung), `docs/EXPERIMENTE.md`, `docs/AUDIT_VITAL.md` (Stand), `docs/HARDWARE.md` (Schalter beim Befehl `iq3`)
+- Modify: `firmware/esp32s3/platformio.ini` (neue Umgebung), `docs/EXPERIMENTS.md`, `docs/VITAL_AUDIT.md` (Stand), `docs/HARDWARE.md` (Schalter beim Befehl `iq3`)
 
 **Interfaces:**
 - `platformio.ini`: Umgebung `[env:esp32s3-n16r8-reacq]` mit `extends = env:esp32s3-n16r8` und `build_flags = ${env:esp32s3-n16r8.build_flags} -DA121_DSP_REACQ` (plus übernommene Varianten aus Task 7/8).
 
 - [ ] **Step 1: Alle Prüfungen** — Python-Suite, `bench --check` ohne/mit Schaltern, `cd android && ./gradlew --offline :app:testDebugUnitTest`, `cd firmware/esp32s3 && pio run` und `pio run -e esp32s3-n16r8-reacq` (Build, keine Laufzeitprüfung).
 - [ ] **Step 2: Rechenzeit am PC** — `bench` Spalte `us` mit/ohne Schalter; Erwartung + 15–25 %. Am Gerät erst nach Freigabe.
-- [ ] **Step 3: Doku** — `EXPERIMENTE.md` Abschnitt „V6 Wiederfinden“: Bench-Tabelle je Variante, T1 vorher/nachher (`reacq_eval.py`), Hinweis „nur Simulation/ohne Referenz“; `AUDIT_VITAL.md` Stand-Tabelle um Zeile V6; `HARDWARE.md` beim Befehl `iq3` die neuen Schalter und Felder.
+- [ ] **Step 3: Doku** — `EXPERIMENTS.md` Abschnitt „V6 Wiederfinden“: Bench-Tabelle je Variante, T1 vorher/nachher (`reacq_eval.py`), Hinweis „nur Simulation/ohne Referenz“; `VITAL_AUDIT.md` Stand-Tabelle um Zeile V6; `HARDWARE.md` beim Befehl `iq3` die neuen Schalter und Felder.
 - [ ] **Step 4: Commit** — `git commit -m "V6: Gesamtprüfung, Build-Umgebung mit Schalter, Doku"`
 - [ ] **Step 5: Übergabe an den Projektinhaber** — Bericht: Prüfstand, T1, Build getrennt von Gerät; Vorschlag nächster Schritt: Firmware `esp32s3-n16r8-reacq` flashen (nach Freigabe, Port per `ls -l /dev/serial/by-id`, Flashweg mit esptool 5.6 aus `HARDWARE.md`), live mit Handzählung; Polar-H9-Tag-A für die Abnahme.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase über den Session-Neustart beim Rezoom prüfen (docs/AUDIT_VITAL.md, V2.3 Schritt 1, Experiment M5).
+"""Phase über den Session-Neustart beim Rezoom prüfen (docs/VITAL_AUDIT.md, V2.3 Schritt 1, Experiment M5).
 
 Frage: Bleibt die Phase an gleichen Entfernungen stetig, wenn der ESP32 für einen Rezoom die Session neu aufsetzt?
 Nur dann lohnt es, beim Rezoom die überlappenden Zoom-Punkte zu übernehmen und die Lücke zu füllen (V2.3 Schritt 4).

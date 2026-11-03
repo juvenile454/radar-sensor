@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetischer Prüfstand für die Vital-DSP (Audit 2026-11-01, docs/AUDIT_VITAL.md).
+"""Synthetischer Prüfstand für die Vital-DSP (Audit 2026-11-01, docs/VITAL_AUDIT.md).
 
 NUR SIMULATION: Das Brustmodell (mehrere Streuzentren, Gauß-Hüllkurve je Profil, komplexes Rauschen, nicht-sinusförmige
 Atmung, Herzschlag als Pulsfolge mit Streuung) ist eine Annahme. Ergebnisse zeigen Schwächen der Logik und die Richtung
@@ -18,7 +18,7 @@ Modi:
   .venv/bin/python host/vital_sim.py record --out <ordner> [--scen anhalt]   # synthetische Aufnahme im App-Format
 
 --check prüft nur den angegebenen Header (Standard: Firmware) gegen LIMITS. Jede DSP-Änderung verschärft die Grenzwerte,
-die sie verbessert (docs/AUDIT_VITAL.md, V0.5).
+die sie verbessert (docs/VITAL_AUDIT.md, V0.5).
 
 Die erzeugten Frames (je Szenario ≈ 3 MB) landen in einem temporären Ordner oder unter --out (nicht im Repo).
 """
@@ -251,7 +251,7 @@ SCENARIOS = {
     "leer":   ("ruhendes Echo, keine Atmung/Puls", dict(breath_pp_mm=0.0, heart_pp_um=0.0)),
     "niemand": ("keine Person, nur Möbel und Wand", dict(person=False)),
     # Puls genau auf einer Atem-Oberwelle (120 = 6 × 20, die 3. Oberwelle 60 ist im Modell stärker als der Puls):
-    # spektral nicht trennbar; der Wert darf falsch sein, die Konfidenz muss es zeigen (AUDIT_VITAL.md, Prüfen Nr. 2)
+    # spektral nicht trennbar; der Wert darf falsch sein, die Konfidenz muss es zeigen (VITAL_AUDIT.md, Prüfen Nr. 2)
     "tachy6": ("Puls 120 = 6 × Atmung 20", dict(rr_fn=lambda t: 20.0, hr_fn=lambda t: 120.0)),
     # Metronom 6 /min (R3): unter dem Spektralband der Atmung (ab 7 /min), nur Atemzug für Atemzug (V3.4) misst sie
     "takt6":  ("Metronom 6 /min (R3), Puls 64", dict(rr_fn=lambda t: 6.0, hr_fn=lambda t: 64.0)),

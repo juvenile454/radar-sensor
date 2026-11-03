@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Weg-Rauschen an einem statischen Ziel (V4.1, docs/AUDIT_VITAL.md; Messplan in docs/EXPERIMENTE.md).
+"""Weg-Rauschen an einem statischen Ziel (V4.1, docs/VITAL_AUDIT.md; Messplan in docs/EXPERIMENTS.md).
 
 Rauschboden = RMS des Wegs (Phase × λ/4π, linear entzerrt) im Pulsband 0,6–5 Hz je Zoom-Punkt, berichtet als Median
 der starken Punkte (mittlere Amplitude ≥ halbe stärkste) und bester Punkt. Drei Arten der Loopback-Derotation:

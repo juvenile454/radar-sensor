@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pulsausfälle (ok == 0) auf Aufnahmen messen: wie lange fehlt der Puls, besonders nach Bewegung? (V6, Plan
-2026-11-02-puls-wiederfinden). Basislinie, an der Bewegungskarte und Pulsgedächtnis der DSP gemessen werden.
+2026-11-02-pulse-reacquisition). Basislinie, an der Bewegungskarte und Pulsgedächtnis der DSP gemessen werden.
 
 Ein Ausfall ist eine Folge von @DSP-Reports mit ok == 0 nach einem gültigen Report. Folgen, in denen mehr als die Hälfte
 der Reports Zustand 0 (KEINE_PERSON) hat, zählen nicht. Ursache: "bewegung" (im Ausfall ein Report mit motion_pct > 30,

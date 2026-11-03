@@ -61,7 +61,7 @@ Datenrate grob: 40 Messpunkte × 4 Byte × 100 Hz ≈ 16 kB/s — passt in 921 6
 | Phase | Inhalt | Fertig, wenn |
 |---|---|---|
 | 0 PC-Bring-up | Board per USB an Linux, Exploration Tool, erste Live-Daten | Board verbunden, Sparse IQ + Distance live |
-| 1 Fähigkeiten-Matrix | Alle Algorithmen und Grenzen systematisch testen (`docs/EXPERIMENTE.md`) | Jede Zeile mit Messwert oder begründet „geht nicht“ |
+| 1 Fähigkeiten-Matrix | Alle Algorithmen und Grenzen systematisch testen (`docs/EXPERIMENTS.md`) | Jede Zeile mit Messwert oder begründet „geht nicht“ |
 | 2 Puls offline | Sparse-IQ-/Phasen-Aufnahmen (sitzend, 40/60/80 cm, mit/ohne Linse) + Smartwatch-Referenz; Python-Algorithmus | Abweichung zur Uhr gemessen und ehrlich dokumentiert |
 | 3 ESP32-Kette | ESP32-S3 ↔ A121 verlöten (Lochraster); I2C-Detektoren auf ESP32; Android-App-Gerüst; Direkttest A121-USB am Handy | App zeigt Live-Werte vom ESP32 (Entfernung, Präsenz, Atmung) |
 | 4 Rohdaten zum Handy | Eigene STM32-IQ-Streamer-Firmware → ESP32-Bridge → App; Puls-Algorithmus nach Kotlin portiert | App zeigt Rohdaten-Plots + Atmung (+ Puls, falls Phase 2 trägt) |
@@ -79,7 +79,7 @@ Stand 2026-11-01: **nur Ideen**, nichts gebaut oder gemessen. Reihenfolge in der
 
 **Grundlage für alle Ideen:** Die App zeichnet jede Datenquelle von Anfang an mit derselben Uhr auf
 (Android-Empfangszeit `elapsedRealtimeNanos` plus ESP32-Frame-Zähler bzw. Sensor-`tick`; für Radar-Analysen
-Frame-Zähler × Frame-Rate, s. `docs/EXPERIMENTE.md` M3, Aufnahme E). Eine Aufnahme = ein Ordner mit einer Datei
+Frame-Zähler × Frame-Rate, s. `docs/EXPERIMENTS.md` M3, Aufnahme E). Eine Aufnahme = ein Ordner mit einer Datei
 je Quelle und Metadaten, Export nach `~/Data/radar-sensor/`. Später nachrüsten wäre mühsam.
 
 | # | Idee | Was die App zeigt | Nutzen | Grenzen | Aufwand |

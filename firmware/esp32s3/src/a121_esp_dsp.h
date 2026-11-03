@@ -44,7 +44,7 @@
  *      Rezoom auf das stärkste bewegte Ziel im über ≈ 3 s geglätteten Profil (nicht in der Momentaufnahme, die bei zwei
  *      nahen Echos kippte); kein Rezoom, solange dieses Ziel im Zoom-Fenster ±60 mm liegt (vorher wechselte der Zoom
  *      zwischen Körperstellen und löschte jedes Mal die Historie).
- *   V6 (A121_DSP_REACQ, Standard aus; Entwurf docs/superpowers/specs/2026-11-02-puls-wiederfinden-design.md):
+ *   V6 (A121_DSP_REACQ, Standard aus; Entwurf docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md):
  *      Puls nach Bewegung wiederfinden. Bewegungskarte vor den Spektren (motionMap: 3 stärkste Punkte, 1-s-Block bewegt,
  *      wenn bei 2 von 3 über 3 × ruhiges Viertel). Ohne bewegten Block wie oben. Bewegt und ruhiges Endstück ≥ 6 s: Puls
  *      (Spektren, Kandidaten, AKF, Einzelschläge) nur auf dem Endstück, Atmung, Atemzustand und motion_pct auf dem
@@ -59,7 +59,7 @@
  *      ein zu starker Block zählt nur als bewegt, wenn das Signal um ihn (3 s, 15 Hz, Hann, Herzband) nicht periodisch ist
  *      (Spitze < 5 × Mittel der Bins außerhalb der Hauptkeule; segmentPeriodic). Bench (Simulation): hält die Grenzen
  *      nicht (beweg hr_mae, kurz, zappel, beweg_weg falsch nach Bewegung), tippen bleibt bei 4 falschen Werten; die
- *      simulierte Bewegung ist ein Sinus, also periodisch. Zahlen in docs/EXPERIMENTE.md (V6).
+ *      simulierte Bewegung ist ein Sinus, also periodisch. Zahlen in docs/EXPERIMENTS.md (V6).
  *      Variante A121_DSP_PHASE_SLOPE (unabhängig von A121_DSP_REACQ; VERWORFEN, Standard aus, Code als Experiment behalten):
  *      Der gewählte Kandidat (cf[0]) kommt aus der Steigung der abgewickelten Phase des 3-Bin-Schmalbands (phaseSlopeHz,
  *      1024er FFT, Herzsignal des klarsten Punkts) statt aus der Parabel. Bench (Simulation): schlechter als die Parabel
@@ -67,7 +67,7 @@
  *      Mittenbin ein: Fehler bis 0,007 Hz statt < 0,0001 Hz), Puls-MAE in 12 von 19 Szenarien höher (1 niedriger; im
  *      10-s-Fenster 13 von 19), 7 neue Verletzungen (allein). Das Urteil gilt nur für die 3-Bin-Variante des Entwurfs
  *      (k0 ± 1 rastet auf den Mittenbin ein); ein Band von etwa ± 2 · 1024 / m Bins (m = Fensterlänge in Abtastwerten) wurde nicht gegen die Parabel probiert.
- *      Zahlen in docs/EXPERIMENTE.md (V6). Kosten mit Schalter: 14 KB RAM, zwei komplexe FFT (1024) je Report.
+ *      Zahlen in docs/EXPERIMENTS.md (V6). Kosten mit Schalter: 14 KB RAM, zwei komplexe FFT (1024) je Report.
  *
  * Zeitbasis: feste Frame-Rate kFsHz (die Session läuft mit 60 Hz, der Sensor liefert lückenlos). Die frühere
  * Schätzung aus ESP32-Verarbeitungszeiten war falsch, weil Frames nach jeder Rechenpause gebündelt ankommen.
@@ -316,7 +316,7 @@ static constexpr float    kMemMinConf  = 50.0f;  /* Puls wird nur ab dieser Konf
  * wenn er höchstens so weit vom gemerkten Puls liegt. Gleiche Toleranz wie die Bestätigung durch AKF/Einzelschläge
  * (±5 /min), enger als die Fehlergrenze des Prüfstands (10 /min). Anlass war das Bewegungsartefakt im Prüfstand lang
  * (84,7 statt 72,5 /min im Band ±kMemBandBpm); diese Reports sind aber über die Atemspitze gültig, die Regel ändert
- * dort nichts (docs/EXPERIMENTE.md, V6). */
+ * dort nichts (docs/EXPERIMENTS.md, V6). */
 static constexpr float    kMemSubstBpm = 5.0f;
 
 /** Bewegung je 1-s-Block des Pulsfensters. Bit k von mask = Block k bewegt (Block 0 = ältester). */
@@ -358,7 +358,7 @@ inline MotionMap motionMapFromRms(const float *rms, uint8_t n_pts, uint8_t nb, f
 }
 
 #ifdef A121_DSP_REACQ_PERIOD
-/* V6, Variante Periodizität (Experiment, siehe Kopfkommentar und docs/EXPERIMENTE.md) */
+/* V6, Variante Periodizität (Experiment, siehe Kopfkommentar und docs/EXPERIMENTS.md) */
 static constexpr float    kPeriodK     = 5.0f;   /* periodisch: stärkste Spitze ≥ 5 × Mittel der übrigen Bins im Herzband */
 static constexpr uint16_t kPeriodK0    = 46U;    /* Herzband-Bins 46 .. 205 = 0,674 .. 3,003 Hz (wie die Pulssuche) */
 static constexpr uint16_t kPeriodK1    = 205U;
@@ -418,7 +418,7 @@ inline bool segmentPeriodic(const float *x, uint16_t n, a121_fft::RealFft<kFftN>
 static constexpr uint8_t kPhaseSlopeWalk = 4U;  /* höchstens so viele Bins von der Startfrequenz bergauf zur Spitze */
 
 /**
- * V6, Variante Feinschätzung über die Phasensteigung (Experiment, VERWORFEN, siehe Kopfkommentar und docs/EXPERIMENTE.md; nach
+ * V6, Variante Feinschätzung über die Phasensteigung (Experiment, VERWORFEN, siehe Kopfkommentar und docs/EXPERIMENTS.md; nach
  * Vital-Radio, Adib et al. 2015): Frequenz einer Spektrumsspitze aus der Steigung der abgewickelten Phase, statt aus der
  * parabolischen Verfeinerung der Spitze.
  * x: m Werte (dezimiert auf fs, gefenstert), werden auf NF mit Nullen aufgefüllt (m ≤ NF). Vorwärts-FFT, nur der Bin
@@ -493,7 +493,7 @@ inline float phaseSlopeHz(const float *x, uint16_t m, float fs, float f0_hz, con
  * Kreismittelpunkt der IQ-Werte eines Zoom-Punkts im Fenster: Kåsa-Fit in Bullock-Form (algebraisch, ein 2×2-System).
  * Die Phase eines Punkts muss um den Mittelpunkt des Kreises gemessen werden, den die Atembewegung beschreibt (festes
  * Echo im selben Punkt), nicht um den Mittelwert: Der liegt bei einem Atemhub mit Phasenhub β um J0(β) × Radius
- * daneben und erzeugt Atem-Oberwellen im Pulsband (docs/AUDIT_VITAL.md, B2).
+ * daneben und erzeugt Atem-Oberwellen im Pulsband (docs/VITAL_AUDIT.md, B2).
  * Summen in float über (u, v) = (z − Mittelwert) / s mit s = Effektivwert des Abstands zum Mittelwert, damit float reicht
  * (der ESP32-S3 rechnet double in Software).
  * ring: [kHistoryLen][I, Q] dieses Punkts, Fenster start .. start + N (modulo kHistoryLen).
@@ -1012,7 +1012,7 @@ inline IbiResult ibiFromTimes(const float *t, uint8_t n_pk, uint16_t N, float fs
  * 360 ms), Lage parabolisch zwischen den Abtastwerten verfeinert (vorher auf 16,7 ms gerastert). Ein IBI gilt, wenn es
  * im Bereich 40–180 /min liegt und höchstens 20 % vom Median der 5 vorigen IBI abweicht (am Fensteranfang: Median
  * aller IBI im Bereich). RMSSD nur aus direkt aufeinanderfolgenden gültigen IBI und nur, wenn ≥ 90 % der erwarteten
- * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, AUDIT_VITAL.md 5.1); 15 s sind für HRV ohnehin kurz.
+ * IBI gültig sind (Artefakt-Regeln der HRV-Literatur, VITAL_AUDIT.md 5.1); 15 s sind für HRV ohnehin kurz.
  * t_out (optional, kIbiMaxPk Werte): Schlagzeiten in Abtastwerten, n_beats gültig.
  */
 inline IbiResult timeDomainIbi(const float *hr, uint16_t N, float fs, float hr_bpm, float *t_out = nullptr) {

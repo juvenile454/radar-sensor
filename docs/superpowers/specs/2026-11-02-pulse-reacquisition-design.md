@@ -1,6 +1,6 @@
 # Puls nach Bewegung schneller wiederfinden (V6) — Entwurf
 
-Stand 2026-11-02. Gehört zu `docs/AUDIT_VITAL.md` (Phasen V0–V5); Umsetzung in `firmware/esp32s3/src/a121_esp_dsp.h`.
+Stand 2026-11-02. Gehört zu `docs/VITAL_AUDIT.md` (Phasen V0–V5); Umsetzung in `firmware/esp32s3/src/a121_esp_dsp.h`.
 
 ## Ziel
 
@@ -60,7 +60,7 @@ heutigen Stand.
   Bewegung (Fußwippen) ist auch periodisch; deshalb nur übernehmen, wenn `zappel`, `lage` und `beweg_hr` ihre Grenzen
   halten und `tippen` besser wird.
   *Nachtrag 2026-11-03:* Umgesetzt mit dem Mittel der Bins außerhalb der Hann-Hauptkeule (± 2 Auflösungszellen) als Bezug,
-  nicht aller übrigen Bins (Begründung und Zahlen in `docs/EXPERIMENTE.md`, V6). Variante verworfen.
+  nicht aller übrigen Bins (Begründung und Zahlen in `docs/EXPERIMENTS.md`, V6). Variante verworfen.
 
 ### 2. Fensterwahl
 
@@ -175,7 +175,7 @@ Sprünge > 15 /min zwischen aufeinanderfolgenden gültigen Reports. Vergleich He
 T1 und den Aufnahmen vom 2026-11-02.
 Ziel an T1: Median der Bewegungs-Ausfälle ≤ 15 s (heute 40 s), Sprünge nicht mehr als heute.
 *Nachtrag 2026-11-03 (Ruling R16):* Der Vergleich ohne/mit Schalter gilt nur nach derselben Zählregel; `--ohne-karte` zählt
-wie ohne Schalter (`win_s == 0` nicht als Bewegung). Ergebnis an T1 in `docs/EXPERIMENTE.md`, „V6 Gesamtprüfung“.
+wie ohne Schalter (`win_s == 0` nicht als Bewegung). Ergebnis an T1 in `docs/EXPERIMENTS.md`, „V6 Gesamtprüfung“.
 
 ### Live und Referenz
 

@@ -84,7 +84,7 @@ unlesbare Zeilen, DSP-Rechenzeit, Temperatur, Zeilen je Tag, Ereignisse.
 | A4 | Alle Ansichten; Aufnahme im Hintergrunddienst; Export | Handy | 30-min-Aufnahme bei ausgeschaltetem Bildschirm vollständig, per `adb pull` geholt, `host/a121_esp_ultimate.py --mode plot` wertet sie aus | ✅ |
 | A5 (optional) | DSP-Header per NDK in die App; Rohdaten am Handy neu durchrechnen | PC + Handy | Ergebnis bitgleich zu ESP32/PC | ⚠️ bitgleich zum PC, nicht zum ESP32 |
 
-Später: BLE-Transport, Puls-Referenz (sobald ein Gerät da ist), Ideen I1–I5 aus `KONZEPT.md`.
+Später: BLE-Transport, Puls-Referenz (sobald ein Gerät da ist), Ideen I1–I5 aus `CONCEPT.md`.
 
 ## Ergebnisse (2026-11-01)
 
@@ -159,7 +159,7 @@ Puls-Werte in allen Aufnahmen sind Rhythmus-Kandidaten; keine Referenz vorhanden
   Sekunde). Einschalten mitten im Stream geht (Start- und letzte Rezoom-Zeile werden nachgereicht, erster Wert nach
   ≈ 6 s). Eigener Rechen-Thread, der Empfang wartet nicht. Standard aus (Akku). Nicht in der Aufnahme: dieselben
   Werte rechnet der PC aus `stream.log` nach (`vital_eval.py --replay` mit einer Header-Kopie, vorn
-  `#define A121_DSP_HEAVY 1`, wie in `EXPERIMENTE.md`); Handy = PC war in A5 bytegleich, für diese Variante nicht geprüft.
+  `#define A121_DSP_HEAVY 1`, wie in `EXPERIMENTS.md`); Handy = PC war in A5 bytegleich, für diese Variante nicht geprüft.
 - **Aufnahmen holen:** `adb pull /sdcard/Android/data/de.timo.radarsensor/files/recordings/<ordner>
   ~/Data/radar-sensor/phone/`. Schreiben in den App-Ordner (z. B. Fixtures für die Wiedergabe) nur über
   `run-as de.timo.radarsensor`.

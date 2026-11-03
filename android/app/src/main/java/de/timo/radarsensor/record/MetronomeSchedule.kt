@@ -2,7 +2,7 @@ package de.timo.radarsensor.record
 
 /**
  * Takt der Metronom-Atmung (V0.2): Ton k liegt auf start + k · 60 / Takt, ohne Drift über lange Aufnahmen. Takte wie
- * im Messplan R3 (docs/EXPERIMENTE.md): 6 / 10 / 15 / 20 /min.
+ * im Messplan R3 (docs/EXPERIMENTS.md): 6 / 10 / 15 / 20 /min.
  */
 class MetronomeSchedule(
     val startNanos: Long,
