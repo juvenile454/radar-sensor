@@ -66,15 +66,13 @@ Rebuild it with <code>docs/img/make_figures.py</code>.</sub>
 ## How it works
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph board["Waveshare A121 board"]
-        direction LR
         A121["A121 radar<br/>60 GHz"] -- SPI --> STM["STM32L431<br/>Exploration Server"]
     end
     STM -- "UART 2 Mbaud<br/>(SDA/SCL wires)" --> ESP["ESP32-S3<br/>firmware + DSP"]
     ESP -- "USB-C serial" --> APP["Android app<br/>live views, recording"]
-    ESP -- "USB serial" --> PC["PC: Python tools<br/>recording, replay, test bench"]
-    PC -. "TCP bridge" .-> APP
+    ESP -- "USB serial" --> PC["PC: Python tools<br/>recording, replay, test bench,<br/>TCP bridge to the app"]
 ```
 
 Per frame the ESP32 receives loopback, zoom and room data. Once per second it reports `@VITAL`, `@DSP`, `@ROOM` and
