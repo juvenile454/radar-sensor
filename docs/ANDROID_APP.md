@@ -12,7 +12,7 @@ the PC, not to the ESP32 (see results). Debug build only, sideload onto my own p
 - **USB OTG (A0):** C-to-C cable, the phone is power source + host, all power LEDs on. ESP32 detected as `303a:1001`
   "USB JTAG/serial debug unit" (serial no. `12:34:56:78:9A:BC`): interface 0 CDC control, 1 CDC data (bulk, 64 B),
   2 vendor (JTAG). Data flow verified since A3.
-- **ADB:** wireless over Tailscale (`<Tailscale-IP des Handys>`); the port changes after every off/on, find it with
+- **ADB:** wireless over Tailscale (`<phone Tailscale IP>`); the port changes after every off/on, find it with
   `adb mdns services`. Always take the serial number live from `adb devices -l`.
 - **ESP32 + A121 on the PC:** own Exploration Server `a121-v1.13.0`, 2 Mbaud. `iq3 10` → 595 frames in 10 s
   (59.4 Hz), in total ≈ 4.9 kB/s of text (log `2026-11-01_app_machbarkeit_iq3_probe.log`).
@@ -28,8 +28,8 @@ the PC, not to the ESP32 (see results). Debug build only, sideload onto my own p
 | Evaluation | The ESP32 keeps computing (DSP verified there). The app displays, records and recomputes; raw data optional. Recomputing on the phone (A5) uses the same firmware header, no second version | Do not maintain a second DSP version |
 | Time base | Sensor `tick` + frame counter; Android receive time (`elapsedRealtimeNanos`) only in addition. After an ESP32 or server restart (counters start over) the app's time axis continues with an offset | After DSP pauses, frames arrive bundled (EXPERIMENTS M3, recording E) |
 | Recording | One folder per recording: `stream.log` (lines exactly as from the ESP32, i.e. like the PC logs), `rxtime.csv` (line number → receive time), `meta.json` (device, source, `@HELLO`, commands with line number, start/end) | PC scripts read phone recordings without changes |
-| Storage | App folder `Android/data/de.timo.radarsensor/files/recordings/`, fetched with `adb pull` over Tailscale to `~/Data/radar-sensor/phone/` | No storage permission, nothing in the repo |
-| App skeleton | `android/`, package `de.timo.radarsensor`, Kotlin + Compose. AGP 9.4.0 (Kotlin built in), Kotlin 2.4.10, Compose BOM 2026.08.00 (as in OrbitLens). compileSdk/targetSdk 37, minSdk 34. Debug build only, sideload | Target device is API 37 and can be tested live; my own device only |
+| Storage | App folder `Android/data/io.github.juvenile454.radarsensor/files/recordings/`, fetched with `adb pull` over Tailscale to `~/Data/radar-sensor/phone/` | No storage permission, nothing in the repo |
+| App skeleton | `android/`, package `io.github.juvenile454.radarsensor`, Kotlin + Compose. AGP 9.4.0 (Kotlin built in), Kotlin 2.4.10, Compose BOM 2026.08.00. compileSdk/targetSdk 37, minSdk 34. Debug build only, sideload | Target device is API 37 and can be tested live; my own device only |
 | Plots | Own Compose canvas drawings (lines, waterfall as a bitmap) | Smooth at 60 Hz, no chart library |
 | Background | Foreground service type `connectedDevice` + WakeLock; after unplugging, the service waits for the device. "Trennen" (disconnect) ends everything and turns off automatic USB connecting. "Bildschirm an lassen" (keep screen on) is a setting | Samsung otherwise kills background apps; recording with the screen off verified (A4) |
 | Reconnecting | Same source: counters/display stay, the most recently started stream (`iq3`, `doppler`, `sess run`) restarts. Different source: display is cleared | Unplugging restarts the ESP32 (the phone powers it) |
@@ -136,15 +136,18 @@ Pulse values in all recordings are rhythm candidates; no reference available.
 - **Build + test:** `cd android && ./gradlew :app:testDebugUnitTest :app:assembleDebug` (JVM tests read the
   fixtures from `RADAR_FIXTURES` or `~/Data/radar-sensor/app-fixtures`).
 - **Install (only with approval):** `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`.
+  Since 2026-11-07 the application ID is `io.github.juvenile454.radarsensor` (renamed). A new
+  build installs as a separate app next to the old one; recordings of the old app stay under its own
+  `Android/data/…` folder until it is uninstalled.
 - **Debug control without a screen** (debug build only, shell only because of permission `DUMP`):
-  `adb shell am broadcast -a de.timo.radarsensor.DEBUG -n de.timo.radarsensor/.debug.DebugReceiver --es cmd <befehl>`
+  `adb shell am broadcast -a io.github.juvenile454.radarsensor.DEBUG -n io.github.juvenile454.radarsensor/.debug.DebugReceiver --es cmd <befehl>`
   with `status`, `usb`, `disconnect`, `send --es line "'iq3 0 raw'"`, `stop`, `rec_start --es name <name>`, `rec_stop`,
   `dsp_replay --es name <aufnahmeordner>`; ECG strap (V0.1) `ref_scan`, `ref_connect --es addr <mac>`, `ref_disconnect`,
   `ref_status`; markers and metronome (V0.2) `mark --es text anhalten_start`, `metro --ei rate 15` (6/10/15/20, 0 = off);
   phone DSP (V5.2) `phone_dsp --ez on true|false`, `phone_dsp_status` (pulse, state, CPU share, ESP32 value alongside).
   The reply is in the `data="…"` of the broadcast output.
 - **ECG strap and markers (V0.1/V0.2, Vital tab):** "Gurt suchen" (scan for strap) finds devices with the Heart Rate Service (e.g. Polar
-  H10), tapping connects; if the connection drops, Android reconnects by itself. Every notification goes into
+  H9), tapping connects; if the connection drops, Android reconnects by itself. Every notification goes into
   the running recording (`ref_hr.csv`: `rx_ms,hr_bpm,rr_ms,contact`, one line per RR value) and as a green "Gurt" (strap) curve
   into the pulse chart. The buttons "Atem anhalten" (hold breath), "Bewegung" (motion), "Zählfenster" (counting window) write start/end to `events.csv`
   (`anhalten_start`/`_ende`, `bewegung_…`, `zaehlen_…`, which is how `host/vital_eval.py` reads them); the metronome (6/10/15/20
@@ -160,9 +163,9 @@ Pulse values in all recordings are rhythm candidates; no reference available.
   ≈ 6 s). Own compute thread, reception does not wait. Off by default (battery). Not in the recording: the PC recomputes the same
   values from `stream.log` (`vital_eval.py --replay` with a header copy, `#define A121_DSP_HEAVY 1` at the top, as in `EXPERIMENTS.md`); phone = PC was
   byte-identical in A5, not verified for this variant.
-- **Fetching recordings:** `adb pull /sdcard/Android/data/de.timo.radarsensor/files/recordings/<ordner>
+- **Fetching recordings:** `adb pull /sdcard/Android/data/io.github.juvenile454.radarsensor/files/recordings/<ordner>
   ~/Data/radar-sensor/phone/`. Writing into the app folder (e.g. fixtures for replay) only via
-  `run-as de.timo.radarsensor`.
+  `run-as io.github.juvenile454.radarsensor`.
 - **PC:** `host/esp_record.py` (recording in the app format, `--check` checks gaps/ticks/`@RAW`, `--npz` for verify-cpp),
   `host/esp_tcp_bridge.py` (ESP32 on the PC → app over Tailscale, port 7777), `host/a121_esp_ultimate.py --mode
   replay-cpp --log <stream.log>` (same recomputation as "DSP neu" (recompute DSP) in the app).

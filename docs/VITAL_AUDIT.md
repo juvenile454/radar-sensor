@@ -388,7 +388,7 @@ use; data goes to `~/Data/radar-sensor/public/`, not into the repo.
   https://link.springer.com/10.1007/s00421-019-04142-5
 - Schellenberger et al. 2020, *Sci Data* 7:291. https://www.nature.com/articles/s41597-020-00629-5
 - Adib et al. 2015, Vital-Radio, *ACM CHI*. https://doi.org/10.1145/2702123.2702200 (periodicity test, fine estimate
-  via the phase slope; evaluated in `docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md`)
+  via the phase slope; evaluated in `docs/design/specs/2026-11-02-pulse-reacquisition-design.md`)
 - Lund thesis (A111): https://lup.lub.lu.se/student-papers/record/9094792 ·
   KTU thesis (A121): https://epubl.ktu.edu/object/elaba:199466836/index.html
 
@@ -488,13 +488,13 @@ Cases that are easily overlooked; each gets a test in the named task:
 
 #### V0.1 Reference pulse in the app (ECG chest strap over BLE)
 
-Device: **Polar H10** (standard BLE "Heart Rate Service", delivers pulse and RR intervals per notification in
+Device: **Polar H10** (planned; a Polar H9 with the same service is used, standard BLE "Heart Rate Service", delivers pulse and RR intervals per notification in
 1/1024 s; rationale and evidence in section 5). Other straps with the Heart Rate Service work the same way.
 
 **Files:**
-- New: `android/app/src/main/java/de/timo/radarsensor/reference/HrMeasurement.kt` (parser, pure Kotlin)
-- New: `android/app/src/main/java/de/timo/radarsensor/reference/HrReference.kt` (BLE scan, connect, notifications)
-- New: `android/app/src/test/java/de/timo/radarsensor/reference/HrMeasurementTest.kt`
+- New: `android/app/src/main/java/io/github/juvenile454/radarsensor/reference/HrMeasurement.kt` (parser, pure Kotlin)
+- New: `android/app/src/main/java/io/github/juvenile454/radarsensor/reference/HrReference.kt` (BLE scan, connect, notifications)
+- New: `android/app/src/test/java/io/github/juvenile454/radarsensor/reference/HrMeasurementTest.kt`
 - Change: `AndroidManifest.xml` (`BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_CONNECT`), `record/Recorder.kt`,
   `core/RadarController.kt`, `ui/Pages.kt` (vital tab: reference curve), `debug/DebugReceiver.kt` (`ref_scan`,
   `ref_connect --es addr <mac>`, `ref_status`)

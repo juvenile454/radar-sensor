@@ -13,7 +13,7 @@ val localProps =
     }
 
 android {
-    namespace = "de.timo.radarsensor"
+    namespace = "io.github.juvenile454.radarsensor"
     compileSdk =
         libs.versions.compileSdk
             .get()
@@ -22,7 +22,7 @@ android {
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "de.timo.radarsensor"
+        applicationId = "io.github.juvenile454.radarsensor"
         minSdk =
             libs.versions.minSdk
                 .get()

@@ -1,4 +1,4 @@
-// JNI binding for de.timo.radarsensor.dsp.DspReplay (A5).
+// JNI binding for io.github.juvenile454.radarsensor.dsp.DspReplay (A5).
 #include <jni.h>
 
 #include <mutex>
@@ -21,7 +21,7 @@ struct Utf {
 }  // namespace
 
 /** Returns: 0 = bit-identical, 1 = deviation, 2 = file not readable/writable. */
-extern "C" JNIEXPORT jint JNICALL Java_de_timo_radarsensor_dsp_DspReplay_nativeRun(JNIEnv *env, jobject, jstring in,
+extern "C" JNIEXPORT jint JNICALL Java_io_github_juvenile454_radarsensor_dsp_DspReplay_nativeRun(JNIEnv *env, jobject, jstring in,
                                                                                     jstring out, jstring report) {
     Utf in_path(env, in), out_path(env, out), rep_path(env, report);
     std::lock_guard<std::mutex> lock(g_mutex);

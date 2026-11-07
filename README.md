@@ -127,7 +127,7 @@ Optional: set `radar.bridge=<host>:<port>` in `android/local.properties` to pref
 | `firmware/stm32l431/` | Build script and notes for the Exploration Server on LPUART1 (SDK not included) |
 | `android/` | Android app (Kotlin, Jetpack Compose, NDK for the phone DSP) |
 | `host/` | Python: `a121_esp_ultimate.py` (iq3 recording, verify-cpp, plot, replay-cpp), `vital_eval.py` (evaluation against strap, metronome, markers), `vital_sim.py` (synthetic test bench), `reacq_eval.py`, `esp_record.py`, `esp_tcp_bridge.py`, `rezoom_check.py`, `noise_floor.py`, `a121_zielmessung.py`; `dsp_replay/` (C++ replay for PC and app), `fw_stub/` (compile the firmware on the PC), `tests/`. Archive (V5.3, older DSP chains, not maintained): `a121_ultimate_vital`, `a121_vitalaufnahme`, `a121_anhalteanalyse`, `a121_livemonitor`, `a121_esp_vital`, `a121_esp_auto` |
-| `docs/` | Documentation (below); `docs/img/` README images; `docs/superpowers/` design notes and plans |
+| `docs/` | Documentation (below); `docs/img/` README images; `docs/design/` design notes and implementation plans |
 
 Recordings and datasets are not stored in the repo.
 

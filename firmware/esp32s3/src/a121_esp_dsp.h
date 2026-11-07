@@ -44,7 +44,7 @@
  *      Rezoom to the strongest moving target in the profile smoothed over ≈ 3 s (not in the snapshot, which flipped with two
  *      nearby echoes); no rezoom while this target lies within the zoom window ±60 mm (previously the zoom switched
  *      between body locations and cleared the history each time).
- *   V6 (A121_DSP_REACQ, off by default; draft docs/superpowers/specs/2026-11-02-pulse-reacquisition-design.md):
+ *   V6 (A121_DSP_REACQ, off by default; draft docs/design/specs/2026-11-02-pulse-reacquisition-design.md):
  *      reacquire the pulse after motion. Motion map before the spectra (motionMap: 3 strongest points, 1 s block moving
  *      if 2 of 3 exceed 3 × the quiet quarter). Without a moving block as above. Moving and quiet tail ≥ 6 s: pulse
  *      (spectra, candidates, ACF, individual beats) only on the tail; breathing, breathing state and motion_pct on the

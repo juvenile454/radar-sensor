@@ -1,4 +1,4 @@
-// JNI binding for de.timo.radarsensor.dsp.LiveDsp (V5.2): live DSP on the phone from @RAW, compiled with A121_DSP_HEAVY.
+// JNI binding for io.github.juvenile454.radarsensor.dsp.LiveDsp (V5.2): live DSP on the phone from @RAW, compiled with A121_DSP_HEAVY.
 #include <jni.h>
 
 #include <mutex>
@@ -17,13 +17,13 @@ dsp_live::LiveDsp &live() {
 }
 }  // namespace
 
-extern "C" JNIEXPORT void JNICALL Java_de_timo_radarsensor_dsp_LiveDsp_nativeReset(JNIEnv *, jobject) {
+extern "C" JNIEXPORT void JNICALL Java_io_github_juvenile454_radarsensor_dsp_LiveDsp_nativeReset(JNIEnv *, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     live().reset();
 }
 
 /** One received line; returns the phone lines completed by it (separated by '\n') or null. */
-extern "C" JNIEXPORT jstring JNICALL Java_de_timo_radarsensor_dsp_LiveDsp_nativeLine(JNIEnv *env, jobject,
+extern "C" JNIEXPORT jstring JNICALL Java_io_github_juvenile454_radarsensor_dsp_LiveDsp_nativeLine(JNIEnv *env, jobject,
                                                                                     jstring line) {
     if (!line) return nullptr;
     const char *c = env->GetStringUTFChars(line, nullptr);
@@ -39,7 +39,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_de_timo_radarsensor_dsp_LiveDsp_native
 }
 
 /** CPU time of all nativeLine calls since loading, in ns (thread CPU time, CLOCK_THREAD_CPUTIME_ID). */
-extern "C" JNIEXPORT jlong JNICALL Java_de_timo_radarsensor_dsp_LiveDsp_nativeCpuNanos(JNIEnv *, jobject) {
+extern "C" JNIEXPORT jlong JNICALL Java_io_github_juvenile454_radarsensor_dsp_LiveDsp_nativeCpuNanos(JNIEnv *, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     return (jlong)live().cpuNs();
 }

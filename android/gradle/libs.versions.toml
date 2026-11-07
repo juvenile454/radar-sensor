@@ -1,5 +1,5 @@
 [versions]
-# Tools as in ~/Projects/Android/OrbitLens (JDK 17, Gradle 9.7.1, SDK 37, Build-Tools 37).
+# Toolchain: JDK 17, Gradle 9.7.1, SDK 37, Build-Tools 37.
 agp = "9.4.0"
 # AGP 9 ships Kotlin itself ("built-in Kotlin"); do NOT apply org.jetbrains.kotlin.android.
 kotlin = "2.4.10"

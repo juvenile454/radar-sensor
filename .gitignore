@@ -13,11 +13,11 @@ build/
 local.properties
 *.apk
 *.aab
-# Daten gehören nach ~/Data/radar-sensor
+# Data belongs in ~/Data/radar-sensor, not in the repo
 *.h5
 *.npz
-# Hersteller-Downloads
+# Vendor downloads (SDK, demos)
 vendor/
-# Agenten-Arbeitsordner
+# Local tool working folders
 .claude/worktrees/
 .superpowers/
