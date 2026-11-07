@@ -27,8 +27,8 @@ Sources: Waveshare wiki "A121 Range Sensor", product page, schematic PDF (read 2
 
 ### Bring-up on the Linux PC (verified 2026-10-30)
 
-- USB ID `1a86:55d2` "USB Dual_Serial", serial no. `5C75025105`, driver `cdc_acm` (no extra driver).
-- `/dev/serial/by-id/usb-1a86_USB_Dual_Serial_5C75025105-if00` (ttyACM0) = channel A, Exploration Server
+- USB ID `1a86:55d2` "USB Dual_Serial", serial no. `<serial>` (differs per board), driver `cdc_acm` (no extra driver).
+- `/dev/serial/by-id/usb-1a86_USB_Dual_Serial_<serial>-if00` (ttyACM0) = channel A, Exploration Server
   responds; `-if02` (ttyACM1) = channel B (debug).
 - Factory firmware: Exploration Server, `rss_version a121-v1.12.0`, `hardware_name xm125`, max. 2,000,000 baud.
 - Access needs the group `dialout` (the user is a member; takes effect after logging in again, until then `sg dialout -c …`).

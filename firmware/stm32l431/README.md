@@ -59,7 +59,7 @@ python3 firmware/stm32l431/build_server.py --variant lpuart1
 
 ## Flashing (only with approval from the project owner)
 
-1. Check the port unambiguously: `ls -l /dev/serial/by-id` → `usb-1a86_USB_Dual_Serial_5C75025105-if00` = channel A.
+1. Check the port unambiguously: `ls -l /dev/serial/by-id` → `usb-1a86_USB_Dual_Serial_<serial>-if00` = channel A.
 2. Connect the A121 to the PC via its own USB-C; unplug the red 5V wire to the ESP32 beforehand.
 3. Hold BOOT, tap RESET, release BOOT.
 4. `python -m acconeer.exptool.flash flash XM125 -p /dev/ttyACMx -i ~/Data/radar-sensor/acc_exploration_server_a121-v1.13.0_lpuart1.bin`

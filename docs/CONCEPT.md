@@ -1,19 +1,20 @@
 # Concept — 60 GHz radar on an Android phone
 
-As of 2026-11-01. Status legend: ✅ verified on the device, 🧪 PC/simulation only, ⏳ open.
+As of 2026-11-07. Status legend: ✅ verified on the device, 🧪 PC/simulation only, ⏳ open.
 
 | Area | Status | Details |
 |---|---|---|
 | Phase 0 | ✅ | Done. |
 | Phases 1 and 2 | ✅ | Largely built out. 3-subsweep sparse IQ with on-chip loopback @ 60 Hz and the sliding 7 s Hilbert breathing projection run on PC and ESP32. |
-| Vital values / reference | ⏳ | Vital values exist without a reference measurement; smartwatch/oximeter still open. |
+| Vital values / reference | ⏳ | Vital values exist, no accuracy claim yet. The app records an ECG chest strap (Polar H9) alongside the radar; comparison recordings are still open. |
 | Phases 3 and 4: ESP32 ↔ Exploration Server | ✅ | The ESP32-S3 talks to the full Exploration Server over the SDA/SCL wires (`GPIO15`/`GPIO16`); own build from the Acconeer SDK v1.13.0 on LPUART1, `firmware/stm32l431/`. Verified on the device on 2026-11-01 with the A121 on the PC USB: `srv_info`, `stm_reset`, `iq3` (58 Hz), `doppler` (31 Hz) and `bridge` with exptool (2 Mbaud). |
 | Server hardening | ✅ | Hardened against UART errors (restart instead of going deaf). |
 | Mobile setup | ✅ | Verified the same way with the A121 on the red 5V wire; server link 2 Mbaud, net ≈ 195 kB/s. |
 | `sess` command | — | Any sparse IQ session (up to 4 subsweeps, CSM up to 21 kHz sweep rate) can be configured and evaluated directly on the ESP32. |
 | Automatic reconnect | ✅ | New on 2026-11-01: automatic reconnect of the server (`@RECONNECT`). The compute pauses of the on-device DSP bundle frames (receive pauses up to 0.34 s) but lose none (see `docs/HARDWARE.md`). |
 | Android app (USB) | ✅ | Runs on the phone: live views, background recording (31.7 min with the screen off, no frame loss), reconnect after unplugging (`docs/ANDROID_APP.md`). |
-| BLE, pulse reference | ⏳ | Open. |
+| BLE chest-strap reference | ✅ | Polar H9 over BLE recorded by the app (`ref_hr.csv`); 10 min test on the phone on 2026-11-07 OK (`docs/ANDROID_APP.md`). |
+| BLE transport ESP32 → phone | ⏳ | Not started. |
 
 Focus: **make full use of the A121** — with the ESP32-S3, without the Pico.
 
