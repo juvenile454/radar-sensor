@@ -60,7 +60,7 @@ Rebuild it with <code>docs/img/make_figures.py</code>.</sub>
 | Pulse candidate on the ESP32 | 🧪 | Runs on the device; accuracy unknown until the chest-strap comparison |
 | Pulse reacquisition after movement (V6, switch `A121_DSP_REACQ`) | 🧪 | Off by default; better on the bench, worse on one real replay ([EXPERIMENTS](docs/EXPERIMENTS.md)) |
 | Android app over USB | ✅ | Live views, background recording, reconnect ([ANDROID_APP](docs/ANDROID_APP.md)) |
-| Comparison against a chest strap (Polar H9) | ⏳ | Strap ordered; recordings planned |
+| Comparison against a chest strap (Polar H9) | ⏳ | Strap recorded by the app alongside the radar (10 min test OK); comparison recordings planned |
 | Bluetooth LE transport | ⏳ | Not started |
 
 ## How it works

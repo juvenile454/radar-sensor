@@ -173,11 +173,16 @@ Pulse values in all recordings are rhythm candidates; no reference available.
 - Quality state (V5.1): logic (pulse gray, state text, deviation radar − strap over 60 s, pairs ±2 s) and parser
   `@STATE`/`@BREATH` tested on the PC; display (Pages.kt) not compiled. Acceptance "screenshot per state from a
   replay" open (phone or emulator).
-- ECG strap, markers, metronome (V0.1/V0.2): parser, recorder files, metronome timing and reference curve tested on the PC;
-  BLE client and metronome compiled against the Android classes (API 34); controller, debug commands and UI
-  not compiled (no Android SDK in the cloud environment). Open on the phone (only with approval): 10 min `iq3 0 raw` with
-  strap — `ref_hr.csv` present, sum of RR = recording duration ±2 %, pulse = Polar app ±1 /min; distance between the
-  metronome markers = nominal value ±20 ms.
+- ECG strap, markers, metronome (V0.1/V0.2): checked on the phone on 2026-11-07 with a Polar H9 (S26, app 0.1.0, firmware
+  `2026-11-02-vital1`, recording `phone/2026-11-07_105959_polar_h9_abnahme_10min_b`, 615.7 s `iq3 0 raw` with metronome
+  15 /min): `ref_hr.csv` present, 616 notifications, 1071 RR, sum of RR = duration **+0.06 %**, no gap > 3 s, no RR
+  outliers; metronome markers 3990.4–4010.9 ms (nominal 4000 ±20 ms); `esp_record.py --check` OK (36 896 frames,
+  0 gaps, 59.98 Hz, `@RAW` consistent); pulse in the app = Polar app ±1 /min, confirmed by eye by the project owner (no
+  logged comparison). The H9 leaves `contact` empty. Pitfalls: while the Polar Flow app is connected, the H9 does not advertise,
+  so `ref_scan` finds nothing; `ref_connect --es addr <mac>` works anyway (Android shares the link between both apps;
+  the address is in `adb logcat`). Any input during a running stream stops it (`@END`), so a new `iq3 … raw` only
+  starts when sent in mode "bereit"; in a first attempt (`…_abnahme_10min`) the command only stopped the old stream.
+  In that first attempt the first metronome interval was 3978.6 ms (start-up), all others within ±10 ms.
 - Phone DSP live (V5.2): live path on the PC equal to the recomputation (`host/tests/test_dsp_live.py`, compute time on the PC
   0.29 % of one core for 120 s of simulated data with `A121_DSP_HEAVY`); JNI library compiled on the PC against the JDK `jni.h`
   and tested from Kotlin (feeding, restart, CPU share). Not compiled: NDK build, controller,
